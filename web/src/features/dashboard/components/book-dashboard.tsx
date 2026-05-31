@@ -414,17 +414,41 @@ function DailyWritingGoalCard({
 }
 
 function WritingConsistencySection({ consistency }: { consistency: BookDashboardResponse["writingProgress"]["consistency"] }) {
+  const streakTone = getCurrentStreakTone(consistency.currentStreakDays);
+
   return (
     <section className="mt-4 rounded-md border border-zinc-200 bg-zinc-50 p-3" aria-labelledby="writing-consistency-title">
-      <div className="flex flex-wrap items-end justify-between gap-2 border-b border-zinc-200 pb-3">
+      <div className="flex flex-wrap items-end justify-between gap-2">
         <div>
           <h3 id="writing-consistency-title" className="text-sm font-semibold text-zinc-950">Consistência</h3>
           <p className="mt-1 text-xs text-zinc-500">Dias com saldo positivo de palavras.</p>
         </div>
-        <Badge className="bg-emerald-100 text-emerald-900">{formatPercent(consistency.recentWritingDaysPercent)}</Badge>
+        <Badge className={consistency.currentStreakDays > 0 ? "bg-emerald-100 text-emerald-900" : "bg-zinc-100 text-zinc-700"}>
+          {streakTone}
+        </Badge>
       </div>
-      <dl className="mt-3 grid gap-2 sm:grid-cols-2 lg:grid-cols-4">
-        <ConsistencyMetric label="Sequência atual" value={formatDays(consistency.currentStreakDays)} />
+
+      <div className="mt-3 rounded-md border border-zinc-200 bg-white p-3">
+        <div className="flex items-center gap-3">
+          <div
+            className={`flex h-12 w-12 shrink-0 items-center justify-center rounded-md border ${
+              consistency.currentStreakDays > 0
+                ? "border-emerald-200 bg-emerald-50 text-emerald-700"
+                : "border-zinc-200 bg-zinc-50 text-zinc-400"
+            }`}
+            aria-hidden={consistency.currentStreakDays === 0}
+          >
+            {consistency.currentStreakDays > 0 ? <FireIcon /> : <span className="text-lg font-semibold">0</span>}
+          </div>
+          <div className="min-w-0">
+            <p className="text-xs font-medium uppercase text-zinc-500">Sequência atual</p>
+            <p className="mt-1 text-3xl font-semibold tabular-nums text-zinc-950">{formatDays(consistency.currentStreakDays)}</p>
+            <p className="mt-1 text-sm text-zinc-500">{streakTone}</p>
+          </div>
+        </div>
+      </div>
+
+      <dl className="mt-3 grid gap-2 sm:grid-cols-3">
         <ConsistencyMetric label="Melhor sequência" value={formatDays(consistency.bestStreakDays)} />
         <ConsistencyMetric label="Dias escritos no mês" value={formatNumber(consistency.writingDaysThisMonth)} />
         <ConsistencyMetric
@@ -434,6 +458,24 @@ function WritingConsistencySection({ consistency }: { consistency: BookDashboard
         />
       </dl>
     </section>
+  );
+}
+
+function FireIcon() {
+  return (
+    <svg
+      role="img"
+      aria-label="Ícone de fogo da sequência atual"
+      viewBox="0 0 24 24"
+      className="h-6 w-6"
+      fill="none"
+      xmlns="http://www.w3.org/2000/svg"
+    >
+      <path
+        d="M12.7 3.4c.4 2.4-.4 3.9-1.5 5.2-.9 1.1-1.9 2.2-1.7 4 .8-.6 1.4-1.4 1.8-2.4 2.6 1.7 4 3.7 4 6a3.5 3.5 0 0 1-7 0c0-1.1.4-2.1 1.1-3-2 .8-3.4 2.6-3.4 4.8 0 3.1 2.6 5 6 5s6-1.9 6-5c0-3.6-2.3-5.9-4.3-7.9-1.5-1.5-2.8-2.8-1-6.7Z"
+        className="fill-emerald-500"
+      />
+    </svg>
   );
 }
 
@@ -448,6 +490,22 @@ function ConsistencyMetric({ label, value, detail }: { label: string; value: str
       {detail ? <dd className="mt-0.5 text-xs text-zinc-500">{detail}</dd> : null}
     </div>
   );
+}
+
+function getCurrentStreakTone(currentStreakDays: number) {
+  if (currentStreakDays === 0) {
+    return "Sem sequência ativa";
+  }
+
+  if (currentStreakDays <= 3) {
+    return "Você começou";
+  }
+
+  if (currentStreakDays <= 7) {
+    return "Bom ritmo";
+  }
+
+  return "Em chamas";
 }
 
 function DailyProgressChart({

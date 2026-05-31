@@ -69,6 +69,8 @@ describe("BookDashboard", () => {
     expect(screen.getByText("Nenhuma meta de palavras definida.")).toBeInTheDocument();
     expect(screen.getByText("Nenhuma meta diária definida.")).toBeInTheDocument();
     const consistency = screen.getByRole("region", { name: "Consistência" });
+    expect(within(consistency).getAllByText("Sem sequência ativa").length).toBeGreaterThan(0);
+    expect(within(consistency).queryByRole("img", { name: /fogo/i })).not.toBeInTheDocument();
     expect(within(consistency).getByText("Sequência atual")).toBeInTheDocument();
     expect(within(consistency).getByText("Melhor sequência")).toBeInTheDocument();
     expect(within(consistency).getByText("Dias escritos no mês")).toBeInTheDocument();
@@ -89,6 +91,8 @@ describe("BookDashboard", () => {
     expect(screen.getByText("Hoje: 300 / 500 palavras")).toBeInTheDocument();
     expect(screen.getByText("60% da meta diária")).toBeInTheDocument();
     const consistency = screen.getByRole("region", { name: "Consistência" });
+    expect(within(consistency).getByRole("img", { name: /fogo/i })).toBeInTheDocument();
+    expect(within(consistency).getAllByText("Você começou").length).toBeGreaterThan(0);
     expect(within(consistency).getByText("Sequência atual")).toBeInTheDocument();
     expect(within(consistency).getByText("3 dias")).toBeInTheDocument();
     expect(within(consistency).getByText("Melhor sequência")).toBeInTheDocument();
@@ -323,6 +327,10 @@ describe("BookDashboard", () => {
           ...dashboardWithScenes.writingProgress.today,
           dailyTargetWordCount: 500,
         },
+        consistency: {
+          ...dashboardWithScenes.writingProgress.consistency,
+          currentStreakDays: 8,
+        },
       },
     };
     mocks.useBookDashboard.mockReturnValue({ isLoading: false, isError: false, data: dashboardWithRemovedCurrentGoal });
@@ -333,8 +341,10 @@ describe("BookDashboard", () => {
     expect(screen.getByText("Hoje: 300 palavras")).toBeInTheDocument();
     expect(screen.queryByText("Hoje: 300 / 500 palavras")).not.toBeInTheDocument();
     const consistency = screen.getByRole("region", { name: "Consistência" });
+    expect(within(consistency).getByRole("img", { name: /fogo/i })).toBeInTheDocument();
+    expect(within(consistency).getAllByText("Em chamas").length).toBeGreaterThan(0);
     expect(within(consistency).getByText("Sequência atual")).toBeInTheDocument();
-    expect(within(consistency).getByText("3 dias")).toBeInTheDocument();
+    expect(within(consistency).getByText("8 dias")).toBeInTheDocument();
     expect(within(consistency).getByText("5 / 7 dias")).toBeInTheDocument();
   });
 
