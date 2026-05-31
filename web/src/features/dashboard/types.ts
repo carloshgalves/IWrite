@@ -64,9 +64,19 @@ export type DailyWritingProgressResponse = {
   progressPercent: number | null;
 };
 
+export type WritingConsistencyResponse = {
+  currentStreakDays: number;
+  bestStreakDays: number;
+  writingDaysThisMonth: number;
+  recentWindowDays: number;
+  recentWritingDays: number;
+  recentWritingDaysPercent: number;
+};
+
 export type WritingProgressDashboardResponse = {
   today: DailyWritingProgressResponse;
   recentDays: DailyWritingProgressResponse[];
+  consistency: WritingConsistencyResponse;
 };
 
 export type BookDashboardResponse = {

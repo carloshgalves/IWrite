@@ -68,6 +68,14 @@ describe("BookDashboard", () => {
     expect(screen.getByText(/ainda.*cenas/i)).toBeInTheDocument();
     expect(screen.getByText("Nenhuma meta de palavras definida.")).toBeInTheDocument();
     expect(screen.getByText("Nenhuma meta diária definida.")).toBeInTheDocument();
+    const consistency = screen.getByRole("region", { name: "Consistência" });
+    expect(within(consistency).getByText("Sequência atual")).toBeInTheDocument();
+    expect(within(consistency).getByText("Melhor sequência")).toBeInTheDocument();
+    expect(within(consistency).getByText("Dias escritos no mês")).toBeInTheDocument();
+    expect(within(consistency).getByText("Últimos 7 dias")).toBeInTheDocument();
+    expect(within(consistency).getAllByText("0 dias")).toHaveLength(2);
+    expect(within(consistency).getByText("0 / 7 dias")).toBeInTheDocument();
+    expect(within(consistency).getAllByText("0%").length).toBeGreaterThan(0);
   });
 
   test("mostra cards principais, meta existente e meta ultrapassada", () => {
@@ -80,6 +88,16 @@ describe("BookDashboard", () => {
     expect(screen.getByText("Meta ultrapassada em 200 palavras")).toBeInTheDocument();
     expect(screen.getByText("Hoje: 300 / 500 palavras")).toBeInTheDocument();
     expect(screen.getByText("60% da meta diária")).toBeInTheDocument();
+    const consistency = screen.getByRole("region", { name: "Consistência" });
+    expect(within(consistency).getByText("Sequência atual")).toBeInTheDocument();
+    expect(within(consistency).getByText("3 dias")).toBeInTheDocument();
+    expect(within(consistency).getByText("Melhor sequência")).toBeInTheDocument();
+    expect(within(consistency).getByText("12 dias")).toBeInTheDocument();
+    expect(within(consistency).getByText("Dias escritos no mês")).toBeInTheDocument();
+    expect(within(consistency).getByText("9")).toBeInTheDocument();
+    expect(within(consistency).getByText("Últimos 7 dias")).toBeInTheDocument();
+    expect(within(consistency).getByText("5 / 7 dias")).toBeInTheDocument();
+    expect(within(consistency).getAllByText("71%").length).toBeGreaterThan(0);
     expect(screen.getByText("Escrita no período")).toBeInTheDocument();
     expect(screen.getByText("Total no período")).toBeInTheDocument();
     expect(screen.getByText("Média por bucket")).toBeInTheDocument();
@@ -314,6 +332,10 @@ describe("BookDashboard", () => {
     expect(screen.getByText("Nenhuma meta diária definida.")).toBeInTheDocument();
     expect(screen.getByText("Hoje: 300 palavras")).toBeInTheDocument();
     expect(screen.queryByText("Hoje: 300 / 500 palavras")).not.toBeInTheDocument();
+    const consistency = screen.getByRole("region", { name: "Consistência" });
+    expect(within(consistency).getByText("Sequência atual")).toBeInTheDocument();
+    expect(within(consistency).getByText("3 dias")).toBeInTheDocument();
+    expect(within(consistency).getByText("5 / 7 dias")).toBeInTheDocument();
   });
 
   test("clicar em card de status abre modal e clicar em cena troca o conteudo do mesmo modal", () => {

@@ -148,6 +148,14 @@ export const dashboardWithScenes: BookDashboardResponse = {
         progressPercent: -20,
       },
     ],
+    consistency: {
+      currentStreakDays: 3,
+      bestStreakDays: 12,
+      writingDaysThisMonth: 9,
+      recentWindowDays: 7,
+      recentWritingDays: 5,
+      recentWritingDaysPercent: 71.428,
+    },
   },
   planningProgress: {
     plannedScenesCount: 1,
@@ -210,6 +218,14 @@ export const emptyDashboard: BookDashboardResponse = {
       progressPercent: null,
     },
     recentDays: [],
+    consistency: {
+      currentStreakDays: 0,
+      bestStreakDays: 0,
+      writingDaysThisMonth: 0,
+      recentWindowDays: 7,
+      recentWritingDays: 0,
+      recentWritingDaysPercent: 0,
+    },
   },
   scenesByStatus: dashboardWithScenes.scenesByStatus.map((status) => ({
     ...status,

@@ -395,6 +395,8 @@ function DailyWritingGoalCard({
         </div>
       ) : null}
 
+      <WritingConsistencySection consistency={dashboard.writingProgress.consistency} />
+
       <DailyProgressChart
         todayDate={today.date}
         recentDays={dashboard.writingProgress.recentDays}
@@ -408,6 +410,43 @@ function DailyWritingGoalCard({
       {errorMessage ? <FeedbackMessage variant="error" className="mt-3">{errorMessage}</FeedbackMessage> : null}
       {successMessage ? <FeedbackMessage variant="success" className="mt-3">{successMessage}</FeedbackMessage> : null}
     </Card>
+  );
+}
+
+function WritingConsistencySection({ consistency }: { consistency: BookDashboardResponse["writingProgress"]["consistency"] }) {
+  return (
+    <section className="mt-4 rounded-md border border-zinc-200 bg-zinc-50 p-3" aria-labelledby="writing-consistency-title">
+      <div className="flex flex-wrap items-end justify-between gap-2 border-b border-zinc-200 pb-3">
+        <div>
+          <h3 id="writing-consistency-title" className="text-sm font-semibold text-zinc-950">Consistência</h3>
+          <p className="mt-1 text-xs text-zinc-500">Dias com saldo positivo de palavras.</p>
+        </div>
+        <Badge className="bg-emerald-100 text-emerald-900">{formatPercent(consistency.recentWritingDaysPercent)}</Badge>
+      </div>
+      <dl className="mt-3 grid gap-2 sm:grid-cols-2 lg:grid-cols-4">
+        <ConsistencyMetric label="Sequência atual" value={formatDays(consistency.currentStreakDays)} />
+        <ConsistencyMetric label="Melhor sequência" value={formatDays(consistency.bestStreakDays)} />
+        <ConsistencyMetric label="Dias escritos no mês" value={formatNumber(consistency.writingDaysThisMonth)} />
+        <ConsistencyMetric
+          label={`Últimos ${formatNumber(consistency.recentWindowDays)} dias`}
+          value={`${formatNumber(consistency.recentWritingDays)} / ${formatNumber(consistency.recentWindowDays)} dias`}
+          detail={formatPercent(consistency.recentWritingDaysPercent)}
+        />
+      </dl>
+    </section>
+  );
+}
+
+function ConsistencyMetric({ label, value, detail }: { label: string; value: string; detail?: string }) {
+  return (
+    <div className="rounded-md border border-zinc-200 bg-white px-3 py-2">
+      <dt className="text-xs text-zinc-500">{label}</dt>
+      <dd className="mt-1 flex items-baseline gap-2 text-sm font-semibold tabular-nums text-zinc-950">
+        <span aria-hidden="true" className="h-1.5 w-1.5 rounded-full bg-emerald-500" />
+        {value}
+      </dd>
+      {detail ? <dd className="mt-0.5 text-xs text-zinc-500">{detail}</dd> : null}
+    </div>
   );
 }
 
@@ -986,6 +1025,10 @@ function formatPercent(value: number) {
 
 function formatSignedWords(value: number) {
   return `${formatSignedNumber(value)} palavras`;
+}
+
+function formatDays(value: number) {
+  return `${formatNumber(value)} dias`;
 }
 
 function formatSignedNumber(value: number) {
