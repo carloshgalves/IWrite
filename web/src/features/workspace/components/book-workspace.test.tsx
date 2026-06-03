@@ -1,4 +1,4 @@
-import { fireEvent, screen, waitFor } from "@testing-library/react";
+import { fireEvent, screen, waitFor, within } from "@testing-library/react";
 import React from "react";
 import { beforeEach, describe, expect, test, vi } from "vitest";
 import { BookWorkspace } from "@/features/workspace/components/book-workspace";
@@ -49,6 +49,7 @@ const mocks = vi.hoisted(() => ({
   updateScene: vi.fn(),
   updateSceneContent: vi.fn(),
   deleteScene: vi.fn(),
+  searchBook: vi.fn(),
   routerReplace: vi.fn(),
   searchParams: new URLSearchParams(),
 }));
@@ -61,7 +62,12 @@ vi.mock("next/navigation", () => ({
 }));
 
 vi.mock("@/features/characters/components/characters-panel", () => ({
-  CharactersPanel: () => <h1>Personagens</h1>,
+  CharactersPanel: ({ openCharacterIntent }: { openCharacterIntent?: { id: string; requestId: number } | null }) => (
+    <div>
+      <h1>Personagens</h1>
+      {openCharacterIntent ? <p>Personagem selecionado {openCharacterIntent.id}</p> : null}
+    </div>
+  ),
 }));
 
 vi.mock("@/features/locations/components/locations-panel", () => ({
@@ -141,6 +147,10 @@ vi.mock("@/features/scenes/api/scenes-api", () => ({
   deleteScene: mocks.deleteScene,
 }));
 
+vi.mock("@/features/search/api/book-search-api", () => ({
+  searchBook: mocks.searchBook,
+}));
+
 vi.mock("@/features/scenes/editor/tiptap-editor", () => ({
   TiptapEditor: ({ initialContentText }: { initialContentText?: string | null }) => (
     <textarea aria-label="Editor de conteúdo" readOnly value={initialContentText ?? ""} />
@@ -213,6 +223,7 @@ describe("BookWorkspace focus mode", () => {
     mocks.updateScene.mockResolvedValue(sceneForPlanning);
     mocks.updateSceneContent.mockResolvedValue(sceneForPlanning);
     mocks.deleteScene.mockResolvedValue(undefined);
+    mocks.searchBook.mockResolvedValue([]);
   });
 
   test("oculta o outline no foco e restaura mantendo a cena selecionada", async () => {
@@ -338,6 +349,7 @@ describe("BookWorkspace initial scene selection", () => {
     mocks.updateScene.mockResolvedValue(sceneForPlanning);
     mocks.updateSceneContent.mockResolvedValue(sceneForPlanning);
     mocks.deleteScene.mockResolvedValue(undefined);
+    mocks.searchBook.mockResolvedValue([]);
   });
 
   test("carrega a cena inicial sem clicar no outline", async () => {
@@ -584,6 +596,67 @@ describe("BookWorkspace initial scene selection", () => {
 
     expect(await screen.findByRole("heading", { name: alternateSceneForPlanning.title })).toBeInTheDocument();
     expect(screen.getByRole("button", { name: "Recolher planejamento da cena" })).toHaveAttribute("aria-expanded", "true");
+    expect(mocks.routerReplace).toHaveBeenCalledWith(`/books/book-1?sceneId=${alternateSceneForPlanning.id}`, {
+      scroll: false,
+    });
+  });
+
+  test("abre resultado de busca de personagem na aba correta", async () => {
+    mocks.searchBook.mockResolvedValue([
+      {
+        id: "character-ada",
+        type: "CHARACTER",
+        title: "Ada",
+        snippet: "Ada aparece na busca.",
+        metadata: "Personagem",
+      },
+    ]);
+    renderWithClient(<BookWorkspace bookId="book-1" />);
+
+    await screen.findByText("Livro");
+    fireEvent.click(screen.getByRole("button", { name: "Buscar" }));
+    const dialog = screen.getByRole("dialog", { name: "Busca global do livro" });
+    fireEvent.change(within(dialog).getByLabelText("Termo de busca"), { target: { value: "Ada" } });
+
+    fireEvent.click(await within(dialog).findByRole("button", { name: /Ada/ }));
+
+    expect(await screen.findByRole("heading", { name: "Personagens" })).toBeInTheDocument();
+    expect(screen.getByText("Personagem selecionado character-ada")).toBeInTheDocument();
+    expect(mocks.routerReplace).toHaveBeenCalledWith("/books/book-1", { scroll: false });
+  });
+
+  test("resultado de busca de cena abre editor sem reaplicar pedido antigo de planejamento", async () => {
+    mocks.getOutline.mockResolvedValue(outlineWithAlternateScene);
+    mocks.getScene.mockImplementation((sceneId: string) =>
+      Promise.resolve(sceneId === alternateSceneForPlanning.id ? alternateSceneForPlanning : sceneForPlanning)
+    );
+    mocks.searchBook.mockResolvedValue([
+      {
+        id: alternateSceneForPlanning.id,
+        type: "SCENE",
+        title: alternateSceneForPlanning.title,
+        snippet: "Cena encontrada pela busca.",
+        metadata: "Parte 1 - Capitulo 1",
+      },
+    ]);
+    renderWithClient(<BookWorkspace bookId="book-1" />);
+
+    await screen.findByText("Livro");
+    fireEvent.click(screen.getByRole("button", { name: "Kanban" }));
+    expect(await screen.findByRole("heading", { name: "Kanban" })).toBeInTheDocument();
+    fireEvent.change(screen.getByLabelText(`Status de ${sceneForPlanning.title}`), { target: { value: "PLANNED" } });
+    fireEvent.click(screen.getByRole("button", { name: "Abrir planejamento" }));
+
+    expect(await screen.findByRole("heading", { name: sceneForPlanning.title })).toBeInTheDocument();
+    fireEvent.click(screen.getByRole("button", { name: "Recolher planejamento da cena" }));
+
+    fireEvent.click(screen.getByRole("button", { name: "Buscar" }));
+    const dialog = screen.getByRole("dialog", { name: "Busca global do livro" });
+    fireEvent.change(within(dialog).getByLabelText("Termo de busca"), { target: { value: "alternativa" } });
+    fireEvent.click(await within(dialog).findByRole("button", { name: /Cena alternativa/ }));
+
+    expect(await screen.findByRole("heading", { name: alternateSceneForPlanning.title })).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Expandir planejamento da cena" })).toHaveAttribute("aria-expanded", "false");
     expect(mocks.routerReplace).toHaveBeenCalledWith(`/books/book-1?sceneId=${alternateSceneForPlanning.id}`, {
       scroll: false,
     });

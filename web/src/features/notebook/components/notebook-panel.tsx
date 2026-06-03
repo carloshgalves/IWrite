@@ -1,6 +1,6 @@
 "use client";
 
-import { type FormEvent, useEffect, useMemo, useState } from "react";
+import { type FormEvent, useEffect, useMemo, useRef, useState } from "react";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { EmptyState } from "@/components/ui/empty-state";
@@ -27,6 +27,7 @@ import { ApiError } from "@/lib/api/client";
 
 type NotebookPanelProps = {
   bookId: string;
+  openNoteIntent?: NotebookNoteOpenIntent | null;
 };
 
 type DetailMode = "empty" | "create" | "edit";
@@ -38,6 +39,11 @@ type NoteFormState = {
   content: string;
   categoryId: string;
   status: NotebookNoteStatus;
+};
+
+export type NotebookNoteOpenIntent = {
+  id: string;
+  requestId: number;
 };
 
 const emptyForm: NoteFormState = {
@@ -53,7 +59,7 @@ const dateFormatter = new Intl.DateTimeFormat("pt-BR", {
   year: "numeric",
 });
 
-export function NotebookPanel({ bookId }: NotebookPanelProps) {
+export function NotebookPanel({ bookId, openNoteIntent = null }: NotebookPanelProps) {
   const [categoryFilter, setCategoryFilter] = useState<CategoryFilter>("all");
   const [statusFilter, setStatusFilter] = useState<StatusFilter>("all");
   const [searchTerm, setSearchTerm] = useState("");
@@ -70,6 +76,7 @@ export function NotebookPanel({ bookId }: NotebookPanelProps) {
   const [selectedNote, setSelectedNote] = useState<NotebookNote | null>(null);
   const [detailMode, setDetailMode] = useState<DetailMode>("empty");
   const [successMessage, setSuccessMessage] = useState<string | null>(null);
+  const consumedOpenRequestIdRef = useRef<number | null>(null);
   const orderedCategories = useMemo(() => orderNotebookCategories(categoriesQuery.data ?? []), [categoriesQuery.data]);
 
   const notes = useMemo(() => {
@@ -97,6 +104,27 @@ export function NotebookPanel({ bookId }: NotebookPanelProps) {
       ),
     [createCategoryMutation.error, deleteCategoryMutation.error, updateCategoryMutation.error]
   );
+
+  useEffect(() => {
+    if (!openNoteIntent || consumedOpenRequestIdRef.current === openNoteIntent.requestId) {
+      return;
+    }
+
+    if (categoryFilter !== "all" || statusFilter !== "all" || searchTerm) {
+      setCategoryFilter("all");
+      setStatusFilter("all");
+      setSearchTerm("");
+      return;
+    }
+
+    const note = notesQuery.data?.find((value) => value.id === openNoteIntent.id);
+    if (!note) {
+      return;
+    }
+
+    consumedOpenRequestIdRef.current = openNoteIntent.requestId;
+    startEdit(note);
+  }, [categoryFilter, notesQuery.data, openNoteIntent, searchTerm, statusFilter]);
 
   function resetMutations() {
     createMutation.reset();

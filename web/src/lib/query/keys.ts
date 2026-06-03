@@ -9,5 +9,6 @@ export const queryKeys = {
   item: (itemId: string) => ["items", itemId] as const,
   outline: (bookId: string) => ["books", bookId, "outline"] as const,
   bookDashboard: (bookId: string) => ["books", bookId, "dashboard"] as const,
+  bookSearch: (bookId: string, query: string, limit: number) => ["books", bookId, "search", query, limit] as const,
   scene: (sceneId: string) => ["scenes", sceneId] as const,
 };

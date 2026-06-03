@@ -1,6 +1,6 @@
 "use client";
 
-import { useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { Button } from "@/components/ui/button";
 import { EmptyState } from "@/components/ui/empty-state";
 import { ErrorState, LoadingState } from "@/components/ui/feedback";
@@ -18,11 +18,17 @@ import { ApiError } from "@/lib/api/client";
 
 type LocationsPanelProps = {
   bookId: string;
+  openLocationIntent?: EntityOpenIntent | null;
 };
 
 type DetailMode = "empty" | "create" | "edit";
 
-export function LocationsPanel({ bookId }: LocationsPanelProps) {
+export type EntityOpenIntent = {
+  id: string;
+  requestId: number;
+};
+
+export function LocationsPanel({ bookId, openLocationIntent = null }: LocationsPanelProps) {
   const locationsQuery = useLocations(bookId);
   const createMutation = useCreateLocation(bookId);
   const updateMutation = useUpdateLocation(bookId);
@@ -30,10 +36,25 @@ export function LocationsPanel({ bookId }: LocationsPanelProps) {
   const [selectedLocation, setSelectedLocation] = useState<LocationResponse | null>(null);
   const [detailMode, setDetailMode] = useState<DetailMode>("empty");
   const [successMessage, setSuccessMessage] = useState<string | null>(null);
+  const consumedOpenRequestIdRef = useRef<number | null>(null);
 
   const activeMutation = detailMode === "edit" ? updateMutation : createMutation;
   const errorMessage = useMemo(() => getLocationErrorMessage(activeMutation.error), [activeMutation.error]);
   const deleteErrorMessage = useMemo(() => getLocationErrorMessage(deleteMutation.error), [deleteMutation.error]);
+
+  useEffect(() => {
+    if (!openLocationIntent || consumedOpenRequestIdRef.current === openLocationIntent.requestId) {
+      return;
+    }
+
+    const location = locationsQuery.data?.find((value) => value.id === openLocationIntent.id);
+    if (!location) {
+      return;
+    }
+
+    consumedOpenRequestIdRef.current = openLocationIntent.requestId;
+    startEdit(location);
+  }, [locationsQuery.data, openLocationIntent]);
 
   function startCreate() {
     setSelectedLocation(null);

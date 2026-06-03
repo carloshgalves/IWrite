@@ -29,4 +29,29 @@ public interface SceneRepository extends JpaRepository<Scene, UUID> {
 
     @Query("select coalesce(sum(scene.wordCount), 0) from Scene scene where scene.book.id = :bookId")
     long sumWordCountByBookId(@Param("bookId") UUID bookId);
+
+    @Query(value = """
+            select scene.*
+            from scenes scene
+            join chapters chapter on chapter.id = scene.chapter_id
+            join sections section on section.id = chapter.section_id
+            where scene.book_id = :bookId
+              and (
+                scene.title ilike :pattern escape '\\'
+                or coalesce(scene.summary, '') ilike :pattern escape '\\'
+                or coalesce(scene.content_text, '') ilike :pattern escape '\\'
+              )
+            order by
+              case
+                when scene.title ilike :pattern escape '\\' then 0
+                when coalesce(scene.summary, '') ilike :pattern escape '\\' then 1
+                else 2
+              end,
+              section.sort_order,
+              chapter.sort_order,
+              scene.sort_order,
+              scene.id
+            limit :limit
+            """, nativeQuery = true)
+    List<Scene> searchBookScenes(@Param("bookId") UUID bookId, @Param("pattern") String pattern, @Param("limit") int limit);
 }

@@ -1,6 +1,6 @@
 "use client";
 
-import { useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { Button } from "@/components/ui/button";
 import { EmptyState } from "@/components/ui/empty-state";
 import { ErrorState, LoadingState } from "@/components/ui/feedback";
@@ -18,11 +18,17 @@ import { ApiError } from "@/lib/api/client";
 
 type CharactersPanelProps = {
   bookId: string;
+  openCharacterIntent?: EntityOpenIntent | null;
 };
 
 type DetailMode = "empty" | "create" | "edit";
 
-export function CharactersPanel({ bookId }: CharactersPanelProps) {
+export type EntityOpenIntent = {
+  id: string;
+  requestId: number;
+};
+
+export function CharactersPanel({ bookId, openCharacterIntent = null }: CharactersPanelProps) {
   const charactersQuery = useCharacters(bookId);
   const createMutation = useCreateCharacter(bookId);
   const updateMutation = useUpdateCharacter(bookId);
@@ -30,10 +36,25 @@ export function CharactersPanel({ bookId }: CharactersPanelProps) {
   const [selectedCharacter, setSelectedCharacter] = useState<CharacterResponse | null>(null);
   const [detailMode, setDetailMode] = useState<DetailMode>("empty");
   const [successMessage, setSuccessMessage] = useState<string | null>(null);
+  const consumedOpenRequestIdRef = useRef<number | null>(null);
 
   const activeMutation = detailMode === "edit" ? updateMutation : createMutation;
   const errorMessage = useMemo(() => getCharacterErrorMessage(activeMutation.error), [activeMutation.error]);
   const deleteErrorMessage = useMemo(() => getCharacterErrorMessage(deleteMutation.error), [deleteMutation.error]);
+
+  useEffect(() => {
+    if (!openCharacterIntent || consumedOpenRequestIdRef.current === openCharacterIntent.requestId) {
+      return;
+    }
+
+    const character = charactersQuery.data?.find((value) => value.id === openCharacterIntent.id);
+    if (!character) {
+      return;
+    }
+
+    consumedOpenRequestIdRef.current = openCharacterIntent.requestId;
+    startEdit(character);
+  }, [charactersQuery.data, openCharacterIntent]);
 
   function startCreate() {
     setSelectedCharacter(null);

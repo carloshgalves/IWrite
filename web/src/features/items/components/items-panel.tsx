@@ -1,6 +1,6 @@
 "use client";
 
-import { useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { Button } from "@/components/ui/button";
 import { EmptyState } from "@/components/ui/empty-state";
 import { ErrorState, LoadingState } from "@/components/ui/feedback";
@@ -14,11 +14,17 @@ import { ApiError } from "@/lib/api/client";
 
 type ItemsPanelProps = {
   bookId: string;
+  openItemIntent?: EntityOpenIntent | null;
 };
 
 type DetailMode = "empty" | "create" | "edit";
 
-export function ItemsPanel({ bookId }: ItemsPanelProps) {
+export type EntityOpenIntent = {
+  id: string;
+  requestId: number;
+};
+
+export function ItemsPanel({ bookId, openItemIntent = null }: ItemsPanelProps) {
   const itemsQuery = useItems(bookId);
   const charactersQuery = useCharacters(bookId);
   const createMutation = useCreateItem(bookId);
@@ -27,6 +33,7 @@ export function ItemsPanel({ bookId }: ItemsPanelProps) {
   const [selectedItem, setSelectedItem] = useState<ItemResponse | null>(null);
   const [detailMode, setDetailMode] = useState<DetailMode>("empty");
   const [successMessage, setSuccessMessage] = useState<string | null>(null);
+  const consumedOpenRequestIdRef = useRef<number | null>(null);
 
   const activeMutation = detailMode === "edit" ? updateMutation : createMutation;
   const errorMessage = useMemo(() => getItemErrorMessage(activeMutation.error), [activeMutation.error]);
@@ -34,6 +41,20 @@ export function ItemsPanel({ bookId }: ItemsPanelProps) {
   const charactersErrorMessage = charactersQuery.isError
     ? "Não foi possível carregar os personagens para selecionar o dono atual."
     : null;
+
+  useEffect(() => {
+    if (!openItemIntent || consumedOpenRequestIdRef.current === openItemIntent.requestId) {
+      return;
+    }
+
+    const item = itemsQuery.data?.find((value) => value.id === openItemIntent.id);
+    if (!item) {
+      return;
+    }
+
+    consumedOpenRequestIdRef.current = openItemIntent.requestId;
+    startEdit(item);
+  }, [itemsQuery.data, openItemIntent]);
 
   function startCreate() {
     setSelectedItem(null);

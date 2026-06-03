@@ -18,6 +18,8 @@ import { getOutline } from "@/features/outline/api/outline-api";
 import { OutlineSidebar } from "@/features/outline/components/outline-sidebar";
 import type { BookOutline } from "@/features/outline/types";
 import { SceneEditor, type PlanningPanelOpenIntent } from "@/features/scenes/components/scene-editor";
+import { BookSearchModal } from "@/features/search/components/book-search-modal";
+import type { BookSearchResult } from "@/features/search/types";
 import { SceneStoryboardPanel } from "@/features/storyboard/components/scene-storyboard-panel";
 import { queryKeys } from "@/lib/query/keys";
 
@@ -35,6 +37,11 @@ const FOCUS_MODE_STORAGE_KEY = "iwrite.focusMode.enabled";
 type BookWorkspaceProps = {
   bookId: string;
   initialSceneId?: string;
+};
+
+type EntityOpenIntent = {
+  id: string;
+  requestId: number;
 };
 
 function readStoredFocusMode() {
@@ -90,7 +97,12 @@ export function BookWorkspace({ bookId, initialSceneId }: BookWorkspaceProps) {
   const [isFocusMode, setIsFocusMode] = useState(false);
   const [isFullscreenAvailable, setIsFullscreenAvailable] = useState(false);
   const [isFullscreenActive, setIsFullscreenActive] = useState(false);
+  const [isSearchOpen, setIsSearchOpen] = useState(false);
   const [planningPanelOpenIntent, setPlanningPanelOpenIntent] = useState<PlanningPanelOpenIntent | null>(null);
+  const [openNoteIntent, setOpenNoteIntent] = useState<EntityOpenIntent | null>(null);
+  const [openCharacterIntent, setOpenCharacterIntent] = useState<EntityOpenIntent | null>(null);
+  const [openLocationIntent, setOpenLocationIntent] = useState<EntityOpenIntent | null>(null);
+  const [openItemIntent, setOpenItemIntent] = useState<EntityOpenIntent | null>(null);
   const outlineQuery = useQuery({
     queryKey: queryKeys.outline(bookId),
     queryFn: () => getOutline(bookId),
@@ -196,6 +208,40 @@ export function BookWorkspace({ bookId, initialSceneId }: BookWorkspaceProps) {
       handleExitFocusMode();
     },
     [handleExitFocusMode]
+  );
+
+  const createEntityOpenIntent = useCallback((id: string, intent: EntityOpenIntent | null) => ({
+    id,
+    requestId: (intent?.requestId ?? 0) + 1,
+  }), []);
+
+  const handleSearchResultSelect = useCallback(
+    (result: BookSearchResult) => {
+      setIsSearchOpen(false);
+
+      if (result.type === "SCENE") {
+        handleOpenSceneInEditor(result.id);
+        return;
+      }
+
+      handleSelectScene(null);
+      handleExitFocusMode();
+
+      if (result.type === "NOTEBOOK_NOTE") {
+        setMode("notebook");
+        setOpenNoteIntent((intent) => createEntityOpenIntent(result.id, intent));
+      } else if (result.type === "CHARACTER") {
+        setMode("characters");
+        setOpenCharacterIntent((intent) => createEntityOpenIntent(result.id, intent));
+      } else if (result.type === "LOCATION") {
+        setMode("locations");
+        setOpenLocationIntent((intent) => createEntityOpenIntent(result.id, intent));
+      } else if (result.type === "ITEM") {
+        setMode("items");
+        setOpenItemIntent((intent) => createEntityOpenIntent(result.id, intent));
+      }
+    },
+    [createEntityOpenIntent, handleExitFocusMode, handleOpenSceneInEditor, handleSelectScene]
   );
 
   function handleSceneDeleted() {
@@ -312,6 +358,9 @@ export function BookWorkspace({ bookId, initialSceneId }: BookWorkspaceProps) {
         </div>
 
         <div className="flex shrink-0 items-center gap-2">
+          <Button type="button" size="sm" variant="secondary" onClick={() => setIsSearchOpen(true)}>
+            Buscar
+          </Button>
           <div className="flex rounded-md border border-zinc-200 bg-zinc-50 p-1">
             <Button
               type="button"
@@ -426,16 +475,23 @@ export function BookWorkspace({ bookId, initialSceneId }: BookWorkspaceProps) {
               planningPanelOpenIntent={planningPanelOpenIntent}
             />
           ) : mode === "characters" ? (
-            <CharactersPanel bookId={bookId} />
+            <CharactersPanel bookId={bookId} openCharacterIntent={openCharacterIntent} />
           ) : mode === "locations" ? (
-            <LocationsPanel bookId={bookId} />
+            <LocationsPanel bookId={bookId} openLocationIntent={openLocationIntent} />
           ) : mode === "items" ? (
-            <ItemsPanel bookId={bookId} />
+            <ItemsPanel bookId={bookId} openItemIntent={openItemIntent} />
           ) : (
-            <NotebookPanel bookId={bookId} />
+            <NotebookPanel bookId={bookId} openNoteIntent={openNoteIntent} />
           )}
         </div>
       </div>
+      {isSearchOpen ? (
+        <BookSearchModal
+          bookId={bookId}
+          onClose={() => setIsSearchOpen(false)}
+          onSelectResult={handleSearchResultSelect}
+        />
+      ) : null}
     </main>
   );
 }
