@@ -6,6 +6,10 @@ Este repositório também é a implementação da equipe **EQ22** na disciplina 
 
 > **Avaliação humana ou automatizada:** comece em [`README-ENTREGA-DSC.md`](README-ENTREGA-DSC.md) e depois use [`docs/entrega/README.md`](docs/entrega/README.md). Cada requisito importante possui documentação própria com arquitetura, implementação, testes, evidências, reprodução e limitações.
 
+## Vídeo da Avaliação 2
+
+[▶ Assistir à demonstração completa do IWrite](https://youtu.be/aGw0S_mtT60)
+
 ---
 
 ## Avaliação 2 — requisitos atualizados em 30/07
