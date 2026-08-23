@@ -1,14 +1,14 @@
 # IWrite Wiki — fonte versionada
 
-Esta pasta é a fonte oficial da documentação histórica e arquitetural do IWrite.
+Esta pasta é a fonte versionada da documentação arquitetural, histórica e de estado do IWrite.
 
-A documentação foi reconstruída retrospectivamente a partir do histórico de commits, pull requests, migrations, testes e código existente. Ela não tenta inventar um diário diário anterior: os registros antigos são organizados por marcos verificáveis.
+Ela é revisada junto com o código e deve refletir o `master`, sem depender de memória, contas externas ou anotações informais.
 
-## Escopo deste primeiro bootstrap
+## Estado desta sincronização
 
-O conteúdo representa o projeto até a PR #52, que encerrou a fase B7d-a de dashboards e semântica de progresso de escrita.
+Atualizada em **22 de agosto de 2026** para refletir o produto após as PRs até #159 e a limpeza administrativa pós-disciplina.
 
-A fase C1 de ownership, colaboradores e autorização por livro ainda estava em implementação e não é descrita como concluída nesta versão.
+A versão anterior desta wiki havia sido criada na PR #53 e permanecido congelada no estado da PR #52. Essa defasagem foi corrigida nesta sincronização.
 
 ## Páginas
 
@@ -20,19 +20,59 @@ A fase C1 de ownership, colaboradores e autorização por livro ainda estava em 
 - [Migrations e evolução do banco](Database-Migrations.md)
 - [Qualidade, testes e processo de revisão](Quality-and-Review.md)
 
+## Escopo
+
+A wiki documenta:
+
+- capacidades existentes no `master`;
+- arquitetura e invariantes atuais;
+- decisões já tomadas;
+- migrations publicadas;
+- evolução por marcos/PRs;
+- backlog técnico representado por Issues canônicas;
+- processo de qualidade e revisão.
+
+Ela não deve:
+
+- marcar feature como concluída apenas porque existe uma issue fechada sem código correspondente;
+- manter como “pendente” uma entrega comprovadamente presente no `master`;
+- tratar infraestrutura acadêmica encerrada como dependência operacional atual;
+- duplicar roadmap estratégico não versionado como se fosse decisão de implementação.
+
 ## Processo de atualização
 
-A documentação deve ser atualizada por marco ou PR mergeada, e não por quantidade de dias trabalhados.
+Após um merge com impacto arquitetural/produto:
 
-Após cada fase relevante:
+1. atualizar `Development-Log.md` com o marco;
+2. atualizar `Roadmap.md` se o estado de issues/fases mudou;
+3. registrar nova ADR quando houver decisão duradoura;
+4. atualizar `Database-Migrations.md` quando houver nova migration relevante;
+5. atualizar `Architecture.md` quando fronteiras/fluxos mudarem;
+6. revisar README principal e documentação técnica relacionada;
+7. manter issues canônicas sem duplicatas ou escopos obsoletos.
 
-1. atualizar o diário de desenvolvimento;
-2. mover a fase no roadmap;
-3. registrar decisões arquiteturais novas;
-4. atualizar migrations, contratos e comandos de validação quando necessário.
+Atualizações devem ser feitas por PR/marco verificável, não por preenchimento artificial de dias sem mudança relevante.
 
-## GitHub Wiki
+## GitHub Wiki e `docs/wiki/`
 
-Os arquivos em `docs/wiki/` são mantidos no repositório principal para permitir revisão por PR, histórico de diff e sincronização com o código.
+`docs/wiki/` é a fonte principal porque:
 
-A aba Wiki do GitHub pode ser atualizada posteriormente a partir destes arquivos. O repositório principal continua sendo a fonte de verdade.
+- fica no mesmo histórico do código;
+- recebe review em PR;
+- permite comparar docs e implementação no mesmo commit;
+- não depende de sincronização manual para preservar o conteúdo.
+
+Se a aba Wiki do GitHub for usada, ela deve ser tratada como publicação/espelho desta pasta, nunca como fonte concorrente.
+
+## Histórico acadêmico
+
+O IWrite surgiu e foi avaliado na disciplina DSC/UFPB. O material acadêmico continua preservado em:
+
+- `README-ENTREGA-DSC.md`;
+- `docs/entrega/`;
+- `docs/evidencias/`;
+- guias/documentos acadêmicos específicos.
+
+Esse material é histórico e auditável. Hosts, credenciais, Website IDs, buckets e contas institucionais não fazem parte do baseline atual do produto.
+
+As tecnologias que foram implementadas nesse período — OpenTelemetry, Grafana, Tempo, Loki, Mimir, Umami, MCP, k6, auditoria e healthcheck — permanecem no produto quando tecnicamente úteis; apenas a dependência institucional foi encerrada.
