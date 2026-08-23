@@ -1,14 +1,16 @@
 # Migrations e evolução do banco
 
-O IWrite usa Flyway e PostgreSQL. Este documento representa o schema até V24.
+O IWrite usa Flyway e PostgreSQL. O migration head atual é **V34**.
 
 ## Regras
 
-- migrations aplicadas não são editadas;
-- cada mudança recebe uma nova versão;
-- alterações de ownership seguem nullable → backfill → `NOT NULL` → constraints;
+- migrations aplicadas/publicadas são tratadas como imutáveis;
+- mudanças entram em nova versão forward-only;
+- alterações de ownership/dados seguem estratégia segura de coluna → backfill → constraint quando aplicável;
 - SQL dependente de PostgreSQL é testado em PostgreSQL real;
-- migrations de alto risco recebem teste explícito da versão anterior para a nova.
+- migrations críticas recebem teste explícito da versão anterior relevante para a nova;
+- correção de migration já publicada deve preferir nova migration, não reescrever histórico;
+- backfills precisam ser determinísticos e falhar de forma explícita diante de ambiguidade.
 
 ## Linha evolutiva
 
@@ -17,22 +19,13 @@ O IWrite usa Flyway e PostgreSQL. Este documento representa o schema até V24.
 - V1: livros;
 - V2: seções;
 - V3: capítulos;
-- V4: cenas;
-- índices básicos de parent/ordenação acompanharam a hierarquia.
+- V4: cenas.
 
-### V5–V14 — expansão funcional
+### V5–V14 — planejamento narrativo e notebook
 
-Migrations intermediárias acompanharam a evolução de:
+A faixa adicionou personagens, locais, itens, associações de cena, campos de planejamento e notebook.
 
-- metadados e status;
-- personagens;
-- locais;
-- itens;
-- planejamento de cenas;
-- metas e dashboard;
-- estruturas auxiliares do editor e exportação.
-
-A documentação histórica dessas versões é tratada como evolução incremental; os arquivos SQL continuam sendo a fonte exata de cada coluna e constraint.
+Arquivos SQL continuam sendo a fonte exata de cada coluna, índice e constraint.
 
 ### V15 — daily writing progress
 
@@ -42,78 +35,153 @@ Introdução do agregado diário de progresso de escrita.
 
 Introdução dos schedules de escrita por livro.
 
-### V17–V19 — ledger, histórico e separação de métricas
+### V17 — scene versions
 
-Essa faixa consolidou:
+Snapshots imutáveis de cena para histórico/restauração.
 
-- eventos de contagem de palavras;
-- integração com histórico/restauração;
-- separação entre alteração produtiva e ajuste do manuscrito;
-- evolução das constraints e agregados diários.
+### V18 — word-count events e separação de progresso
 
-A V18 criou os eventos de word count e dividiu as métricas de daily progress.
+Introdução do ledger de contagem de palavras e separação entre métricas produtivas/ajustes.
 
-### V20 — tenant pessoal e timezone
+### V19 — configurações do notebook
 
-Criou:
+Evolução de preferências/metadados do notebook por livro.
+
+### V20 — tenant pessoal, usuário e timezone
+
+Criou a fundação de:
 
 - `tenants`;
 - `users`;
 - `tenant_memberships`;
-- usuário e tenant determinísticos para dados legados;
+- usuário/tenant determinísticos para dados legados;
 - `books.tenant_id` com backfill;
-- timezone do usuário e timezone padrão do tenant.
+- timezone do usuário e default do tenant.
 
-### V21 — evolução posterior da fundação tenant
+### V21 — índice de livros por tenant
 
-Ajustes complementares de schema prepararam ownership pessoal de progresso e atribuição de ator.
+Índice de acesso para a nova fronteira multi-tenant.
 
-### V22 — ownership de progresso
+### V22 — ownership pessoal do progresso
 
 - schedules por `user + book`;
 - daily progress por `user + book + date`;
-- atribuição de usuário nos eventos necessários;
-- backfill de dados anteriores.
+- atribuição do ator em eventos de word count;
+- backfills e constraints correspondentes.
 
 ### V23 — request fingerprint
 
-Adicionou fingerprint aos eventos idempotentes do ledger, permitindo distinguir:
-
-- retry da mesma operação;
-- reutilização incompatível da mesma chave.
+Adicionou fingerprint aos eventos idempotentes do ledger para distinguir retry legítimo de reutilização incompatível de `operationId`.
 
 ### V24 — índices de dashboard
 
-```sql
-create index idx_daily_progress_user_date_book
-    on book_daily_writing_progress (user_id, progress_date, book_id);
+Índices para analytics por usuário/data/livro e livro/data/usuário.
 
-create index idx_daily_progress_book_date_user
-    on book_daily_writing_progress (book_id, progress_date, user_id);
-```
+### V25 — ownership do livro e colaboradores
 
-Objetivos:
+`V25__add_book_ownership_and_collaborators.sql`
 
-- dashboard global por usuário e período;
-- analytics por livro, data e contribuidor.
+Introduziu:
 
-A constraint única de progresso por usuário, livro e data foi preservada.
+- `books.owner_user_id`;
+- `book_collaborators`;
+- constraints/índices de ownership e acesso compatíveis com tenant;
+- fundação C1 de autorização por livro.
 
-## Estado no fim da PR #52
+### V26 — backfill de colaboradores legados
 
-- migration head: V24;
-- dados históricos de progresso preservados;
-- tenant isolation aplicada aos domínios principais;
-- Book ownership explícito e `book_collaborators` ainda não existiam.
+`V26__backfill_legacy_book_collaborators.sql`
+
+Moveu o backfill legado para migration própria sem alterar a V25 já publicada.
+
+### V27 — audit logs
+
+`V27__create_audit_logs.sql`
+
+Criou trilha de auditoria de domínio com metadados de ator, tenant, ação, recurso, instante e resultado.
+
+### V28 — auditoria de execuções LLM
+
+`V28__create_llm_execution_audits.sql`
+
+Criou modelo especializado para execuções de IA, incluindo status, provider, família/modelo efetivo, latência, tokens/custo opcional e fallback, sem armazenar manuscrito/prompt/resposta completos.
+
+### V29 — convites de colaboração
+
+`V29__create_book_collaboration_invitations.sql`
+
+Criou a fundação segura de convites:
+
+- recipient email normalizado;
+- `requested_role` inicial;
+- `token_hash` único;
+- status/lifecycle;
+- expiração, revogação e optimistic locking;
+- FK composta para impedir vínculo com livro de outro tenant;
+- índice único parcial para convite pendente equivalente.
+
+O token bruto não é persistido.
+
+### V30 — credenciais de usuário
+
+`V30__create_user_credentials.sql`
+
+Adicionou armazenamento separado de credenciais/hashes de senha para autenticação real.
+
+### V31 — personas de usuário
+
+`V31__create_user_personas.sql`
+
+Criou `user_personas` com:
+
+- persona declarativa;
+- `is_primary`;
+- unicidade por usuário/persona;
+- índice único parcial para persona principal;
+- backfill inicial do usuário legado quando localizado.
+
+Persona não representa autorização.
+
+### V32 — normalização de emails legados
+
+`V32__normalize_user_emails.sql`
+
+Normaliza emails existentes e impede regressão de representação incompatível, com guard explícito para colisões antes de alterar dados.
+
+### V33 — canonicalização de emails
+
+`V33__canonicalize_user_emails.sql`
+
+Aperfeiçoa a canonicalização para coincidir com a política da aplicação, incluindo regras ASCII/collation-independent e constraints correspondentes.
+
+### V34 — backfill de persona após canonicalização
+
+`V34__backfill_legacy_user_persona_after_email_normalization.sql`
+
+Repete com segurança o backfill do usuário legado depois da canonicalização de email, somente quando ele ainda não possui persona, evitando duplicação.
+
+## Estado atual
+
+- migration head: **V34**;
+- tenant e ownership de livro persistidos;
+- colaboradores base persistidos;
+- convites seguros persistidos;
+- auditoria de domínio e LLM persistidas;
+- credenciais reais persistidas separadamente;
+- personas declarativas persistidas;
+- granular RBAC por livro, múltiplos workspaces e aceite completo de convites ainda exigirão migrations futuras conforme #145–#147.
 
 ## Checklist para nova migration
 
 - [ ] usar a próxima versão disponível;
-- [ ] não modificar SQL antigo;
-- [ ] testar dados legados;
-- [ ] validar rollback transacional possível durante aplicação;
+- [ ] não modificar migration publicada no `master`;
+- [ ] definir invariantes antes do SQL;
+- [ ] testar banco limpo quando aplicável;
+- [ ] testar dados legados/snapshot anterior em migrations críticas;
+- [ ] validar backfills determinísticos;
 - [ ] nomear constraints e índices explicitamente;
-- [ ] verificar `ON DELETE`;
+- [ ] verificar `ON DELETE` e cascades;
+- [ ] verificar isolamento entre tenants;
 - [ ] verificar concorrência e unicidade;
-- [ ] testar a passagem da versão anterior para a nova;
-- [ ] executar suíte completa.
+- [ ] documentar correção/recuperação operacional quando uma down migration não for adequada;
+- [ ] executar suíte relevante e `git diff --check`.
