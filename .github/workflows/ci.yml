@@ -78,7 +78,10 @@ jobs:
       - name: Build frontend
         run: npm run build
 
-      - name: Upload frontend build
+      # Diagnostic/reproducibility artifact only. It preserves the actual Next.js build output
+      # produced by this CI job; it is not a deployable runtime bundle. Runtime packaging remains
+      # the responsibility of web/Dockerfile and the release/deployment work tracked in #92.
+      - name: Upload frontend build output
         uses: actions/upload-artifact@v4
         with:
           name: frontend-build
