@@ -126,10 +126,10 @@ docker compose -f docker-compose.yml -f docker-compose.observability.yml up -d -
 ### Falhas internas
 
 ```logql
-{service_name="iwrite-backend"} | level="ERROR"
+{service_name="iwrite-backend"} | severity_text="ERROR"
 ```
 
-No pipeline LGTM usado pelo projeto, `service_name` é label indexado; atributos de log record chegam como structured metadata e nomes com pontos podem aparecer normalizados com underscores (`iwrite.result` -> `iwrite_result`).
+No pipeline LGTM usado pelo projeto, `service_name` é label indexado; a severidade do log record é exposta como `severity_text`; atributos de log record chegam como structured metadata e nomes com pontos podem aparecer normalizados com underscores (`iwrite.result` -> `iwrite_result`).
 
 ## Correlação log -> trace
 
