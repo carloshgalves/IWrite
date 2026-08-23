@@ -33,7 +33,7 @@ class PingControllerIntegrationTest {
         mockMvc.perform(get("/ping"))
                 .andExpect(status().isOk())
                 .andExpect(jsonPath("$.status").value("ok"))
-                .andExpect(jsonPath("$.service").value("eq22"))
+                .andExpect(jsonPath("$.service").value("iwrite"))
                 .andExpect(jsonPath("$.database").value("up"));
     }
 }

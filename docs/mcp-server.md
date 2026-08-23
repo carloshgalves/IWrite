@@ -1,109 +1,132 @@
-# Servidor MCP do IWrite (issue #128)
+# Servidor MCP do IWrite
 
 ## Arquitetura
 
-O servidor MCP é uma **camada fina** dentro do próprio backend Spring Boot (`com.iwrite.mcp`), registrada pelo starter `spring-ai-starter-mcp-server-webmvc` (Spring AI 1.0.9, MCP Java SDK 0.18.3). Nenhuma regra de negócio ou autorização foi duplicada: cada tool chama os services existentes (`BookService`, `OutlineService`, `SceneAnalysisService`), que já aplicam autorização por livro/cena e isolamento por tenant.
+O MCP é uma camada fina dentro do backend Spring Boot (`com.iwrite.mcp`). As tools reutilizam os services de domínio existentes, portanto autorização por livro/cena, isolamento por tenant, auditoria e tratamento de IA continuam centralizados.
 
+```text
+Cliente MCP
+  |-- SSE: GET /sse
+  |-- POST /mcp/message
+  v
+Backend IWrite -> com.iwrite.mcp -> services existentes -> PostgreSQL
+                                      |-> AuditLogService
+                                      |-> logs estruturados
+                                      `-> LlmExecutionGateway
 ```
-Cliente MCP (Inspector, Claude Desktop, ...)
-        │  SSE: GET /sse   +   POST /mcp/message
-        ▼
-Backend IWrite (porta 8085) ── com.iwrite.mcp ──► services existentes ──► PostgreSQL
-                                     │
-                                     └─► AuditLogService + log estruturado + gateway de auditoria LLM
-```
 
-## Transporte e exposição
+## Exposição suportada hoje
 
-- **Transporte:** HTTP + SSE na mesma porta da API (`/sse` e `/mcp/message`, padrões do starter WebMVC). Escolhido por ser o transporte mínimo compatível com o runtime atual (aplicação web contínua; `stdio` não se aplica). O SDK 0.18 também suporta streamable HTTP; o SSE é o padrão do starter e o suficiente aqui.
-- **Desabilitado por padrão:** `IWRITE_MCP_ENABLED=false` (`spring.ai.mcp.server.enabled`). Em ambiente remoto o servidor não fica exposto anonimamente por padrão.
-- **O transporte MCP não tem autenticação própria.** Nenhum cliente MCP atual realiza `POST /api/auth/login`; `/sse` e `/mcp/message` só podem existir como `permitAll` no `SecurityConfig`. Por isso há exatamente **uma configuração suportada**: identidade fixa de desenvolvimento (`DevelopmentCurrentUserProvider`, `iwrite.current-user.development.enabled=true`) com o processo limitado a loopback (`server.address` resolvendo para um endereço de loopback, ex. `SERVER_ADDRESS=127.0.0.1`). Toda invocação herda essa mesma identidade fixa — não há por-cliente.
-- **Fail-fast no startup, de propósito.** `McpLoopbackGuard` recusa a inicialização (`IllegalStateException`, mensagem sem detalhes sensíveis) em qualquer configuração fora da suportada:
-  - MCP habilitado com o `CurrentUserProvider` autenticado (`AuthenticatedCurrentUserProvider`) em vez do de desenvolvimento — sem isso, o servidor subiria descobrível mas toda tool/resource falharia com `SessionAuthenticationException`, já que nenhuma requisição MCP popula um `IWriteUserDetails` real;
-  - MCP habilitado com identidade de desenvolvimento mas `server.address` ausente ou não resolvendo para loopback.
+- MCP permanece **desabilitado por padrão** (`IWRITE_MCP_ENABLED=false`);
+- o transporte atual não possui autenticação própria por cliente MCP;
+- por isso, quando habilitado, a configuração suportada usa a identidade fixa de desenvolvimento e exige `server.address` em loopback;
+- `McpLoopbackGuard` recusa startup em combinação insegura;
+- `/sse` e `/mcp/message` não devem ser publicados por reverse proxy enquanto não houver autenticação própria do transporte.
 
-  A aplicação não sobe fora desses dois casos — o MCP nunca fica exposto remotamente nem com uma identidade que não consegue autenticar nada.
-- **Autenticação por cliente MCP é trabalho futuro**, não algo que passa a funcionar sozinho quando a aplicação ganha autenticação real: o `AuthenticatedCurrentUserProvider` já existe hoje para a API HTTP normal, e o guard acima recusa deliberadamente combiná-lo com o MCP até que o transporte MCP tenha seu próprio fluxo de autenticação.
-- **Atenção a reverse proxy:** o loopback protege a configuração atual do processo, mas não impede que um reverse proxy publique os endpoints. Enquanto o transporte MCP não tiver autenticação própria, `/sse` e `/mcp/message` **não devem** ser expostos por reverse proxy.
-
-## Autenticação e autorização
-
-- A identidade de cada invocação vem **exclusivamente** do `CurrentUserProvider` da aplicação (hoje, o provedor de desenvolvimento configurado por `iwrite.current-user.development.*`).
-- `tenantId`/`userId` **nunca** são parâmetros das tools. IDs enviados pelo cliente são apenas referências de recurso e passam pelas mesmas consultas com escopo de tenant do produto.
-- Recurso de outro tenant, recurso inexistente e acesso revogado produzem exatamente o mesmo erro (`not_found`), sem enumerar a existência do recurso.
+A autenticação real da API HTTP não transforma automaticamente o transporte MCP em um protocolo autenticado. Evoluir isso é trabalho futuro e deve preservar a mesma autorização de domínio usada pelas tools.
 
 ## Tools
 
 | Tool | Parâmetros | Retorno |
 |---|---|---|
-| `listar_livros_acessiveis` | — | id, título, status e nível de acesso dos livros acessíveis |
-| `obter_outline_livro` | `bookId` (UUID) | outline: partes → capítulos → cenas (títulos, status, contagem de palavras); sem conteúdo |
-| `analisar_cena` | `sceneId` (UUID), `focus` (opcional, ≤ 300 chars) | análise da IA (resumo, tom, ritmo, pontos fortes, problemas, sugestões) |
+| `listar_livros_acessiveis` | — | metadados dos livros acessíveis |
+| `obter_outline_livro` | `bookId` | estrutura do livro sem conteúdo integral |
+| `analisar_cena` | `sceneId`, `focus` opcional | análise de cena via fluxo LLM existente |
 
-`analisar_cena` reutiliza integralmente o fluxo existente: autorização da cena, truncamento de 12k caracteres, gateway de auditoria LLM (registro persistido com trace ID, tokens e custo) e tratamento de indisponibilidade (IA desabilitada → erro `unavailable` previsível, sem custo externo). Nenhuma tool altera manuscritos.
-
-### Limites do `analisar_cena`
-
-Proteção em memória contra abuso e custo (`McpSceneAnalysisLimiter`), por identidade (tenant + usuário):
-
-- no máximo **uma análise concorrente**;
-- janela fixa configurável: `IWRITE_MCP_SCENE_ANALYSIS_MAX_PER_WINDOW` (padrão 3) tentativas por `IWRITE_MCP_SCENE_ANALYSIS_WINDOW` (padrão `1m`). Tentativas com falha também contam;
-- excedeu → erro sanitizado com categoria `rate_limited`; o bloqueio de concorrência é liberado após sucesso ou falha.
+`analisar_cena` reutiliza autorização, limite de entrada, gateway de auditoria LLM e tratamento de indisponibilidade. Nenhuma tool altera o manuscrito.
 
 ## Resource
 
-`iwrite://books/{bookId}/outline` (template, `application/json`) — retorna apenas metadados autorizados e a estrutura de partes/capítulos/cenas do livro, sem conteúdo integral de cenas. Mesma autorização e mesma semântica não enumerável das tools.
+`iwrite://books/{bookId}/outline` retorna metadados autorizados da estrutura do livro sem conteúdo integral de cenas.
+
+## Autorização e isolamento
+
+- `tenantId` e `userId` nunca são parâmetros das tools;
+- IDs enviados pelo cliente são apenas referências de recurso;
+- acesso passa pelos services existentes;
+- recurso inexistente, de outro tenant ou revogado usa semântica não enumerável;
+- argumentos livres e respostas não entram em logs estruturados.
+
+## Limite de análise MCP
+
+`McpSceneAnalysisLimiter` protege custo e concorrência por identidade:
+
+- uma análise concorrente por identidade;
+- janela configurável por `IWRITE_MCP_SCENE_ANALYSIS_MAX_PER_WINDOW` e `IWRITE_MCP_SCENE_ANALYSIS_WINDOW`;
+- excesso resulta em categoria sanitizada `rate_limited`;
+- falhas também contam para a janela.
+
+O limiter é local à instância atual; eventual escala horizontal deve considerar store compartilhado junto da evolução geral de rate limiting.
 
 ## Erros
 
-Estruturados e sanitizados: `{"error":{"category":"...","message":"..."}}` com categorias enumeradas `not_found`, `invalid_request`, `unavailable`, `rate_limited`, `internal`. Stack traces, classes internas e conteúdo nunca chegam ao cliente. Parâmetros são validados (UUID, formato, limite de 300 chars no foco).
+As respostas de erro usam categorias enumeradas e sanitizadas:
 
-## Auditoria e correlação
+- `not_found`;
+- `invalid_request`;
+- `unavailable`;
+- `rate_limited`;
+- `internal`.
 
-Cada invocação (tool ou resource) gera:
+Stack traces, nomes de classes internas, conteúdo de manuscrito, prompts e credentials não são enviados ao cliente.
 
-- um registro de domínio em `audit_logs` (`MCP_BOOKS_LISTED`, `MCP_BOOK_OUTLINE_VIEWED`, `MCP_SCENE_ANALYZED`) com tenant, usuário, recurso e resultado;
-- um log estruturado `mcp_invocation tool=... outcome=... durationMs=... errorCategory=...` com metadados apenas — argumentos livres e respostas **não** são registrados. Quando a correlação de logs com traces (OTel, branch de observabilidade) estiver integrada, essas linhas herdam o trace ID automaticamente via MDC;
-- para `analisar_cena`, adicionalmente o registro do gateway de auditoria LLM já existente.
+## Auditoria e telemetria
 
-## Como conectar um cliente (MCP Inspector)
+Cada invocação gera auditoria de domínio e log estruturado com metadados controlados. `analisar_cena` também passa pela auditoria especializada do `LlmExecutionGateway`.
+
+Com OpenTelemetry habilitado, logs e traces seguem a configuração documentada em `docs/opentelemetry-implementation.md` e `docs/otel-correlated-logs.md`.
+
+## Como validar localmente
 
 ```bash
-# 1. Suba o banco e o backend com MCP habilitado, limitado a loopback
 docker compose up -d db
-IWRITE_MCP_ENABLED=true IWRITE_DEVELOPMENT_CURRENT_USER_ENABLED=true SERVER_ADDRESS=127.0.0.1 ./mvnw spring-boot:run
-
-# 2. Rode o Inspector e conecte por SSE
-npx @modelcontextprotocol/inspector
-# Transport: SSE — URL: http://localhost:8085/sse
+IWRITE_MCP_ENABLED=true \
+IWRITE_DEVELOPMENT_CURRENT_USER_ENABLED=true \
+SERVER_ADDRESS=127.0.0.1 \
+./mvnw spring-boot:run
 ```
 
-`SERVER_ADDRESS=127.0.0.1` é obrigatório com o provedor de desenvolvimento: sem ele o guard de loopback impede o startup (ver "Transporte e exposição").
+Depois:
 
-No Inspector: **Tools → List Tools** deve mostrar as três tools; **Resources → Resource Templates** deve mostrar `iwrite://books/{bookId}/outline`. Exemplos seguros: chamar `listar_livros_acessiveis` (sem argumentos) e ler o resource com o id de um livro seu.
+```bash
+npx @modelcontextprotocol/inspector
+```
 
-## Limitações e escopo
+Conecte via SSE em `http://localhost:8085/sse`.
 
-- Sem operações de escrita/destrutivas (nenhuma tool altera ou apaga manuscritos).
-- Sem autenticação por cliente MCP: a identidade é a do processo (provedor de desenvolvimento fixo), e por isso o servidor só sobe limitado a loopback — ver "Transporte e exposição" para o contrato exato e o que o `McpLoopbackGuard` recusa. Autenticar cada cliente MCP individualmente é trabalho futuro; as tools em si não mudam quando isso existir, mas o guard atual precisa ser revisto junto.
-- Catálogo mínimo proposital: 3 tools + 1 resource (expansão é P2 na issue). `exportar_livro` foi removida: gerava o arquivo inteiro apenas para devolver metadados e uma URL — exportação continua disponível pela API REST.
+A validação deve confirmar:
 
-## Testes multi-tenant (issue #130)
+- descoberta das três tools;
+- descoberta do resource template;
+- execução autorizada de `listar_livros_acessiveis`;
+- leitura autorizada do outline;
+- comportamento sanitizado de análise indisponível quando IA está desabilitada;
+- inexistência de exposição remota do transporte.
 
-`McpToolsTenantIsolationIntegrationTest` cobre, contra o schema real: proprietário, colaborador autorizado, usuário do mesmo tenant sem acesso, tenant distinto, recurso inexistente e acesso revogado — para tools e resource — provando que cross-tenant e inexistente têm mensagens idênticas, que IDs do cliente não mudam o tenant atual e que auditoria/erros não carregam conteúdo. `McpServerDiscoveryIntegrationTest` sobe o servidor HTTP real na configuração local suportada (identidade fixa + loopback) e usa um cliente MCP SSE para provar descoberta, execução autorizada, leitura do resource e o erro sanitizado de análise indisponível. `McpLoopbackGuardTest` prova que toda configuração fora da suportada recusa o startup — identidade autenticada em vez de desenvolvimento, identidade fixa sem loopback, endereço remoto — e que a configuração suportada (identidade fixa + loopback) sobe normalmente; `SecurityConfigMcpIntegrationTest` prova que `/sse` e `/mcp/message` só ficam sem exigência de sessão/CSRF quando o MCP está habilitado, nunca por padrão, e que os demais endpoints continuam autenticados nessa mesma configuração. `McpSceneAnalysisLimiterTest` cobre concorrência, janela e liberação do bloqueio do `analisar_cena`.
+## Testes automatizados relevantes
 
-## Evidências que dependem de ação humana (checklist)
+O repositório cobre:
 
-Validação realizada em **08/08/2026**, com detalhes em [`evidencias-validacao-humana-2026-08-08.md`](evidencias-validacao-humana-2026-08-08.md).
+- isolamento multi-tenant das tools/resources;
+- descoberta e execução pelo transporte SSE;
+- guard de loopback/startup;
+- política de segurança dos endpoints MCP;
+- rate limiting de `analisar_cena`;
+- auditoria e erros sanitizados.
 
-- [x] Website ID oficial do Umami informado e configurado no ambiente local (nunca versionado).
-- [x] Acesso ao painel Umami confirmado.
-- [x] Page views visíveis no painel institucional após navegação real.
-- [x] Três eventos (`book_created`, `scene_saved`, `book_exported`) visíveis no painel após ações reais.
-- [x] Cliente MCP (Inspector v2.1.0) conectado por SSE em loopback.
-- [x] Listagem das três tools confirmada no Inspector.
-- [x] `listar_livros_acessiveis` executada com dados reais.
-- [x] `obter_outline_livro` executada com outline real.
-- [x] Resource template `iwrite://books/{bookId}/outline` descoberto e lido com sucesso.
-- [x] `analisar_cena` demonstrou o caminho `unavailable` sanitizado com a IA desabilitada, sem expor detalhes internos.
-- [ ] Validação **pós-deploy remoto** de page views/eventos Umami em `eq22.dsc.rodrigor.com` (a validação de 08/08/2026 usou frontend local + painel institucional). O MCP permanece intencionalmente local/loopback e não deve ser publicado no deploy atual.
+## Limitações atuais
+
+- sem operações destrutivas/escrita via MCP;
+- sem autenticação individual por cliente MCP;
+- execução suportada somente em loopback com identidade de desenvolvimento;
+- catálogo propositalmente pequeno: 3 tools + 1 resource.
+
+Essas limitações são deliberadas para manter a superfície segura enquanto o transporte não possui autenticação própria.
+
+## Histórico acadêmico
+
+Em 08/08/2026 o MCP foi validado manualmente com o MCP Inspector, em loopback, junto das evidências de Umami da disciplina. Foram confirmadas descoberta, execução das tools, leitura do resource e erro sanitizado da análise com IA desabilitada.
+
+A antiga checklist também previa uma validação posterior do **Umami** no deploy remoto acadêmico `eq22.dsc.rodrigor.com`. Essa etapa deixou de ser aplicável quando a disciplina e aquele ambiente foram encerrados; **não é uma pendência do MCP nem do produto atual**.
+
+Os registros originais permanecem em `docs/evidencias-validacao-humana-2026-08-08.md` e `docs/entrega/` como evidência histórica.

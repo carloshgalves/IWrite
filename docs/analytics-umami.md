@@ -1,73 +1,91 @@
-# Analytics de produto — Umami (issue #127)
+# Analytics de produto — Umami
 
 ## Finalidade
 
-O Umami mede **uso do produto**: page views e eventos de funcionalidades (criar livro, salvar cena, analisar cena, exportar). Ele responde "o que as pessoas usam", não "como o sistema se comporta".
+O Umami mede **uso do produto**: page views e eventos de funcionalidades como criar livro, salvar cena, analisar cena e exportar. Ele responde "o que as pessoas usam", enquanto OpenTelemetry responde "como o sistema está se comportando".
 
-**Analytics ≠ observabilidade.** A observabilidade técnica (OpenTelemetry: traces, métricas, logs — issues #124–#126) diagnostica latência, erros e gargalos por requisição. O Umami agrega comportamento de uso, sem identificar indivíduos e sem dados técnicos de execução. As duas integrações são independentes: desligar uma não afeta a outra.
+As duas integrações são independentes. Desligar analytics não afeta observabilidade e vice-versa.
 
-## Instância institucional da disciplina
+## Estado operacional atual
 
-Na disciplina DSC/UFPB, a equipe EQ22 usa a instância institucional do Umami em `https://umami.dsc.rodrigor.com`. O site da equipe já é cadastrado no painel como `eq22`/`eq22.dsc.rodrigor.com`.
+O IWrite **não depende de nenhuma instância institucional ou da infraestrutura da antiga disciplina**.
 
-O **Website ID oficial é configurado apenas no ambiente**. Apesar de ser um identificador público de tracking, o valor real continua deliberadamente fora do repositório para evitar acoplamento do código a um cadastro externo específico. Login e senha do painel também nunca pertencem ao código, Compose ou CI.
+A integração é opcional e desabilitada por padrão. Para habilitá-la, escolha uma instância Umami própria ou serviço gerenciado e configure o frontend por ambiente.
 
-## Variáveis de ambiente (frontend)
+`web/.env.local.example` não contém URL nem Website ID reais.
 
-| Variável | Obrigatória | Descrição |
+## Variáveis de ambiente
+
+| Variável | Quando necessária | Descrição |
 |---|---|---|
-| `NEXT_PUBLIC_UMAMI_ENABLED` | sim | `true` habilita; qualquer outro valor desabilita tudo. |
-| `NEXT_PUBLIC_UMAMI_SCRIPT_URL` | sim | URL do `script.js` do Umami. Na disciplina: `https://umami.dsc.rodrigor.com/script.js`. |
-| `NEXT_PUBLIC_UMAMI_WEBSITE_ID` | sim | Website ID do cadastro **oficial do IWrite/EQ22** no painel. Nunca versionar o valor real nem reutilizar ID de outro projeto. |
-| `NEXT_PUBLIC_UMAMI_HOST_URL` | não | Apenas se o endpoint de coleta for diferente da origem do script. |
+| `NEXT_PUBLIC_UMAMI_ENABLED` | sempre | `true` habilita; qualquer outro valor desabilita analytics. |
+| `NEXT_PUBLIC_UMAMI_SCRIPT_URL` | quando habilitado | URL do `script.js` da instância escolhida. |
+| `NEXT_PUBLIC_UMAMI_WEBSITE_ID` | quando habilitado | Website ID do cadastro do IWrite nessa instância. |
+| `NEXT_PUBLIC_UMAMI_HOST_URL` | opcional | Endpoint de coleta quando diferente da origem do script. |
 
-Sem configuração válida a integração é um **no-op total**: o script não é carregado e nenhuma chamada é feita. Falhas do tracker nunca bloqueiam ações do produto (todas as chamadas são fail-open). Nenhuma credencial administrativa do painel é usada pela aplicação — só o website ID público.
+Exemplo local de configuração, usando placeholders:
+
+```env
+NEXT_PUBLIC_UMAMI_ENABLED=true
+NEXT_PUBLIC_UMAMI_SCRIPT_URL=https://umami.example.com/script.js
+NEXT_PUBLIC_UMAMI_WEBSITE_ID=<WEBSITE_ID>
+# NEXT_PUBLIC_UMAMI_HOST_URL=https://umami.example.com
+```
+
+Sem `enabled=true`, URL e Website ID válidos, `getUmamiConfig()` retorna `null`: nenhum script é carregado e nenhuma chamada de analytics é feita. Falhas do tracker são fail-open e nunca devem bloquear o produto.
 
 ## Implementação
 
-- `web/src/lib/analytics/analytics.ts` — camada única e tipada: configuração, injeção do script (uma vez, `data-auto-track="false"`), page views com deduplicação e `trackEvent` com allowlist. **Não** chame `window.umami.track` diretamente fora deste arquivo.
-- Todo envio (page view e evento) passa **URL sanitizada explícita** ao tracker — nunca a captura automática da URL atual: query string e hash são removidos e segmentos dinâmicos (UUID, numérico, hex, token opaco longo) viram `{id}` (ex.: `/books/{id}`). O referrer segue a mesma regra (interno sanitizado; externo reduzido à origem) e o título da página não é enviado.
-- Page views e eventos disparados antes do script carregar entram numa **fila limitada** (10 itens): navegações distintas são preservadas em ordem, itens consecutivos idênticos são deduplicados e, cheia, o item mais antigo é descartado. Ao carregar, a fila é enviada de uma vez.
-- `web/src/lib/analytics/umami-analytics.tsx` — componente client no layout raiz; registra page view inicial e a cada mudança de `usePathname()` (navegação client-side), com dedup por caminho.
+- `web/src/lib/analytics/analytics.ts` concentra configuração, injeção do script, sanitização, fila e allowlist de eventos;
+- `web/src/lib/analytics/umami-analytics.tsx` registra page view inicial e navegações client-side;
+- nenhum componente deve chamar `window.umami.track` diretamente fora da camada de analytics;
+- page views e eventos usam URL sanitizada explícita: query string e hash são removidos, e segmentos que parecem IDs viram `{id}`;
+- referrer interno é sanitizado; referrer externo é reduzido à origem;
+- título da página não é enviado;
+- a fila pré-carregamento é limitada a 10 itens e descarta o item mais antigo quando cheia.
 
-## Eventos
+## Eventos atuais
 
-| Evento | Momento de disparo | Propriedades (enumeradas) |
+| Evento | Momento | Propriedades permitidas |
 |---|---|---|
-| `book_created` | após a criação confirmada pelo backend | — |
-| `scene_saved` | após persistência confirmada do conteúdo | `source`: `AUTO_SAVE` \| `MANUAL_SAVE` |
-| `scene_analysis_requested` | ao enviar uma análise válida | — |
-| `scene_analysis_succeeded` | somente após resposta válida da IA | — |
-| `scene_analysis_failed` | falha exibida ao usuário | `category`: `unavailable` \| `request_failed` |
-| `book_exported` | após download concluído | `target`: `manuscript` \| `notebook`; `format`: `txt` \| `md` \| `docx` |
+| `book_created` | criação confirmada pelo backend | — |
+| `scene_saved` | conteúdo persistido | `source`: `AUTO_SAVE` ou `MANUAL_SAVE` |
+| `scene_analysis_requested` | análise válida enviada | — |
+| `scene_analysis_succeeded` | resposta de IA válida | — |
+| `scene_analysis_failed` | falha exibida ao usuário | `category`: `unavailable` ou `request_failed` |
+| `book_exported` | download concluído | `target`: `manuscript` ou `notebook`; `format`: `txt`, `md` ou `docx` |
 
 ## Proteção de dados
 
-A allowlist em `analytics.ts` é a única fonte de eventos/propriedades/valores aceitos: eventos desconhecidos são descartados e propriedades ou valores fora da enumeração são removidos antes do envio. Nunca são enviados: conteúdo de manuscrito, títulos, emails, nomes, IDs brutos (usuário/tenant/livro/cena), prompts, respostas de IA, tokens, stack traces, query strings, hashes ou referrers sensíveis. Os caminhos rastreados são rotas normalizadas do app (`/`, `/dashboard`, `/books/{id}`), enviadas explicitamente já sanitizadas.
+A allowlist em `analytics.ts` é a única fonte de eventos, propriedades e valores aceitos.
+
+Nunca devem ser enviados:
+
+- conteúdo de manuscrito;
+- títulos de livros/cenas;
+- emails ou nomes;
+- IDs brutos de usuário, tenant, livro ou cena;
+- prompts ou respostas de IA;
+- tokens, cookies ou secrets;
+- stack traces;
+- query strings ou hashes.
 
 ## Testes
 
-`web/src/lib/analytics/analytics.test.ts`, `web/src/lib/analytics/umami-analytics.test.tsx` e a seção de analytics em `scene-ai-analysis-panel.test.tsx` cobrem: integração desabilitada/ausente/válida, carregamento único do script, page view inicial e navegação client-side, deduplicação, eventos de sucesso e falha, bloqueio de propriedades não permitidas e ausência de conteúdo/IDs privados.
+Os testes de analytics cobrem integração desabilitada, configuração válida/inválida, carregamento único do script, page views, deduplicação, eventos de sucesso/falha, allowlist de propriedades e ausência de conteúdo/IDs privados.
 
-## Validação humana — 08/08/2026
+## Validação em um ambiente real
 
-A integração foi validada de ponta a ponta com o frontend executado em `localhost:3000` e enviando para a **instância institucional** da disciplina.
+Ao configurar uma nova instância Umami:
 
-- [x] Website ID oficial da EQ22 informado no ambiente local, sem versioná-lo.
-- [x] `https://umami.dsc.rodrigor.com/script.js` carregado pelo navegador.
-- [x] Requisições de coleta `send` aceitas pelo servidor institucional com HTTP `200`.
-- [x] Page views visíveis no painel institucional.
-- [x] Rotas observadas no painel: `/`, `/login`, `/dashboard`, `/library` e `/books/{id}`.
-- [x] Sanitização comprovada visualmente: o UUID real do livro não apareceu no painel; a rota foi registrada como `/books/{id}`.
-- [x] Eventos reais visíveis no painel: `book_created`, `scene_saved` e `book_exported`.
-- [x] Na sessão registrada, o painel exibiu 9 eventos totais e 3 tipos únicos: 5 `scene_saved`, 3 `book_exported` e 1 `book_created`.
-- [ ] Repetir a validação no **deploy remoto** `eq22.dsc.rodrigor.com` após o Website ID ser configurado no build/deploy institucional.
+1. configure `NEXT_PUBLIC_UMAMI_*` apenas no ambiente de build/deploy;
+2. navegue por `/`, `/dashboard` e um livro;
+3. confirme page views no website correto;
+4. crie livro, salve cena e exporte manuscrito para validar os eventos;
+5. confirme que rotas dinâmicas aparecem como `/books/{id}` e que nenhum dado privado foi enviado.
 
-O registro técnico consolidado da sessão (Umami + MCP) está em [`evidencias-validacao-humana-2026-08-08.md`](evidencias-validacao-humana-2026-08-08.md).
+## Histórico acadêmico
 
-## Validação após deploy remoto
+Em 08/08/2026 a integração foi validada de ponta a ponta contra a instância institucional usada na disciplina DSC/UFPB. Essa validação comprovou funcionamento, sanitização de UUIDs e envio de `book_created`, `scene_saved` e `book_exported`.
 
-1. Configurar as variáveis com o Website ID oficial no ambiente de build (`NEXT_PUBLIC_*` são embutidas no build).
-2. Abrir `eq22.dsc.rodrigor.com`, navegar entre `/`, `/dashboard` e um livro; confirmar page views no painel do Umami no website correto.
-3. Criar um livro, salvar uma cena e exportar um manuscrito; confirmar `book_created`, `scene_saved` e `book_exported` no painel.
-4. Conferir novamente que nenhuma propriedade contém título, conteúdo ou IDs brutos.
+A instância, domínio, Website ID e eventual deploy da disciplina são **evidência histórica**, não configuração atual nem pendência operacional. Os registros permanecem em `docs/evidencias/`, `docs/entrega/` e `docs/evidencias-validacao-humana-2026-08-08.md`.

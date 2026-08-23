@@ -1,6 +1,7 @@
-# Override opcional para desenvolvimento/evidências: sobe um LGTM (Grafana +
+# Override opcional para desenvolvimento/diagnóstico: sobe um LGTM (Grafana +
 # Tempo + Loki + Mimir/Prometheus) local sem autenticação e aponta o backend
-# para ele. Não usar em produção; o backend institucional é externo.
+# para ele. Não usar em produção; produção deve configurar um backend OTLP
+# próprio/gerenciado por ambiente.
 #
 # Uso:
 #   docker compose -f docker-compose.yml -f docker-compose.observability.yml up --build
@@ -9,7 +10,7 @@
 # pelo frontend Next.js; a porta interna do container permanece 3000).
 services:
   otel-lgtm:
-    # Versão/digest validados em 2026-08-01; ver docs/opentelemetry.md.
+    # Versão/digest validados em 2026-08-01; ver docs/opentelemetry-implementation.md.
     image: grafana/otel-lgtm:0.30.0@sha256:46ca028e294bd728e8e930a28e887f640a8f2a9533cc283f79bcc6ab73d2ffd8
     container_name: iwrite-otel-lgtm
     ports:
@@ -21,7 +22,7 @@ services:
     environment:
       IWRITE_OTEL_ENABLED: "true"
       IWRITE_OTEL_AUTH_REQUIRED: "false"
-      OTEL_SERVICE_NAME: dsc-eq22
+      OTEL_SERVICE_NAME: iwrite-backend
       OTEL_EXPORTER_OTLP_ENDPOINT: http://otel-lgtm:4318
       OTEL_EXPORTER_OTLP_PROTOCOL: http/protobuf
       OTEL_TRACES_EXPORTER: otlp
@@ -36,8 +37,7 @@ services:
       # capture-arguments=true: ambos exportam texto livre não revisado.
       # Ver docs/otel-correlated-logs.md.
       OTEL_INSTRUMENTATION_LOGBACK_APPENDER_EXPERIMENTAL_CAPTURE_KEY_VALUE_PAIR_ATTRIBUTES: "true"
-      # Explicita a sanitização de db.statement (já é o default do agente);
-      # ver docs/opentelemetry.md#seguranca.
+      # Explicita a sanitização de db.statement (já é o default do agente).
       OTEL_INSTRUMENTATION_COMMON_DB_STATEMENT_SANITIZER_ENABLED: "true"
     depends_on:
       otel-lgtm:

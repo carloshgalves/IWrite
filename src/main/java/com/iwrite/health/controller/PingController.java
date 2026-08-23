@@ -11,6 +11,8 @@ import java.time.Instant;
 @RestController
 public class PingController {
 
+    private static final String SERVICE_NAME = "iwrite";
+
     private final DatabaseHealthService databaseHealthService;
 
     public PingController(DatabaseHealthService databaseHealthService) {
@@ -22,11 +24,11 @@ public class PingController {
         String timestamp = Instant.now().toString();
 
         if (databaseHealthService.isHealthy()) {
-            return ResponseEntity.ok(new PingResponse("ok", "eq22", "up", timestamp));
+            return ResponseEntity.ok(new PingResponse("ok", SERVICE_NAME, "up", timestamp));
         }
 
         return ResponseEntity.status(HttpStatus.SERVICE_UNAVAILABLE)
-                .body(new PingResponse("unavailable", "eq22", "down", timestamp));
+                .body(new PingResponse("unavailable", SERVICE_NAME, "down", timestamp));
     }
 
     public record PingResponse(
