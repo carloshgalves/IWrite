@@ -4,7 +4,7 @@ export function GET() {
   return Response.json(
     {
       ok: true,
-      service: "eq22",
+      service: "iwrite",
       timestamp: new Date().toISOString(),
     },
     {
