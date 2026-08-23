@@ -1,54 +1,136 @@
 # Roadmap e estado atual
 
-## Estado consolidado até a PR #52
+Esta página descreve **o backlog versionado/rastreado no GitHub**, não substitui decisões estratégicas discutidas fora do repositório.
 
-### Concluído
+## Fundações concluídas
 
-- **MVP estrutural:** livros, seções, capítulos e cenas.
-- **Experiência de escrita:** workspace, outline, editor TipTap, autosave, focus mode e seleção de cena por URL.
-- **Planejamento narrativo:** personagens, locais, itens, planejamento de cenas, storyboard e kanban.
-- **Organização:** notebook por livro e categorias/notas.
-- **Exportação:** Markdown e DOCX.
-- **Histórico:** snapshots de cena, restauração, revisão de conteúdo e proteção contra sobrescrita concorrente.
-- **Metas e progresso:** metas diárias e semanais, streak, dashboard do livro e dashboard global do usuário.
-- **Qualidade:** fundação de testes backend/frontend, E2E e CI periódico.
-- **Multi-tenancy:** tenant pessoal, usuário, timezone e isolamento progressivo de todos os principais domínios.
-- **B7a:** ownership de progresso e schedules por usuário.
-- **B7b:** data efetiva de escrita derivada do timezone do usuário.
-- **B7c:** idempotência, fingerprint, locking e integridade do ledger.
-- **B7d-a:** dashboard pessoal, contribuições registradas e separação entre métricas pessoais e compartilhadas.
+### Produto de escrita
 
-### Em andamento fora deste snapshot
+- livros, seções, capítulos e cenas;
+- workspace, outline, TipTap, autosave e focus mode;
+- personagens, locais, itens e planejamento de cenas;
+- storyboard e kanban;
+- notebook;
+- metas, streaks e dashboards;
+- histórico/restauração de cenas;
+- exportação TXT/Markdown/DOCX.
 
-- **C1 — ownership explícito do livro, colaboradores e autorização por livro.**
+### Integridade e multi-tenancy
 
-### Próximas fases prioritárias
+- tenant, usuário e timezone;
+- isolamento progressivo dos domínios;
+- ownership explícito do livro e colaboração base (#54);
+- ledger de palavras com idempotência, fingerprint, locking e rollback;
+- fundação segura de convites (#55).
 
-- **C2 — convites e Resend:** token seguro, hash persistido, expiração, uso único, revogação, reenvio e aceite transacional.
+### Identidade
 
-### Adiado
+- autenticação real e sessão multi-tenant (#63 / PR #139);
+- login/logout/restauração e reconciliação entre abas;
+- cadastro público com workspace pessoal (#143 / PR #149);
+- fundação de `user_personas` e persona primária.
 
-- **B7d-b — atividade geral de projeto e activity streaks.**
+### IA e observabilidade
 
-Foi adiada porque não bloqueia C1/C2 e exigiria instrumentação transversal em muitos módulos.
+- análise opcional de cenas;
+- OpenAI e Anthropic via Spring AI;
+- auditoria LLM;
+- OpenTelemetry automático;
+- spans/métricas de negócio;
+- logs estruturados correlacionados;
+- Grafana, Tempo, Loki e Prometheus/Mimir local;
+- Umami;
+- MCP mínimo;
+- baseline k6 autenticado;
+- healthcheck database-aware;
+- CI/E2E e gate de cobertura frontend.
+
+## Frente ativa principal — identidade e colaboração
+
+Roadmap canônica: #142.
+
+Estado:
+
+- [x] #143 — cadastro público e workspace pessoal;
+- [ ] #144 — completar perfil e múltiplas personas;
+- [ ] #145 — papéis/capabilities granulares por livro;
+- [ ] #146 — múltiplos workspaces e troca segura;
+- [ ] #147 — aceite de convites e biblioteca compartilhada;
+- [ ] #148 — UX específica para editor, revisor e leitor beta;
+- [ ] #57 — entrega/reenvio de convites por email, independente de provedor.
+
+Issues antigas #56 e #58 foram absorvidas pela #147. A #64 foi substituída pela #145.
+
+## Produto e experiência
+
+- #65 — comentários, sugestões e resolução editorial;
+- #66 — busca global;
+- #67 — PDF e EPUB;
+- #68 — capas/anexos em object storage S3-compatible;
+- #69 — feed de atividade e activity streak;
+- #70 — notificações;
+- #71 — consistência contextual/RAG;
+- #72 — realtime, somente após fundações assíncronas estarem maduras;
+- #110 — importação DOCX/Markdown/TXT/Scrivener;
+- #111 — offline e sincronização resiliente;
+- #112 — onboarding/templates;
+- #113 — séries, universos e cânone;
+- #117 — acessibilidade, responsividade e mobile.
+
+## Produto comercial
+
+- #108 — posicionamento, ICP, concorrência e hipóteses de preço;
+- #109 — marca definitiva;
+- #114 — portabilidade, exclusão e LGPD;
+- #73 — planos, limites e medição;
+- #74 — billing;
+- #115 — API/jobs/outbox/retries;
+- #116 — console administrativo e suporte.
+
+Epics de fase:
+
+- #118 — Secure Beta;
+- #119 — Public Beta;
+- #120 — SaaS Foundation;
+- #121 — Commercial Launch;
+- #122 — Publishing Suite & Editorial Intelligence.
+
+## Segurança, banco e operação
+
+Epics transversais:
+
+- #81 — Security;
+- #88 — Database;
+- #95 — Infra/Operação.
+
+Parte da fundação já existe e as issues foram atualizadas para diferenciar **núcleo implementado** de **operação ainda pendente**. Em particular:
+
+- #89 não precisa criar CI do zero; resta governança/branch protection;
+- #90 não precisa implementar OTel/Grafana/Loki/Tempo/Mimir do zero; resta operação de produção;
+- #93 não precisa implementar `/ping`; resta monitoramento externo e alertas.
 
 ## Critério de prioridade
 
-1. segurança e isolamento;
-2. entregas obrigatórias da disciplina;
-3. integridade de dados;
-4. experiência de uso;
-5. refinamentos e métricas secundárias.
+1. segurança, integridade e prevenção de perda de texto;
+2. completar identidade/colaboração necessária ao beta;
+3. portabilidade e experiência de uso;
+4. operação segura com usuários reais;
+5. monetização após ativação/retensão serem validadas;
+6. recursos avançados como realtime apenas quando houver necessidade comprovada.
 
-## Definição de concluído por fase
+## Definição de concluído
 
-Uma fase só é considerada concluída quando:
+Uma entrega relevante só é considerada concluída quando, conforme o escopo:
 
 - migrations aplicam em PostgreSQL real;
 - testes focados passam;
-- suíte backend completa passa;
-- suíte frontend e build passam quando houver alteração de contrato/UI;
-- `git diff --check` passa;
-- findings de auditoria são classificados e corrigidos em lote;
-- review da PR não deixa blocker ou high finding sem resolução;
-- documentação é atualizada após o merge.
+- suíte backend relevante passa;
+- frontend/testes/build passam quando aplicável;
+- isolamento/autorização são testados em features sensíveis;
+- `git diff --check` e higiene do diff estão limpos;
+- findings reais de review são resolvidos;
+- documentação de estado atual é atualizada após o merge.
+
+## Observação sobre a disciplina
+
+A infraestrutura e os entregáveis acadêmicos são históricos. Grafana, Umami, OpenTelemetry, MCP, k6, auditoria e healthcheck continuam no produto porque são capacidades implementadas; o que deixou de existir é a dependência de contas/servidores institucionais.
