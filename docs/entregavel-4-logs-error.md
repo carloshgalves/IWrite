@@ -53,10 +53,16 @@ Em vez de publicar um stack trace deliberadamente, a implementação demonstra:
 5. pesquisa do evento no Loki por `service_name`, `scope_name`, operação, resultado e severidade;
 6. testes que verificam que mensagem de exceção e stack trace não vazam.
 
-Exemplo de consulta documentada em [`docs/otel-correlated-logs.md`](otel-correlated-logs.md):
+A consulta abaixo pertence à **evidência acadêmica histórica** produzida quando o service name da disciplina ainda era `dsc-eq22`; ela é preservada como registro da validação feita naquela época:
 
 ```logql
 {service_name="dsc-eq22"} | scope_name="com.iwrite.business.events" | severity_text=~"WARN|ERROR"
+```
+
+No runtime atual, a consulta equivalente deve usar a identidade operacional vigente:
+
+```logql
+{service_name="iwrite-backend"} | scope_name="com.iwrite.business.events" | severity_text=~"WARN|ERROR"
 ```
 
 ## Evidências de implementação
