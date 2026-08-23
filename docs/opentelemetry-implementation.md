@@ -1,37 +1,50 @@
 # OpenTelemetry no IWrite
 
-O container do backend inclui o [OpenTelemetry Java Agent](https://github.com/open-telemetry/opentelemetry-java-instrumentation) para auto-instrumentação de HTTP, JDBC/PostgreSQL, métricas da JVM e logs, com exportação por OTLP. Dois ambientes são suportados: um LGTM local (Grafana + Tempo + Loki + Prometheus/Mimir) sem autenticação, para desenvolvimento e evidências, e um backend institucional externo com autenticação por header. Nenhum collector, Grafana, Tempo, Loki ou Prometheus é adicionado ao `Dockerfile` ou ao deploy de produção — o `docker-compose.observability.yml` é um override **somente para desenvolvimento**.
+## Estado operacional
 
-- **Versão do agente:** 2.30.0 (fixa no `Dockerfile`)
-- **SHA-256 validado no build:** `9d6bc2ad8dd8fb7f730984988e57b8ac0a82d81c7b3b8ae795378718733a509d`
-- **Local no runtime:** `/app/otel/opentelemetry-javaagent.jar`
-- **Inicialização:** `docker/start.sh` anexa `-javaagent` somente ao processo Java (Spring Boot). O Next.js não é instrumentado.
+O backend do IWrite inclui o **OpenTelemetry Java Agent** para auto-instrumentação de HTTP, JDBC/PostgreSQL, métricas da JVM e logs, com exportação por OTLP.
 
-## Desabilitado (padrão)
+A instrumentação é uma capacidade atual do produto e **não depende da infraestrutura da antiga disciplina**. Há dois modos suportados:
 
-Com `IWRITE_OTEL_ENABLED` ausente ou `false`:
+1. **LGTM local**, via `docker-compose.observability.yml`, para desenvolvimento e diagnóstico;
+2. **backend OTLP externo/gerenciado**, escolhido e configurado por ambiente.
 
-- o comportamento do container é exatamente o atual;
+O repositório não define um endpoint remoto oficial de produção. URL, autenticação, retenção e custos pertencem à configuração do ambiente operacional escolhido.
+
+## Agente
+
+- versão: `2.30.0`;
+- SHA-256 validado no build: `9d6bc2ad8dd8fb7f730984988e57b8ac0a82d81c7b3b8ae795378718733a509d`;
+- runtime: `/app/otel/opentelemetry-javaagent.jar`;
+- inicialização: `docker/start.sh` anexa `-javaagent` somente ao processo Java.
+
+O Next.js não é instrumentado pelo agente Java.
+
+## Desabilitado por padrão
+
+Com `IWRITE_OTEL_ENABLED=false` ou ausente:
+
 - o agente não é carregado;
-- nenhuma variável `OTEL_*` é exigida.
+- variáveis `OTEL_*` não são exigidas;
+- a aplicação continua funcionando sem backend de observabilidade.
 
-## Habilitado
+## Habilitação
 
-Com `IWRITE_OTEL_ENABLED=true`, o `docker/start.sh` exige, antes de iniciar qualquer processo:
+Com `IWRITE_OTEL_ENABLED=true`, o startup exige:
 
-| Variável | Sempre exigida | Exemplo (sem valores reais) |
+| Variável | Obrigatória | Exemplo |
 |---|---|---|
-| `OTEL_SERVICE_NAME` | sim | `dsc-eq22` |
-| `OTEL_EXPORTER_OTLP_ENDPOINT` | sim | `https://otlp.exemplo-institucional.invalid` |
-| `OTEL_EXPORTER_OTLP_HEADERS` | apenas se `IWRITE_OTEL_AUTH_REQUIRED=true` | `Authorization=Bearer <TOKEN>` |
+| `OTEL_SERVICE_NAME` | sim | `iwrite-backend` |
+| `OTEL_EXPORTER_OTLP_ENDPOINT` | sim | `https://otel.example.com` |
+| `OTEL_EXPORTER_OTLP_HEADERS` | quando `IWRITE_OTEL_AUTH_REQUIRED=true` | `Authorization=Bearer <TOKEN>` |
 
-`IWRITE_OTEL_ENABLED` e `IWRITE_OTEL_AUTH_REQUIRED` só aceitam `true` ou `false`; qualquer outro valor falha antes de iniciar, com mensagem que nomeia a variável mas nunca ecoa o valor recebido.
+`IWRITE_OTEL_ENABLED` e `IWRITE_OTEL_AUTH_REQUIRED` aceitam somente `true` ou `false`.
 
-**Seguro por padrão:** com `IWRITE_OTEL_ENABLED=true` e `IWRITE_OTEL_AUTH_REQUIRED` ausente, o default é `true` — exige `OTEL_EXPORTER_OTLP_HEADERS`. Isso evita habilitar OTel contra o endpoint institucional sem token por engano. Só o LGTM local (via `docker-compose.observability.yml`) define `IWRITE_OTEL_AUTH_REQUIRED=false` explicitamente. Com `IWRITE_OTEL_ENABLED=false`, `IWRITE_OTEL_AUTH_REQUIRED` não tem efeito.
+Quando OTel está habilitado e `IWRITE_OTEL_AUTH_REQUIRED` não foi explicitado, o default é `true`. Isso evita conectar acidentalmente a um endpoint remoto que deveria exigir autenticação. O override LGTM local define `false` explicitamente.
 
-Se uma variável obrigatória estiver ausente, o container falha antes de iniciar com uma mensagem que cita apenas o nome da variável — nunca valores, headers ou tokens.
+O startup nunca imprime valores de headers/tokens em mensagens de erro.
 
-Quando habilitado, o script aplica estes defaults **apenas se a variável não tiver sido definida externamente**:
+Defaults aplicados quando não sobrescritos:
 
 ```env
 OTEL_EXPORTER_OTLP_PROTOCOL=http/protobuf
@@ -40,148 +53,119 @@ OTEL_METRICS_EXPORTER=otlp
 OTEL_LOGS_EXPORTER=otlp
 ```
 
-### Ambiente local (LGTM, sem autenticação)
+## LGTM local
+
+O arquivo `docker-compose.observability.yml` sobe Grafana + Tempo + Loki + Mimir/Prometheus localmente e configura:
 
 ```env
 IWRITE_OTEL_ENABLED=true
 IWRITE_OTEL_AUTH_REQUIRED=false
-OTEL_SERVICE_NAME=dsc-eq22
+OTEL_SERVICE_NAME=iwrite-backend
 OTEL_EXPORTER_OTLP_ENDPOINT=http://otel-lgtm:4318
 ```
 
-Suba com o override de observabilidade (adiciona um `grafana/otel-lgtm` local e aponta o backend para ele; não afeta `Dockerfile` nem produção):
+Comando:
 
 ```bash
 docker compose -f docker-compose.yml -f docker-compose.observability.yml up --build
 ```
 
-A UI do Grafana fica em `http://localhost:3001` (a porta 3000 do host já é usada pelo frontend Next.js; a porta interna do container `otel-lgtm` continua 3000, sem efeito no endpoint OTLP interno). Sem headers/token — o LGTM local não exige autenticação.
+Grafana: `http://localhost:3001`.
 
-**Imagem do LGTM (fixa por versão + digest):** `grafana/otel-lgtm:0.30.0@sha256:46ca028e294bd728e8e930a28e887f640a8f2a9533cc283f79bcc6ab73d2ffd8`, validada em 2026-08-01 (`docker image inspect grafana/otel-lgtm:latest --format '{{json .RepoDigests}}'`, que na data da validação apontava para a tag `0.30.0`). Uso **exclusivo para desenvolvimento/evidências** — não faz parte do `Dockerfile` nem do deploy de produção.
+A imagem LGTM permanece fixada por versão e digest:
 
-### Servidor institucional (com autenticação)
+```text
+grafana/otel-lgtm:0.30.0@sha256:46ca028e294bd728e8e930a28e887f640a8f2a9533cc283f79bcc6ab73d2ffd8
+```
+
+Esse compose é somente para desenvolvimento/diagnóstico; não define a topologia de produção.
+
+## Backend OTLP externo
+
+Um ambiente real pode apontar para qualquer backend compatível com OTLP. Exemplo com placeholders:
 
 ```env
 IWRITE_OTEL_ENABLED=true
-# IWRITE_OTEL_AUTH_REQUIRED ausente assume 'true' (seguro por padrão); pode
-# ser omitida aqui, mostrada só para clareza.
 IWRITE_OTEL_AUTH_REQUIRED=true
-OTEL_SERVICE_NAME=dsc-eq22
-OTEL_EXPORTER_OTLP_ENDPOINT=https://otel.dsc.rodrigor.com
+OTEL_SERVICE_NAME=iwrite-backend
+OTEL_EXPORTER_OTLP_ENDPOINT=https://otel.example.com
 OTEL_EXPORTER_OTLP_HEADERS=Authorization=Bearer <TOKEN>
 ```
 
-## Segurança
+Endpoint, token e demais headers devem vir de secret/configuração externa. Nenhum domínio institucional ou credencial histórica é requisito do produto.
 
-- Token e headers ficam exclusivamente em secret ou variável de ambiente ignorada pelo Git (`.env` está no `.gitignore`; use `.env.example` como modelo).
-- O script nunca imprime valores de `OTEL_EXPORTER_OTLP_HEADERS`, nem os valores recebidos para `IWRITE_OTEL_ENABLED`/`IWRITE_OTEL_AUTH_REQUIRED` quando inválidos.
-- `docker-compose.observability.yml` não define nenhum token/header — é só para o LGTM local sem autenticação.
-- O MCP permanece desabilitado por padrão (`IWRITE_MCP_ENABLED=false`); `/sse` e `/mcp/message` não são expostos.
-- **Sanitização de `db.statement`:** o agente já sanitiza por padrão; `docker-compose.observability.yml` define `OTEL_INSTRUMENTATION_COMMON_DB_STATEMENT_SANITIZER_ENABLED=true` explicitamente para deixar essa proteção visível na configuração, em vez de depender só do default. Com ela, valores literais do SQL são substituídos por `?` antes de virar span attribute; parâmetros JDBC vinculados (bind parameters) não são capturados; conteúdo de manuscrito nunca deve aparecer em `db.statement`, só a forma parametrizada da query.
+## Segurança e privacidade
 
-## Diagnóstico
+- tokens e headers ficam fora do Git;
+- `docker/start.sh` não ecoa `OTEL_EXPORTER_OTLP_HEADERS`;
+- `docker-compose.observability.yml` não contém credenciais;
+- `db.statement` permanece sanitizado, com valores literais substituídos por placeholders;
+- parâmetros JDBC vinculados não são capturados como conteúdo;
+- não habilitar captura irrestrita de MDC ou argumentos de log;
+- conteúdo de manuscrito, prompts, respostas de IA, cookies e secrets não devem entrar em spans/logs.
 
-Validar a configuração sem iniciar os processos:
+O override local explicita:
+
+```env
+OTEL_INSTRUMENTATION_COMMON_DB_STATEMENT_SANITIZER_ENABLED=true
+OTEL_INSTRUMENTATION_LOGBACK_APPENDER_EXPERIMENTAL_CAPTURE_KEY_VALUE_PAIR_ATTRIBUTES=true
+```
+
+## Verificação do startup
 
 ```bash
 docker run --rm iwrite-otel-test /app/start.sh --check
-docker run --rm -e IWRITE_OTEL_ENABLED=true iwrite-otel-test /app/start.sh --check   # falha citando OTEL_SERVICE_NAME
-```
-
-No Git Bash do Windows, exporte `MSYS_NO_PATHCONV=1` antes desses comandos; caso contrário o shell converte `/app/start.sh` em caminho Windows.
-
-Testes do script de inicialização (variáveis obrigatórias, `IWRITE_OTEL_AUTH_REQUIRED`, booleanos inválidos, agente ausente, `-javaagent` como argumento único e não-vazamento de secrets):
-
-```bash
+docker run --rm -e IWRITE_OTEL_ENABLED=true iwrite-otel-test /app/start.sh --check
 sh docker/start.test.sh
 ```
 
-Com o agente ativo, as primeiras linhas do log do backend incluem `opentelemetry-javaagent` e a versão. Falhas de exportação aparecem no log como erros do exporter OTLP, sem interromper a aplicação.
+O segundo comando deve falhar citando a primeira configuração obrigatória ausente, sem revelar valores sensíveis.
 
-## Comandos de evidência (Tempo/Prometheus/Loki)
+## Diagnóstico local
 
-Só as portas 3001 (Grafana), 4317 e 4318 (OTLP) são publicadas no host pelo `docker-compose.observability.yml`; as APIs de consulta do Tempo (3200), Prometheus/Mimir (9090) e Loki (3100) ficam só na rede interna do compose. Os comandos abaixo usam `docker compose exec otel-lgtm curl ...` (o `curl` já vem na imagem). Rode com o stack de observabilidade no ar:
+Depois de subir o stack local e gerar tráfego autenticado, consulte os sinais pelo Grafana ou pelas APIs internas do container LGTM.
 
-```bash
-docker compose -f docker-compose.yml -f docker-compose.observability.yml up -d --build
-```
-
-Gere tráfego real primeiro (ex.: `GET /api/books` autenticado pela identidade de desenvolvimento).
-
-**Localizar traces por `service.name=dsc-eq22` e abrir o trace de `GET /api/books`:**
+### Traces
 
 ```bash
 docker compose -f docker-compose.yml -f docker-compose.observability.yml exec otel-lgtm \
-  curl -s 'http://localhost:3200/api/search?tags=service.name%3Ddsc-eq22' | head -c 2000
+  curl -s 'http://localhost:3200/api/search?tags=service.name%3Diwrite-backend' | head -c 2000
 ```
 
-Pegue um `traceID` do resultado acima e consulte o trace completo:
+Um trace de `GET /api/books` deve conter spans HTTP e JDBC correlacionados.
+
+### Métricas JVM
 
 ```bash
 docker compose -f docker-compose.yml -f docker-compose.observability.yml exec otel-lgtm \
-  curl -s 'http://localhost:3200/api/traces/<TRACE_ID>' | head -c 4000
+  curl -s 'http://localhost:9090/api/v1/query?query=jvm_memory_used_bytes%7Bservice_name%3D%22iwrite-backend%22%7D' | head -c 2000
 ```
 
-**Confirmar o span JDBC filho:** no JSON do trace acima, procure um span com `SPAN_KIND_CLIENT`, `db.system=postgresql` e `parentSpanId` igual ao `spanId` do span raiz `GET /api/books` (`SPAN_KIND_SERVER`). O `db.statement` deve conter apenas placeholders (`?`), nunca valores literais.
-
-**Consultar `jvm_memory_used_bytes`:**
-
-```bash
-docker compose -f docker-compose.yml -f docker-compose.observability.yml exec otel-lgtm \
-  curl -s 'http://localhost:9090/api/v1/query?query=jvm_memory_used_bytes%7Bservice_name%3D%22dsc-eq22%22%7D' | head -c 2000
-```
-
-**Consultar a métrica HTTP (`http_server_request_duration_seconds_count`):**
-
-```bash
-docker compose -f docker-compose.yml -f docker-compose.observability.yml exec otel-lgtm \
-  curl -s 'http://localhost:9090/api/v1/query?query=http_server_request_duration_seconds_count%7Bhttp_route%3D%22%2Fapi%2Fbooks%22%7D' | head -c 2000
-```
-
-**Consultar logs do serviço (Loki):**
+### Logs
 
 ```bash
 docker compose -f docker-compose.yml -f docker-compose.observability.yml exec otel-lgtm \
   curl -s -G 'http://localhost:3100/loki/api/v1/query_range' \
-  --data-urlencode 'query={service_name="dsc-eq22"}' \
+  --data-urlencode 'query={service_name="iwrite-backend"}' \
   --data-urlencode 'limit=50' | head -c 3000
 ```
 
-**Procurar indicadores sensíveis sem imprimir secrets:** verificação booleana — procura só por indicadores genéricos (`Authorization`, `Bearer`), nunca pelo token institucional real, e nunca imprime o trecho encontrado, só se algo bateu:
+## Sinais de negócio e logs correlacionados
 
-```bash
-if docker compose \
-  -f docker-compose.yml \
-  -f docker-compose.observability.yml \
-  exec -T otel-lgtm sh -c \
-  "curl -s -G 'http://localhost:3100/loki/api/v1/query_range' \
-    --data-urlencode 'query={service_name=\"dsc-eq22\"}' \
-    --data-urlencode 'limit=1000' |
-    grep -Eq 'Authorization|Bearer'"
-then
-  echo "Possível termo sensível encontrado"
-  exit 1
-else
-  echo "Nenhum indicador sensível encontrado"
-fi
-```
-
-Sintaxe validada contra o LGTM real: com um canário local (`echo 'Authorization: Bearer canary' | grep -Eq ...` dentro do mesmo container) o comando reporta "Possível termo sensível encontrado" e sai com status 1, sem nunca imprimir o valor encontrado; sem correspondência, reporta "Nenhum indicador sensível encontrado" e sai com status 0. Use tokens-canário falsos só nesse tipo de teste específico de vazamento — nunca informe ou substitua pelo token institucional real, aqui ou em qualquer comando desta página.
-
-Todos os comandos acima usam placeholders (`<TRACE_ID>`) — nenhum token, conteúdo privado ou ID pessoal real.
-
-## Sinais de negócio
-
-Os spans e métricas **manuais** dos fluxos críticos (salvamento de conteúdo de cena e análise assistida) estão documentados em [`otel-business-signals.md`](otel-business-signals.md): nomes, atributos permitidos, dados proibidos, buckets, consultas do Tempo/Prometheus, passos de reprodução e diagnóstico do gargalo.
-
-## Logs estruturados
-
-Os **eventos de log** correlacionados com traces estão em [`otel-correlated-logs.md`](otel-correlated-logs.md): key-value pairs do SLF4J 2, a configuração `capture-key-value-pair-attributes`, campos permitidos e proibidos, níveis por ambiente, consultas LogQL verificadas contra o LGTM real, correlação log → Tempo, e por que nenhum segundo `OpenTelemetryAppender` foi adicionado (o Java Agent já instala o dele).
-
-Duas ressalvas que afetam quem for escrever consultas: só `service_name` é label indexado — os atributos do log record chegam como structured metadata, com pontos convertidos em underscores (`iwrite.result` → `iwrite_result`) — e `otel.event.name` é consumido pelo agente como `EventName` do log record, não ficando consultável neste pipeline.
+- spans/métricas manuais: `docs/otel-business-signals.md`;
+- logs estruturados/correlação: `docs/otel-correlated-logs.md`;
+- observabilidade operacional futura: issue #90;
+- monitoramento/alertas: issue #93.
 
 ## Limitações conhecidas
 
-- O download do agente no build vem do GitHub Releases; o SHA-256 fixo garante reprodutibilidade do conteúdo, não a disponibilidade da rede.
-- O `.jar` do agente adiciona ~24 MB à imagem mesmo com OTel desabilitado.
-- A validação de configuração vive em `docker/start.sh`, não na aplicação Spring: rodar o `.jar` diretamente fora do container ignora essas checagens.
+- o download do agente no build depende do GitHub Releases, embora o SHA-256 fixe o conteúdo esperado;
+- o agente adiciona aproximadamente 24 MB à imagem mesmo quando desabilitado;
+- os guards de configuração vivem em `docker/start.sh`; executar o `.jar` diretamente ignora essas verificações;
+- produção ainda precisa definir backend, retenção, dashboards permanentes, alertas e orçamento operacional.
+
+## Histórico acadêmico
+
+A implementação foi originalmente validada durante a disciplina DSC/UFPB contra uma infraestrutura institucional compartilhada e com o service name histórico `dsc-eq22`.
+
+Esses endpoints, tokens e identificadores permanecem apenas nos documentos de entrega/evidência histórica. O guia conceitual `docs/opentelemetry.md` também é material original da disciplina e não deve ser interpretado como configuração de produção atual.
