@@ -4,11 +4,9 @@ on:
   pull_request:
     branches:
       - master
-      - main
   push:
     branches:
       - master
-      - main
 
 jobs:
   backend:
@@ -79,9 +77,12 @@ jobs:
 
       - name: Build frontend
         run: npm run build
-        
+
       - name: Upload frontend build
         uses: actions/upload-artifact@v4
         with:
           name: frontend-build
-          path: web/build
+          path: |
+            web/.next
+            !web/.next/cache
+          if-no-files-found: error
