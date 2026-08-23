@@ -1,61 +1,88 @@
 # IWrite
 
-O IWrite é uma aplicação web para planejamento, organização e escrita de livros. O projeto combina um backend Spring Boot com um frontend Next.js e evoluiu de um editor estruturado de manuscritos para uma plataforma com planejamento narrativo, histórico de cenas, notebook, metas e métricas pessoais de escrita.
+O IWrite é uma aplicação web para planejamento, organização, escrita e revisão de livros. A documentação desta pasta acompanha o **estado do produto no repositório principal**; material acadêmico permanece preservado em `docs/entrega/` como histórico separado.
 
 ## Estado documentado
 
-Este snapshot cobre o projeto até a PR #52, mergeada em 25 de junho de 2026.
+Este snapshot foi sincronizado em **22 de agosto de 2026**, após as PRs de autenticação, cadastro público, observabilidade, analytics, MCP, healthcheck e consolidação acadêmica até a **PR #159**.
 
-Nesse ponto, o sistema já possuía:
+O sistema já possui:
 
 - livros, seções, capítulos e cenas;
-- editor TipTap com autosave e controle de troca de cena;
+- editor TipTap com autosave e revisão otimista;
+- outline, storyboard e kanban;
 - personagens, locais, itens e planejamento de cenas;
-- outline, storyboard, kanban e seleção de cena por URL;
-- exportação Markdown e DOCX;
-- histórico de versões e restauração segura;
-- notebook por livro;
-- metas diárias e semanais;
-- dashboard do livro e dashboard global do usuário;
-- streaks e progresso de escrita por usuário;
-- fundação multi-tenant e isolamento por tenant;
-- ledger de contagem de palavras com idempotência, fingerprint, locking e rollback;
-- semântica separada entre progresso do manuscrito, progresso pessoal e contribuição registrada.
+- notebook;
+- histórico e restauração segura de cenas;
+- metas, streaks e dashboards;
+- exportação TXT, Markdown e DOCX;
+- multi-tenancy e isolamento por tenant/livro;
+- ownership explícito e colaboração base;
+- fundação segura de convites;
+- autenticação por sessão e cadastro público;
+- workspace pessoal e fundação de personas declarativas;
+- auditoria de domínio e de execuções LLM;
+- análise opcional de cenas com OpenAI/Anthropic;
+- OpenTelemetry, Grafana, Tempo, Loki e Prometheus/Mimir;
+- Umami opcional;
+- MCP mínimo;
+- k6 autenticado;
+- CI/E2E;
+- healthcheck database-aware.
+
+## Estado de produto
+
+A base técnica está consolidada, mas algumas capacidades de produto ainda são incompletas. A frente principal aberta é identidade/colaboração (#142):
+
+- #144 — completar perfil/personas;
+- #145 — RBAC/capabilities por livro;
+- #146 — múltiplos workspaces;
+- #147 — aceite completo de convites e biblioteca compartilhada;
+- #148 — UX específica para editor, revisor e leitor beta.
+
+Também permanecem abertas frentes de revisão editorial, busca, publicação PDF/EPUB, importação, object storage, resiliência offline, RAG, séries/universos, LGPD e operação SaaS.
 
 ## Stack principal
 
 ### Backend
 
-- Java 21
-- Spring Boot 3
-- Spring Data JPA / Hibernate
-- PostgreSQL
-- Flyway
-- Maven Wrapper
+- Java 21;
+- Spring Boot 3.4.1;
+- Spring Security;
+- Spring Data JPA / Hibernate;
+- PostgreSQL 16;
+- Flyway;
+- Spring AI.
 
 ### Frontend
 
-- Next.js
-- TypeScript
-- Tailwind CSS
-- TanStack Query
-- TipTap
-- Vitest
+- Next.js 15;
+- React 19;
+- TypeScript;
+- Tailwind CSS;
+- TanStack Query;
+- TipTap;
+- Vitest / Testing Library / Playwright.
 
-### Infraestrutura local
+### Plataforma e diagnóstico
 
-- Docker Compose
-- PostgreSQL em container
-- backend e frontend executados separadamente durante o desenvolvimento
+- Docker Compose;
+- OpenTelemetry Java Agent;
+- Grafana / Tempo / Loki / Prometheus-Mimir;
+- Umami;
+- MCP;
+- k6.
 
 ## Princípios atuais
 
-- O backend é a fonte de verdade para word count, progresso e autorização.
-- Datas históricas de progresso são preservadas como registradas.
-- Métricas produtivas não devem ser confundidas com alterações líquidas no manuscrito.
-- Recursos de outro tenant devem ser indistinguíveis de recursos inexistentes.
-- Migrations antigas não são editadas; mudanças entram em novas versões Flyway.
-- Mudanças de alto risco são validadas por testes focados, suíte completa, auditoria e review de PR.
+- O backend é a fonte de verdade para identidade, tenant, autorização, word count e progresso.
+- Recursos inacessíveis não devem ser enumeráveis por UUID.
+- Persona global não concede autorização; permissões efetivas são contextuais.
+- Migrations publicadas são forward-only e mudanças críticas são testadas em PostgreSQL real.
+- Conteúdo de manuscrito, prompts, tokens e secrets não devem aparecer em telemetria operacional.
+- Integrações externas devem ser opcionais/configuráveis e não impedir desenvolvimento local quando desabilitadas.
+- O monólito modular é o baseline atual; microserviços não são objetivo por si só.
+- Nenhuma arquitetura futura depende de contas ou servidores da antiga disciplina.
 
 ## Navegação
 
@@ -66,6 +93,8 @@ Nesse ponto, o sistema já possuía:
 - [Migrations e evolução do banco](Database-Migrations.md)
 - [Qualidade, testes e processo de revisão](Quality-and-Review.md)
 
-## Limite desta versão
+## Histórico acadêmico
 
-Book ownership explícito, colaboradores, convites e Resend ainda não estavam mergeados no estado documentado. Esses assuntos pertencem às fases C1 e C2.
+O projeto foi desenvolvido e avaliado na disciplina DSC/UFPB. Evidências, rubricas, vídeos e configurações institucionais continuam versionados para fins históricos, principalmente em `README-ENTREGA-DSC.md` e `docs/entrega/`.
+
+Esses documentos não representam o ambiente operacional atual do produto.
