@@ -1,4 +1,4 @@
-FROM maven:3.9.9-eclipse-temurin-21 AS backend-build
+FROM maven:3.9.9-eclipse-temurin-21@sha256:3a4ab3276a087bf276f79cae96b1af04f53731bec53fb2e651aca79e4b10211e AS backend-build
 
 WORKDIR /backend
 
@@ -9,7 +9,7 @@ COPY src src
 RUN mvn -s .mvn/local-settings.xml -DskipTests package
 
 
-FROM node:24-alpine AS frontend-deps
+FROM node:24-alpine@sha256:d32cdf619f63fe0471182d08996dd516c6275bb5fd31ae06e55a570bd9e1ad43 AS frontend-deps
 
 WORKDIR /frontend
 
@@ -18,7 +18,7 @@ COPY web/package.json web/package-lock.json ./
 RUN npm ci
 
 
-FROM node:24-alpine AS frontend-build
+FROM node:24-alpine@sha256:d32cdf619f63fe0471182d08996dd516c6275bb5fd31ae06e55a570bd9e1ad43 AS frontend-build
 
 WORKDIR /frontend
 
@@ -35,7 +35,7 @@ COPY web/ .
 RUN npm run build
 
 
-FROM node:24-alpine AS runtime
+FROM node:24-alpine@sha256:d32cdf619f63fe0471182d08996dd516c6275bb5fd31ae06e55a570bd9e1ad43 AS runtime
 
 RUN apk add --no-cache openjdk21-jre
 
