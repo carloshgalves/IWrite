@@ -28,7 +28,25 @@
           3.4.1. Ver docs/otel-business-signals.md#dependencias.
         -->
         <opentelemetry.version>1.64.0</opentelemetry.version>
+        <!--
+          Patch releases dentro da mesma linha gerenciada pelo Spring Boot 3.4.1
+          (10.1.x), para corrigir CVEs CRITICAL do container-security.yml
+          (Slice 80B/#80): CVE-2025-24813, CVE-2026-41293, CVE-2026-43512,
+          CVE-2026-43515. Sobrepõe o 10.1.34 gerenciado pelo Spring Boot.
+        -->
+        <tomcat.version>10.1.59</tomcat.version>
     </properties>
+    <!--
+      spring-security.version (6.4.2, gerenciado pelo Spring Boot 3.4.1) não foi
+      sobreposto: qualquer patch 6.4.x que corrige CVE-2025-41232 já torna
+      BCryptPasswordEncoder.encode() estrito para senhas > 72 bytes, o que
+      quebra o fixture de teste legado de com.iwrite.auth.
+      CredentialProvisioningRunnerIntegrationTest (confirmado localmente em
+      6.4.6 e 6.4.13). Corrigir isso exigiria alterar código de auth/session,
+      fora de escopo desta slice (paralelo à PR #162). CVE-2025-41232 e
+      CVE-2026-22732 ficam como exceção documentada — ver .trivyignore.yaml e
+      docs/supply-chain-security.md, seção "Exceções de vulnerabilidade documentadas".
+    -->
 
     <dependencies>
         <dependency>

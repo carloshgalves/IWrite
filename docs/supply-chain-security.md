@@ -82,6 +82,30 @@ hardening de containers, image scanning e SBOM).
   e retém, como artifact de CI com retenção limitada (14 dias), tanto o
   SBOM quanto o relatório de vulnerabilidades (JSON) da execução.
 
+## Exceções de vulnerabilidade documentadas
+
+- Exceções ao gate CRITICAL de `container-security.yml` são registradas em
+  `.trivyignore.yaml` (versionado, na raiz do repositório), nunca como
+  supressão silenciosa: cada entrada tem `id` (CVE), `statement` com a
+  justificativa e `expired_at` com o prazo de revisão. Passado o prazo, a
+  entrada deixa de valer e a CVE volta a bloquear o gate.
+- `.trivyignore.yaml` só é aplicado ao step de gate do workflow, nunca ao
+  relatório JSON — toda vulnerabilidade ignorada continua aparecendo no
+  relatório completo (artifact), só não derruba o job.
+- Exceções vigentes (revisão em 2026-11-22):
+  - `CVE-2025-41232` (spring-security-core) e `CVE-2026-22732`
+    (spring-security-web): o fix desta última só existe a partir de
+    Spring Security 6.5.9/7.0.4, fora da linha 6.4.x gerenciada pelo
+    Spring Boot 3.4.1; e qualquer patch 6.4.x que já corrige a primeira
+    torna `BCryptPasswordEncoder.encode()` estrito para senhas > 72 bytes,
+    quebrando um fixture de teste em `com.iwrite.auth` — confirmado
+    localmente antes de decidir pela exceção em vez do bump. Corrigir
+    ambas exige mudança em código de auth/session, fora de escopo desta
+    slice (paralela à PR #162).
+  - `CVE-2026-59873` (pacote `tar` embutido no npm que vem dentro da
+    imagem `node:24-alpine`): não é dependência do IWrite; aguardando o
+    upstream publicar uma imagem com npm corrigido.
+
 ## Fora de escopo desta slice
 
 Tratado em slices futuras da #80 (80C+):

@@ -85,7 +85,9 @@ jobs:
           if-no-files-found: error
 
       # Gate runs last so the report/SBOM are always uploaded first: a CRITICAL finding fails this
-      # job, it is never silenced with continue-on-error or an allowlist.
+      # job, it is never silenced with continue-on-error. .trivyignore.yaml applies ONLY here, never
+      # to the report step above, so every CRITICAL/HIGH still shows up in the uploaded report even
+      # when it's an explicit, dated, documented exception (see docs/supply-chain-security.md).
       - name: Enforce CRITICAL vulnerability gate
         uses: aquasecurity/trivy-action@ed142fd0673e97e23eac54620cfb913e5ce36c25  # v0.36.0
         with:
@@ -93,4 +95,5 @@ jobs:
           format: table
           severity: CRITICAL
           ignore-unfixed: false
+          trivyignores: .trivyignore.yaml
           exit-code: "1"
