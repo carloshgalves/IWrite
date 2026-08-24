@@ -2,12 +2,14 @@ package com.iwrite.profile;
 
 import com.iwrite.profile.dto.ProfileUpdateRequest;
 import com.iwrite.support.PostgresIntegrationTest;
+import com.iwrite.user.context.CurrentUserProvider;
 import com.iwrite.user.entity.User;
 import com.iwrite.user.entity.UserPersona;
 import com.iwrite.user.entity.UserPersonaType;
 import jakarta.persistence.EntityManager;
 import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
+import org.springframework.boot.test.mock.mockito.MockBean;
 import org.springframework.jdbc.core.JdbcTemplate;
 import org.springframework.transaction.PlatformTransactionManager;
 import org.springframework.transaction.annotation.Propagation;
@@ -19,8 +21,10 @@ import java.util.UUID;
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
+import static org.mockito.Mockito.when;
 
 /** Verifies rollback after validation has passed and PostgreSQL fails during persona persistence. */
+@SuppressWarnings("removal")
 class ProfileAtomicityIntegrationTest extends PostgresIntegrationTest {
 
     @Autowired
@@ -34,6 +38,9 @@ class ProfileAtomicityIntegrationTest extends PostgresIntegrationTest {
 
     @Autowired
     private EntityManager entityManager;
+
+    @MockBean
+    private CurrentUserProvider currentUserProvider;
 
     @Test
     @Transactional(propagation = Propagation.NOT_SUPPORTED)
@@ -60,6 +67,7 @@ class ProfileAtomicityIntegrationTest extends PostgresIntegrationTest {
             entityManager.flush();
             return user.getId();
         });
+        when(currentUserProvider.userId()).thenReturn(userId);
 
         jdbcTemplate.execute("""
                 create function reject_editor_primary_for_profile_atomicity() returns trigger
@@ -86,7 +94,7 @@ class ProfileAtomicityIntegrationTest extends PostgresIntegrationTest {
                     "EDITOR"
             );
 
-            assertThatThrownBy(() -> profileService.update(userId, request))
+            assertThatThrownBy(() -> profileService.update(request))
                     .isInstanceOf(RuntimeException.class)
                     .hasStackTraceContaining("forced profile persistence failure");
 

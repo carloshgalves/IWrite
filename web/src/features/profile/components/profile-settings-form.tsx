@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useRef, useState, type FormEvent } from "react";
+import { useEffect, useRef, type FormEvent } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { Button } from "@/components/ui/button";
 import { FeedbackMessage } from "@/components/ui/feedback-message";
@@ -8,11 +8,15 @@ import { Input } from "@/components/ui/input";
 import type { AuthenticatedSession } from "@/features/auth/api/auth-api";
 import { SESSION_QUERY_KEY } from "@/features/auth/session-query-key";
 import {
+  captureSessionGeneration,
+  isSessionGenerationCurrent,
+} from "@/features/auth/session-cache";
+import {
   fetchProfile,
   updateProfile,
   type PersonaType,
-  type Profile,
 } from "@/features/profile/api/profile-api";
+import { useProfileDraft } from "@/features/profile/profile-draft";
 import { queryKeys } from "@/lib/query/keys";
 
 const PERSONAS: { type: PersonaType; label: string }[] = [
@@ -32,17 +36,17 @@ export function ProfileSettingsForm() {
     queryFn: fetchProfile,
     retry: false,
   });
-  const [displayName, setDisplayName] = useState("");
-  const [email, setEmail] = useState("");
-  const [timeZone, setTimeZone] = useState("");
-  const [selectedPersonas, setSelectedPersonas] = useState<PersonaType[]>([]);
-  const [primaryPersona, setPrimaryPersona] = useState<PersonaType>("WRITER");
+  const { draft, updateDraft, applySavedProfile } = useProfileDraft(profileQuery.data);
   const errorRef = useRef<HTMLDivElement>(null);
 
   const updateMutation = useMutation({
     mutationFn: updateProfile,
-    onSuccess: (profile) => {
-      applyProfile(profile);
+    onMutate: () => captureSessionGeneration(queryClient),
+    onSuccess: (profile, _variables, mutationGeneration) => {
+      if (!isSessionGenerationCurrent(queryClient, mutationGeneration)) {
+        return;
+      }
+      applySavedProfile(profile);
       queryClient.setQueryData(queryKeys.profile, profile);
       queryClient.setQueryData<AuthenticatedSession | null>(SESSION_QUERY_KEY, (current) =>
         current
@@ -52,20 +56,6 @@ export function ProfileSettingsForm() {
     },
   });
 
-  function applyProfile(profile: Profile) {
-    setDisplayName(profile.displayName);
-    setEmail(profile.email);
-    setTimeZone(profile.timeZone);
-    setSelectedPersonas(profile.personas.map((persona) => persona.type));
-    setPrimaryPersona(profile.personas.find((persona) => persona.primary)?.type ?? profile.personas[0].type);
-  }
-
-  useEffect(() => {
-    if (profileQuery.data) {
-      applyProfile(profileQuery.data);
-    }
-  }, [profileQuery.data]);
-
   useEffect(() => {
     if (updateMutation.isError) {
       errorRef.current?.focus();
@@ -73,30 +63,36 @@ export function ProfileSettingsForm() {
   }, [updateMutation.isError]);
 
   function togglePersona(type: PersonaType) {
+    if (!draft) return;
     updateMutation.reset();
-    if (selectedPersonas.includes(type)) {
-      if (selectedPersonas.length === 1) {
+    if (draft.selectedPersonas.includes(type)) {
+      if (draft.selectedPersonas.length === 1) {
         return;
       }
-      const remaining = selectedPersonas.filter((persona) => persona !== type);
-      setSelectedPersonas(remaining);
-      if (primaryPersona === type) {
-        setPrimaryPersona(remaining[0]);
-      }
+      const remaining = draft.selectedPersonas.filter((persona) => persona !== type);
+      updateDraft(draft.email, {
+        selectedPersonas: remaining,
+        primaryPersona: draft.primaryPersona === type ? remaining[0] : draft.primaryPersona,
+      });
       return;
     }
-    setSelectedPersonas([...selectedPersonas, type]);
+    updateDraft(draft.email, { selectedPersonas: [...draft.selectedPersonas, type] });
   }
 
   function handleSubmit(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
-    if (updateMutation.isPending || selectedPersonas.length === 0) {
+    if (!draft || updateMutation.isPending || draft.selectedPersonas.length === 0) {
       return;
     }
     const personasInCanonicalOrder = PERSONAS
       .map(({ type }) => type)
-      .filter((type) => selectedPersonas.includes(type));
-    updateMutation.mutate({ displayName, timeZone, personas: personasInCanonicalOrder, primaryPersona });
+      .filter((type) => draft.selectedPersonas.includes(type));
+    updateMutation.mutate({
+      displayName: draft.displayName,
+      timeZone: draft.timeZone,
+      personas: personasInCanonicalOrder,
+      primaryPersona: draft.primaryPersona,
+    });
   }
 
   if (profileQuery.isPending) {
@@ -114,6 +110,10 @@ export function ProfileSettingsForm() {
     );
   }
 
+  if (!draft) {
+    return <FeedbackMessage>Carregando perfil…</FeedbackMessage>;
+  }
+
   return (
     <form className="grid gap-6" onSubmit={handleSubmit} noValidate>
       <div className="grid gap-1 text-sm">
@@ -121,17 +121,18 @@ export function ProfileSettingsForm() {
         <Input
           id="profile-display-name"
           autoComplete="name"
-          value={displayName}
+          value={draft.displayName}
+          disabled={updateMutation.isPending}
           onChange={(event) => {
             updateMutation.reset();
-            setDisplayName(event.target.value);
+            updateDraft(draft.email, { displayName: event.target.value });
           }}
         />
       </div>
 
       <div className="grid gap-1 text-sm">
         <label className="font-medium text-zinc-700" htmlFor="profile-email">Email</label>
-        <Input id="profile-email" type="email" value={email} readOnly aria-describedby="profile-email-help" />
+        <Input id="profile-email" type="email" value={draft.email} readOnly aria-describedby="profile-email-help" />
         <p id="profile-email-help" className="text-xs text-zinc-500">O email não pode ser alterado nesta tela.</p>
       </div>
 
@@ -140,10 +141,11 @@ export function ProfileSettingsForm() {
         <Input
           id="profile-time-zone"
           list="profile-time-zones"
-          value={timeZone}
+          value={draft.timeZone}
+          disabled={updateMutation.isPending}
           onChange={(event) => {
             updateMutation.reset();
-            setTimeZone(event.target.value);
+            updateDraft(draft.email, { timeZone: event.target.value });
           }}
         />
         <datalist id="profile-time-zones">
@@ -163,13 +165,13 @@ export function ProfileSettingsForm() {
         <fieldset className="grid gap-2" aria-label="Personas">
           <legend className="text-sm font-medium text-zinc-700">Selecione uma ou mais personas</legend>
           {PERSONAS.map(({ type, label }) => {
-            const checked = selectedPersonas.includes(type);
+            const checked = draft.selectedPersonas.includes(type);
             return (
               <label key={type} className="flex min-h-10 items-center gap-3 rounded-md border border-zinc-200 px-3 py-2 text-sm">
                 <input
                   type="checkbox"
                   checked={checked}
-                  disabled={checked && selectedPersonas.length === 1}
+                  disabled={updateMutation.isPending || (checked && draft.selectedPersonas.length === 1)}
                   onChange={() => togglePersona(type)}
                 />
                 <span>{label}</span>
@@ -180,16 +182,17 @@ export function ProfileSettingsForm() {
 
         <fieldset className="grid gap-2" role="radiogroup" aria-label="Persona principal">
           <legend className="text-sm font-medium text-zinc-700">Escolha a persona principal</legend>
-          {PERSONAS.filter(({ type }) => selectedPersonas.includes(type)).map(({ type, label }) => (
+          {PERSONAS.filter(({ type }) => draft.selectedPersonas.includes(type)).map(({ type, label }) => (
             <label key={type} className="flex items-center gap-3 text-sm text-zinc-700">
               <input
                 type="radio"
                 name="primaryPersona"
                 aria-label={`${label} como principal`}
-                checked={primaryPersona === type}
+                checked={draft.primaryPersona === type}
+                disabled={updateMutation.isPending}
                 onChange={() => {
                   updateMutation.reset();
-                  setPrimaryPersona(type);
+                  updateDraft(draft.email, { primaryPersona: type });
                 }}
               />
               <span>{label}</span>

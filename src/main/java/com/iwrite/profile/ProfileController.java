@@ -1,10 +1,8 @@
 package com.iwrite.profile;
 
-import com.iwrite.auth.IWriteUserDetails;
 import com.iwrite.profile.dto.ProfileResponse;
 import com.iwrite.profile.dto.ProfileUpdateRequest;
 import jakarta.validation.Valid;
-import org.springframework.security.core.annotation.AuthenticationPrincipal;
 import org.springframework.web.bind.annotation.GetMapping;
 import org.springframework.web.bind.annotation.PatchMapping;
 import org.springframework.web.bind.annotation.RequestBody;
@@ -22,15 +20,14 @@ public class ProfileController {
     }
 
     @GetMapping
-    public ProfileResponse get(@AuthenticationPrincipal IWriteUserDetails principal) {
-        return profileService.get(principal.userId());
+    public ProfileResponse get() {
+        return profileService.get();
     }
 
     @PatchMapping
     public ProfileResponse update(
-            @AuthenticationPrincipal IWriteUserDetails principal,
             @Valid @RequestBody ProfileUpdateRequest request
     ) {
-        return profileService.update(principal.userId(), request);
+        return profileService.update(request);
     }
 }

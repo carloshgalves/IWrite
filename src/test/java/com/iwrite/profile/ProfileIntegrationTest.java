@@ -3,10 +3,11 @@ package com.iwrite.profile;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.iwrite.book.entity.Book;
 import com.iwrite.book.entity.BookStatus;
-import com.iwrite.support.PostgresIntegrationTest;
+import com.iwrite.support.TestDatabaseInitializer;
 import com.iwrite.tenant.entity.Tenant;
 import com.iwrite.tenant.entity.TenantMembership;
 import com.iwrite.tenant.entity.TenantMembershipRole;
+import com.iwrite.tenant.repository.TenantMembershipRepository;
 import com.iwrite.user.entity.User;
 import com.iwrite.user.entity.UserCredential;
 import com.iwrite.user.entity.UserPersona;
@@ -18,6 +19,7 @@ import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.test.autoconfigure.web.servlet.AutoConfigureMockMvc;
+import org.springframework.boot.test.context.SpringBootTest;
 import org.springframework.http.MediaType;
 import org.springframework.mock.web.MockHttpSession;
 import org.springframework.security.crypto.password.PasswordEncoder;
@@ -26,6 +28,7 @@ import org.springframework.test.context.DynamicPropertySource;
 import org.springframework.test.web.servlet.MockMvc;
 import org.springframework.test.web.servlet.MvcResult;
 import org.springframework.test.web.servlet.request.MockHttpServletRequestBuilder;
+import org.springframework.transaction.annotation.Transactional;
 
 import java.time.OffsetDateTime;
 import java.util.List;
@@ -47,12 +50,20 @@ import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.
  * profile endpoint is allowed to trust.
  */
 @AutoConfigureMockMvc
-class ProfileIntegrationTest extends PostgresIntegrationTest {
+@SpringBootTest
+@Transactional
+class ProfileIntegrationTest {
 
     private static final String PASSWORD = "senha-de-perfil-A1";
 
     @DynamicPropertySource
     static void keepProfileLoginsOutsideTheRateLimitContract(DynamicPropertyRegistry registry) {
+        TestDatabaseInitializer.prepareDatabase();
+        registry.add("spring.datasource.url", TestDatabaseInitializer::testDbUrl);
+        registry.add("spring.datasource.username", TestDatabaseInitializer::username);
+        registry.add("spring.datasource.password", TestDatabaseInitializer::password);
+        registry.add("spring.datasource.hikari.maximum-pool-size", () -> "4");
+        registry.add("iwrite.current-user.development.enabled", () -> "false");
         // This suite exercises profile behavior and performs a real login for every scenario. Give
         // it a separate high-budget context so those setup logins cannot consume the fixed-window
         // counters asserted by the dedicated authentication rate-limit suites.
@@ -68,6 +79,9 @@ class ProfileIntegrationTest extends PostgresIntegrationTest {
 
     @Autowired
     private PasswordEncoder passwordEncoder;
+
+    @Autowired
+    private TenantMembershipRepository membershipRepository;
 
     @PersistenceContext
     private EntityManager entityManager;
@@ -108,6 +122,33 @@ class ProfileIntegrationTest extends PostgresIntegrationTest {
                 .andExpect(jsonPath("$.personas[?(@.type == 'WRITER' && @.primary == true)]", hasSize(1)))
                 .andExpect(jsonPath("$.personas[?(@.type == 'EDITOR')]", hasSize(1)))
                 .andExpect(jsonPath("$.personas[?(@.type == 'BETA_READER')]", hasSize(1)));
+    }
+
+    @Test
+    void getRejectsASessionWhoseMembershipWasRevoked() throws Exception {
+        MockHttpSession session = login(accountA.email());
+        revokeMembership(accountA.userId());
+
+        mockMvc.perform(get("/api/profile").session(session))
+                .andExpect(status().isUnauthorized());
+    }
+
+    @Test
+    void patchRejectsARevokedMembershipWithoutChangingAnyProfileField() throws Exception {
+        MockHttpSession session = login(accountA.email());
+        revokeMembership(accountA.userId());
+
+        patchProfile(session, "Nome indevido", "America/Fortaleza",
+                List.of("WRITER", "EDITOR"), "EDITOR")
+                .andExpect(status().isUnauthorized());
+
+        User unchanged = findUser(accountA.userId());
+        assertThat(unchanged.getDisplayName()).isEqualTo("Ana");
+        assertThat(unchanged.getTimeZoneId()).isEqualTo("America/Sao_Paulo");
+        assertThat(personas(accountA.userId())).singleElement().satisfies(persona -> {
+            assertThat(persona.getPersona()).isEqualTo(UserPersonaType.WRITER);
+            assertThat(persona.isPrimary()).isTrue();
+        });
     }
 
     @Test
@@ -348,6 +389,12 @@ class ProfileIntegrationTest extends PostgresIntegrationTest {
         entityManager.persist(persona);
         entityManager.flush();
         return persona;
+    }
+
+    private void revokeMembership(UUID userId) {
+        membershipRepository.deleteAll(membershipRepository.findByUser_Id(userId));
+        entityManager.flush();
+        entityManager.clear();
     }
 
     private User findUser(UUID userId) {

@@ -4,6 +4,7 @@ import com.iwrite.common.exception.BadRequestException;
 import com.iwrite.common.timezone.IanaZoneIdValidator;
 import com.iwrite.profile.dto.ProfileResponse;
 import com.iwrite.profile.dto.ProfileUpdateRequest;
+import com.iwrite.user.context.CurrentUserProvider;
 import com.iwrite.user.entity.User;
 import com.iwrite.user.entity.UserPersona;
 import com.iwrite.user.entity.UserPersonaType;
@@ -11,6 +12,7 @@ import com.iwrite.user.repository.UserPersonaRepository;
 import com.iwrite.user.repository.UserRepository;
 import org.springframework.security.web.authentication.session.SessionAuthenticationException;
 import org.springframework.stereotype.Service;
+import org.springframework.transaction.annotation.Isolation;
 import org.springframework.transaction.annotation.Transactional;
 
 import java.util.ArrayList;
@@ -28,25 +30,34 @@ public class ProfileService {
     private final UserRepository userRepository;
     private final UserPersonaRepository personaRepository;
     private final UserProfileValidator profileValidator;
+    private final CurrentUserProvider currentUserProvider;
 
     public ProfileService(
             UserRepository userRepository,
             UserPersonaRepository personaRepository,
-            IanaZoneIdValidator timeZoneValidator
+            IanaZoneIdValidator timeZoneValidator,
+            CurrentUserProvider currentUserProvider
     ) {
         this.userRepository = userRepository;
         this.personaRepository = personaRepository;
         this.profileValidator = new UserProfileValidator(timeZoneValidator);
+        this.currentUserProvider = currentUserProvider;
     }
 
-    @Transactional(readOnly = true)
-    public ProfileResponse get(UUID authenticatedUserId) {
+    @Transactional(readOnly = true, isolation = Isolation.REPEATABLE_READ)
+    public ProfileResponse get() {
+        UUID authenticatedUserId = currentUserProvider.userId();
         User user = requireUser(authenticatedUserId);
         return response(user, requireValidStoredPersonas(authenticatedUserId));
     }
 
     @Transactional
-    public ProfileResponse update(UUID authenticatedUserId, ProfileUpdateRequest request) {
+    public ProfileResponse update(ProfileUpdateRequest request) {
+        // Resolving the current identity re-reads the membership that backs the session before any
+        // profile validation or mutation. A revoked membership therefore fails as 401 through the
+        // same CurrentUserProvider used by every tenant-scoped service.
+        UUID authenticatedUserId = currentUserProvider.userId();
+
         // Validate the complete command before changing managed entities or issuing a write. This
         // makes ordinary validation failures side-effect free; the transaction remains the final
         // atomicity boundary for persistence failures after this point.
@@ -59,7 +70,7 @@ public class ProfileService {
         }
 
         // Serializes two profile reconciliations for the same identity. This is not authorization:
-        // authenticatedUserId came from the server-side principal, never from the request body.
+        // authenticatedUserId came from the server-side CurrentUserProvider, never from the request body.
         User user = userRepository.findByIdForUpdate(authenticatedUserId)
                 .orElseThrow(this::invalidSession);
         List<UserPersona> existing = personaRepository.findAllByUserId(authenticatedUserId);

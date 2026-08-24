@@ -51,6 +51,17 @@ function currentGeneration(client: QueryClient): number {
   return reconciliationGenerations.get(client) ?? 0;
 }
 
+/** Captures the same reconciliation generation used by the global mutation cache. Components that
+ *  must avoid their own stale onSuccess side effects can retain this token for the mutation. */
+export function captureSessionGeneration(client: QueryClient): number {
+  return currentGeneration(client);
+}
+
+/** True only while no reconciliation has started since the supplied generation was captured. */
+export function isSessionGenerationCurrent(client: QueryClient, generation: number): boolean {
+  return generation === currentGeneration(client);
+}
+
 export function markReconciliationStart(client: QueryClient): void {
   reconciliationGenerations.set(client, currentGeneration(client) + 1);
 }
