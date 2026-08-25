@@ -6,16 +6,13 @@ on:
       - master
     paths:
       - "Dockerfile"
-      - "web/Dockerfile"
       - "pom.xml"
       - ".mvn/**"
       - "src/**"
-      - "web/package.json"
-      - "web/package-lock.json"
-      - "web/src/**"
-      - "web/public/**"
-      - "web/server.mjs"
-      - "web/next.config.ts"
+      # Both Dockerfiles COPY the whole web/ tree (minus web/.dockerignore's node_modules/.next/etc.)
+      # into the build context, so any file under web/ can change the built image — match the whole
+      # tree instead of enumerating individual config files (tsconfig.json, tailwind.config.ts, ...).
+      - "web/**"
       - "docker/start.sh"
       - ".trivyignore.yaml"
       - ".github/workflows/container-security.yml"
