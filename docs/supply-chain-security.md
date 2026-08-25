@@ -93,18 +93,25 @@ hardening de containers, image scanning e SBOM).
   relatório JSON — toda vulnerabilidade ignorada continua aparecendo no
   relatório completo (artifact), só não derruba o job.
 - Exceções vigentes (revisão em 2026-11-22):
-  - `CVE-2025-41232` (spring-security-core) e `CVE-2026-22732`
-    (spring-security-web): o fix desta última só existe a partir de
-    Spring Security 6.5.9/7.0.4, fora da linha 6.4.x gerenciada pelo
-    Spring Boot 3.4.1; e qualquer patch 6.4.x que já corrige a primeira
-    torna `BCryptPasswordEncoder.encode()` estrito para senhas > 72 bytes,
-    quebrando um fixture de teste em `com.iwrite.auth` — confirmado
-    localmente antes de decidir pela exceção em vez do bump. Corrigir
-    ambas exige mudança em código de auth/session, fora de escopo desta
-    slice (paralela à PR #162).
+  - `CVE-2026-22732` (spring-security-web): o advisory oficial do Spring
+    cobre toda a linha 6.4.0–6.4.14 (inclui o 6.4.13 já adotado nesta
+    slice); o fix 6.4.15 é Enterprise-only, e o fix OSS só existe a partir
+    de 6.5.9 — fora da linha 6.4.x gerenciada pelo Spring Boot 3.4.1.
+    Remover esta exceção exige um upgrade de linha do Spring
+    Security/Spring Boot, ou uma mitigação específica, coordenados com a
+    evolução de auth/session (PR #162 e sucessoras).
   - `CVE-2026-59873` (pacote `tar` embutido no npm que vem dentro da
     imagem `node:24-alpine`): não é dependência do IWrite; aguardando o
     upstream publicar uma imagem com npm corrigido.
+- `CVE-2025-41232` (spring-security-core) **não** é mais uma exceção:
+  corrigida via `spring-security.version=6.4.13` no `pom.xml` (patch dentro
+  da própria linha 6.4.x já gerenciada pelo Spring Boot 3.4.1). Esse patch
+  torna `BCryptPasswordEncoder.encode()` estrito para senhas > 72 bytes;
+  isso exigiu ajustar o fixture de teste legado de
+  `com.iwrite.auth.CredentialProvisioningRunnerIntegrationTest` para semear
+  um hash bcrypt precomputado em vez de hashear uma senha oversized ao
+  vivo — nenhuma lógica de produção mudou (o login já rejeitava senha
+  oversized antes de qualquer comparação de hash).
 
 ## Fora de escopo desta slice
 

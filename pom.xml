@@ -35,18 +35,24 @@
           CVE-2026-43515. Sobrepõe o 10.1.34 gerenciado pelo Spring Boot.
         -->
         <tomcat.version>10.1.59</tomcat.version>
+        <!--
+          Patch release dentro da mesma linha gerenciada pelo Spring Boot 3.4.1
+          (6.4.x), para corrigir a CVE CRITICAL CVE-2025-41232
+          (spring-security-core) do container-security.yml (Slice 80B/#80).
+          Sobrepõe o 6.4.2 gerenciado pelo Spring Boot. Este patch torna
+          BCryptPasswordEncoder.encode() estrito para senhas > 72 bytes, o que
+          exigiu ajustar o fixture de teste legado de com.iwrite.auth.
+          CredentialProvisioningRunnerIntegrationTest para semear um hash bcrypt
+          precomputado em vez de hashear uma senha oversized ao vivo (nenhuma
+          lógica de produção mudou). NÃO corrige CVE-2026-22732
+          (spring-security-web): o advisory oficial cobre toda a linha
+          6.4.0–6.4.14, o fix 6.4.15 é Enterprise-only, e o fix OSS só existe a
+          partir de 6.5.9 — fora da linha 6.4.x que o Spring Boot 3.4.1 gerencia.
+          Ver .trivyignore.yaml e docs/supply-chain-security.md, seção
+          "Exceções de vulnerabilidade documentadas".
+        -->
+        <spring-security.version>6.4.13</spring-security.version>
     </properties>
-    <!--
-      spring-security.version (6.4.2, gerenciado pelo Spring Boot 3.4.1) não foi
-      sobreposto: qualquer patch 6.4.x que corrige CVE-2025-41232 já torna
-      BCryptPasswordEncoder.encode() estrito para senhas > 72 bytes, o que
-      quebra o fixture de teste legado de com.iwrite.auth.
-      CredentialProvisioningRunnerIntegrationTest (confirmado localmente em
-      6.4.6 e 6.4.13). Corrigir isso exigiria alterar código de auth/session,
-      fora de escopo desta slice (paralelo à PR #162). CVE-2025-41232 e
-      CVE-2026-22732 ficam como exceção documentada — ver .trivyignore.yaml e
-      docs/supply-chain-security.md, seção "Exceções de vulnerabilidade documentadas".
-    -->
 
     <dependencies>
         <dependency>

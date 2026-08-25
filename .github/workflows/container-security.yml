@@ -17,6 +17,7 @@ on:
       - "web/server.mjs"
       - "web/next.config.ts"
       - "docker/start.sh"
+      - ".trivyignore.yaml"
       - ".github/workflows/container-security.yml"
   workflow_dispatch:
   schedule:
