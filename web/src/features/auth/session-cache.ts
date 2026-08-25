@@ -47,6 +47,27 @@ export async function refetchActiveDomainQueries(client: QueryClient): Promise<v
 const reconciliationGenerations = new WeakMap<QueryClient, number>();
 const mutationGenerations = new WeakMap<Mutation<unknown, unknown, unknown, unknown>, number>();
 
+interface AuthenticatedCacheRecoveryState {
+  reconciliationInProgress: boolean;
+  stalePurgeRevision: number;
+  recoveredStalePurgeRevision: number;
+  recoveryPromise?: Promise<void>;
+}
+
+const authenticatedCacheRecoveryStates = new WeakMap<QueryClient, AuthenticatedCacheRecoveryState>();
+
+function recoveryState(client: QueryClient): AuthenticatedCacheRecoveryState {
+  const existing = authenticatedCacheRecoveryStates.get(client);
+  if (existing) return existing;
+  const created = {
+    reconciliationInProgress: false,
+    stalePurgeRevision: 0,
+    recoveredStalePurgeRevision: 0,
+  };
+  authenticatedCacheRecoveryStates.set(client, created);
+  return created;
+}
+
 function currentGeneration(client: QueryClient): number {
   return reconciliationGenerations.get(client) ?? 0;
 }
@@ -64,6 +85,82 @@ export function isSessionGenerationCurrent(client: QueryClient, generation: numb
 
 export function markReconciliationStart(client: QueryClient): void {
   reconciliationGenerations.set(client, currentGeneration(client) + 1);
+}
+
+/** Starts the focus/cross-tab reconciliation window in addition to advancing its identity
+ *  generation. Direct login/register session replacement advances the generation too, but does not
+ *  use this in-flight coordination because it has no session refetch/domain-refetch window. */
+export function beginSessionReconciliation(client: QueryClient): void {
+  markReconciliationStart(client);
+  recoveryState(client).reconciliationInProgress = true;
+}
+
+async function refetchCurrentIdentityUntilStable(client: QueryClient): Promise<void> {
+  const state = recoveryState(client);
+  if (state.recoveryPromise) {
+    await state.recoveryPromise;
+    if (client.getQueryData(SESSION_QUERY_KEY)
+        && state.recoveredStalePurgeRevision !== state.stalePurgeRevision) {
+      await refetchCurrentIdentityUntilStable(client);
+    }
+    return;
+  }
+
+  const recoveryPromise = (async () => {
+    while (client.getQueryData(SESSION_QUERY_KEY)) {
+      const revisionBeingRecovered = state.stalePurgeRevision;
+      await refetchActiveDomainQueries(client);
+      if (revisionBeingRecovered === state.stalePurgeRevision) {
+        state.recoveredStalePurgeRevision = revisionBeingRecovered;
+        return;
+      }
+    }
+  })();
+  state.recoveryPromise = recoveryPromise;
+  try {
+    await recoveryPromise;
+  } finally {
+    if (state.recoveryPromise === recoveryPromise) {
+      state.recoveryPromise = undefined;
+    }
+  }
+}
+
+/** Finishes a successful or failed session reconciliation. A stale mutation that purged before the
+ *  ordinary domain refetch is covered by that one refetch; if it purges while the refetch is in
+ *  flight, the revision changes and the serialized loop performs exactly one more pass. */
+export async function finishSessionReconciliation(
+  client: QueryClient,
+  restoreAuthenticatedQueries: boolean,
+): Promise<void> {
+  const state = recoveryState(client);
+  try {
+    if (restoreAuthenticatedQueries && client.getQueryData(SESSION_QUERY_KEY)) {
+      await refetchCurrentIdentityUntilStable(client);
+    }
+  } finally {
+    state.reconciliationInProgress = false;
+  }
+  // A query can publish B's data immediately before its refetch Promise resolves. If a stale
+  // mutation purges in that narrow boundary, it observes reconciliationInProgress=true and defers;
+  // this post-finalization check closes the handoff without leaving that purge unrecovered.
+  if (restoreAuthenticatedQueries
+      && client.getQueryData(SESSION_QUERY_KEY)
+      && state.recoveredStalePurgeRevision !== state.stalePurgeRevision) {
+    await refetchCurrentIdentityUntilStable(client);
+  }
+}
+
+/** Removes any writes made by a mutation from an older identity, then restores active queries for
+ *  the currently authenticated identity. During reconciliation the restore is deferred to its
+ *  coordinated final refetch, so domain requests never race the still-unresolved session and a
+ *  logout never causes authenticated data to be fetched again. */
+export async function recoverAuthenticatedCachesAfterStaleMutation(client: QueryClient): Promise<void> {
+  purgeAuthenticatedCaches(client);
+  const state = recoveryState(client);
+  state.stalePurgeRevision += 1;
+  if (state.reconciliationInProgress || !client.getQueryData(SESSION_QUERY_KEY)) return;
+  await refetchCurrentIdentityUntilStable(client);
 }
 
 /** Called from mutationCache's global `onMutate`, before the mutation's own mutationFn runs. */

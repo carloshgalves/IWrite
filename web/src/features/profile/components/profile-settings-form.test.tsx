@@ -140,6 +140,50 @@ describe("configurações de dados pessoais", () => {
     expect(await screen.findByText("Perfil atualizado com sucesso.")).toBeInTheDocument();
   });
 
+  test("rebaseia atualização remota somente nos campos que esta aba não editou", async () => {
+    const { queryClient } = renderForm();
+    fireEvent.change(await screen.findByLabelText("Nome de exibição"), {
+      target: { value: "Ana Maria local" },
+    });
+    const remote: Profile = {
+      ...currentProfile,
+      timeZone: "UTC",
+      personas: [
+        { type: "WRITER", primary: false },
+        { type: "EDITOR", primary: true },
+      ],
+    };
+
+    act(() => queryClient.setQueryData(queryKeys.profile, remote));
+
+    await waitFor(() => expect(screen.getByLabelText("Fuso horário")).toHaveValue("UTC"));
+    expect(screen.getByLabelText("Nome de exibição")).toHaveValue("Ana Maria local");
+    expect(screen.getByRole("checkbox", { name: "Escritor(a)" })).toBeChecked();
+    expect(screen.getByRole("checkbox", { name: "Editor(a)" })).toBeChecked();
+    expect(screen.getByRole("checkbox", { name: "Revisor(a)" })).not.toBeChecked();
+    expect(screen.getByRole("radio", { name: "Editor(a) como principal" })).toBeChecked();
+  });
+
+  test("sucesso atual limpa pending e transforma a resposta salva no novo baseline", async () => {
+    const saved = { ...currentProfile, displayName: "Ana salva" };
+    profileApi.updateProfile.mockResolvedValueOnce(saved);
+    const { queryClient } = renderForm();
+
+    fireEvent.change(await screen.findByLabelText("Nome de exibição"), {
+      target: { value: "Ana salva" },
+    });
+    fireEvent.click(screen.getByRole("button", { name: "Salvar alterações" }));
+
+    expect(await screen.findByText("Perfil atualizado com sucesso.")).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Salvar alterações" })).toBeEnabled();
+
+    const newerRemote = { ...saved, displayName: "Ana remota", timeZone: "UTC" };
+    act(() => queryClient.setQueryData(queryKeys.profile, newerRemote));
+
+    await waitFor(() => expect(screen.getByLabelText("Nome de exibição")).toHaveValue("Ana remota"));
+    expect(screen.getByLabelText("Fuso horário")).toHaveValue("UTC");
+  });
+
   test("impede remover a última persona", async () => {
     profileApi.fetchProfile.mockResolvedValueOnce({
       ...currentProfile,
@@ -215,6 +259,8 @@ describe("configurações de dados pessoais", () => {
       queryClient.setQueryData(SESSION_QUERY_KEY, sessionB);
       queryClient.setQueryData(queryKeys.profile, profileB);
     });
+    await waitFor(() => expect(screen.getByLabelText("Email")).toHaveValue("bruna@iwrite.local"));
+    expect(screen.getByRole("button", { name: "Salvar alterações" })).toBeEnabled();
 
     pendingUpdate.resolve({ ...currentProfile, displayName: "Ana atrasada" });
 
@@ -224,6 +270,13 @@ describe("configurações de dados pessoais", () => {
     expect(await screen.findByText("Perfil atualizado com sucesso.")).toBeInTheDocument();
     expect(queryClient.getQueryData(SESSION_QUERY_KEY)).toEqual(sessionB);
     expect(queryClient.getQueryData(queryKeys.profile)).toEqual(profileB);
+
+    act(() => {
+      queryClient.setQueryData(SESSION_QUERY_KEY, session);
+      queryClient.setQueryData(queryKeys.profile, currentProfile);
+    });
+    await waitFor(() => expect(screen.getByLabelText("Email")).toHaveValue("ana@iwrite.local"));
+    expect(screen.getByRole("button", { name: "Salvar alterações" })).toBeEnabled();
   });
 
   test("draft sobrevive à desmontagem protegida de uma reconciliação por foco da mesma conta", async () => {

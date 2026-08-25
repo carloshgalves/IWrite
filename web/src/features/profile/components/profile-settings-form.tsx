@@ -36,14 +36,26 @@ export function ProfileSettingsForm() {
     queryFn: fetchProfile,
     retry: false,
   });
-  const { draft, updateDraft, applySavedProfile } = useProfileDraft(profileQuery.data);
+  const {
+    draft,
+    isSavePending,
+    updateDraft,
+    applySavedProfile,
+    setSavePending,
+  } = useProfileDraft(profileQuery.data);
   const errorRef = useRef<HTMLDivElement>(null);
+  const activeMutationEmailRef = useRef<string | null>(null);
 
   const updateMutation = useMutation({
     mutationFn: updateProfile,
-    onMutate: () => captureSessionGeneration(queryClient),
-    onSuccess: (profile, _variables, mutationGeneration) => {
-      if (!isSessionGenerationCurrent(queryClient, mutationGeneration)) {
+    onMutate: () => {
+      const email = draft!.email;
+      activeMutationEmailRef.current = email;
+      setSavePending(email, true);
+      return { email, generation: captureSessionGeneration(queryClient) };
+    },
+    onSuccess: (profile, _variables, mutationContext) => {
+      if (!isSessionGenerationCurrent(queryClient, mutationContext.generation)) {
         return;
       }
       applySavedProfile(profile);
@@ -54,7 +66,17 @@ export function ProfileSettingsForm() {
           : current,
       );
     },
+    onSettled: (_profile, _error, _variables, mutationContext) => {
+      if (mutationContext) {
+        setSavePending(mutationContext.email, false);
+        if (activeMutationEmailRef.current === mutationContext.email) {
+          activeMutationEmailRef.current = null;
+        }
+      }
+    },
   });
+  const savePending = isSavePending
+    || (updateMutation.isPending && activeMutationEmailRef.current === draft?.email);
 
   useEffect(() => {
     if (updateMutation.isError) {
@@ -81,7 +103,7 @@ export function ProfileSettingsForm() {
 
   function handleSubmit(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
-    if (!draft || updateMutation.isPending || draft.selectedPersonas.length === 0) {
+    if (!draft || savePending || draft.selectedPersonas.length === 0) {
       return;
     }
     const personasInCanonicalOrder = PERSONAS
@@ -122,7 +144,7 @@ export function ProfileSettingsForm() {
           id="profile-display-name"
           autoComplete="name"
           value={draft.displayName}
-          disabled={updateMutation.isPending}
+          disabled={savePending}
           onChange={(event) => {
             updateMutation.reset();
             updateDraft(draft.email, { displayName: event.target.value });
@@ -142,7 +164,7 @@ export function ProfileSettingsForm() {
           id="profile-time-zone"
           list="profile-time-zones"
           value={draft.timeZone}
-          disabled={updateMutation.isPending}
+          disabled={savePending}
           onChange={(event) => {
             updateMutation.reset();
             updateDraft(draft.email, { timeZone: event.target.value });
@@ -171,7 +193,7 @@ export function ProfileSettingsForm() {
                 <input
                   type="checkbox"
                   checked={checked}
-                  disabled={updateMutation.isPending || (checked && draft.selectedPersonas.length === 1)}
+                  disabled={savePending || (checked && draft.selectedPersonas.length === 1)}
                   onChange={() => togglePersona(type)}
                 />
                 <span>{label}</span>
@@ -189,7 +211,7 @@ export function ProfileSettingsForm() {
                 name="primaryPersona"
                 aria-label={`${label} como principal`}
                 checked={draft.primaryPersona === type}
-                disabled={updateMutation.isPending}
+                disabled={savePending}
                 onChange={() => {
                   updateMutation.reset();
                   updateDraft(draft.email, { primaryPersona: type });
@@ -215,8 +237,8 @@ export function ProfileSettingsForm() {
         <FeedbackMessage variant="success">Perfil atualizado com sucesso.</FeedbackMessage>
       ) : null}
 
-      <Button type="submit" disabled={updateMutation.isPending}>
-        {updateMutation.isPending ? "Salvando…" : "Salvar alterações"}
+      <Button type="submit" disabled={savePending}>
+        {savePending ? "Salvando…" : "Salvar alterações"}
       </Button>
     </form>
   );

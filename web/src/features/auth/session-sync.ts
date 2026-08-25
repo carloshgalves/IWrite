@@ -3,9 +3,9 @@
 import { useQueryClient, type QueryClient } from "@tanstack/react-query";
 import { useEffect, useRef, useState } from "react";
 import {
-  markReconciliationStart,
+  beginSessionReconciliation,
+  finishSessionReconciliation,
   purgeAuthenticatedCaches,
-  refetchActiveDomainQueries,
 } from "@/features/auth/session-cache";
 import { SESSION_QUERY_KEY } from "@/features/auth/session-query-key";
 
@@ -80,15 +80,17 @@ async function refetchSession(client: QueryClient) {
  */
 async function reconcile(queryClient: QueryClient): Promise<void> {
   await queryClient.cancelQueries();
+  beginSessionReconciliation(queryClient);
   purgeAuthenticatedCaches(queryClient);
-  markReconciliationStart(queryClient);
-  await refetchSession(queryClient);
-  // A session worth keeping, not a logout: whatever domain queries are still actively observed (the
-  // interstitial screen may or may not have actually unmounted them - React is free to collapse
-  // isReconciling's true-then-false into one commit when this whole function settles within a single
-  // batch, which a fast /api/auth/me answer does) need to reload for it.
-  if (queryClient.getQueryData(SESSION_QUERY_KEY)) {
-    await refetchActiveDomainQueries(queryClient);
+  let restoreAuthenticatedQueries = false;
+  try {
+    await refetchSession(queryClient);
+    restoreAuthenticatedQueries = Boolean(queryClient.getQueryData(SESSION_QUERY_KEY));
+  } finally {
+    // A session worth keeping, not a logout: whatever domain queries are still actively observed
+    // reload for it. The coordinated finish also absorbs a stale-mutation purge that lands during
+    // this reconciliation without racing a domain request against the unresolved session.
+    await finishSessionReconciliation(queryClient, restoreAuthenticatedQueries);
   }
 }
 

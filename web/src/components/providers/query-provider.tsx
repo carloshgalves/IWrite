@@ -2,7 +2,12 @@
 
 import { MutationCache, QueryCache, QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { useState } from "react";
-import { isStaleMutation, purgeAuthenticatedCaches, stampMutationGeneration } from "@/features/auth/session-cache";
+import {
+  isStaleMutation,
+  purgeAuthenticatedCaches,
+  recoverAuthenticatedCachesAfterStaleMutation,
+  stampMutationGeneration,
+} from "@/features/auth/session-cache";
 import { announceSessionChanged } from "@/features/auth/session-sync";
 import { SESSION_QUERY_KEY } from "@/features/auth/session-query-key";
 import { ApiError } from "@/lib/api/client";
@@ -63,10 +68,10 @@ export function QueryProvider({ children }: { children: React.ReactNode }) {
         // onSuccess already ran and may have written stale data by the time this fires — this purges
         // it right back out. Ordinary mutations are never affected: isStaleMutation is false unless a
         // reconciliation actually happened after this mutation started.
-        onSettled: (_data, _error, _variables, _context, mutation) => {
+        onSettled: async (_data, _error, _variables, _context, mutation) => {
           const client = created.client;
           if (client && isStaleMutation(client, mutation)) {
-            purgeAuthenticatedCaches(client);
+            await recoverAuthenticatedCachesAfterStaleMutation(client);
           }
         },
       }),
