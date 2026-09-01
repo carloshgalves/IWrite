@@ -1,6 +1,6 @@
 services:
   db:
-    image: postgres:16@sha256:e17e86066e5ef83e0952a9347f5c792b7ece00972e2aa787a6986f471b3dd3d5
+    image: postgres:18@sha256:4ef4dbc939d61acea57712655ddb4b4ab27419c913f94cca0cd57cb3ea3c2280
     container_name: iwrite-db
     environment:
       POSTGRES_DB: iwrite
