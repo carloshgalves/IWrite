@@ -20,7 +20,7 @@
     <properties>
         <java.version>21</java.version>
         <jacoco.version>0.8.15</jacoco.version>
-        <spring-ai.version>1.0.9</spring-ai.version>
+        <spring-ai.version>2.0.1</spring-ai.version>
         <!--
           Fixada em 1.64.0 porque é a versão do opentelemetry-java importada pelo
           opentelemetry-instrumentation-bom 2.30.0, que é a release do Java Agent
