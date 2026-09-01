@@ -11,6 +11,7 @@ Project-specific engineering skills live in `.agents/skills/` and are versioned 
 - `implement` — implement approved work with IWrite-specific guards and validation;
 - `tdd` — red/green development at the seam that actually proves the invariant;
 - `iwrite-review` — three-axis review: spec, engineering quality, IWrite semantic invariants;
+- `iwrite-migration` — Flyway/PostgreSQL changes validated against legacy states, integrity and operational risk;
 - `diagnosing-bugs` — reproduce, minimize, hypothesize, instrument, fix, regress;
 - `research` — primary-source research persisted in `docs/research/`;
 - `handoff` — durable checkpoint for a fresh agent/context;
