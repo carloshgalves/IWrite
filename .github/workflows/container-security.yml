@@ -1,0 +1,98 @@
+name: Container Security
+
+on:
+  pull_request:
+    branches:
+      - master
+    paths:
+      - "Dockerfile"
+      - ".dockerignore"
+      - "pom.xml"
+      - ".mvn/**"
+      - "src/**"
+      # Both Dockerfiles COPY the whole web/ tree (minus web/.dockerignore's node_modules/.next/etc.)
+      # into the build context, so any file under web/ can change the built image — match the whole
+      # tree instead of enumerating individual config files (tsconfig.json, tailwind.config.ts, ...).
+      - "web/**"
+      - "docker/start.sh"
+      - ".trivyignore.yaml"
+      - ".github/workflows/container-security.yml"
+  workflow_dispatch:
+  schedule:
+    # Weekly, independent of the E2E schedule, to catch CVEs published after merge.
+    - cron: "30 4 * * 1"
+
+permissions:
+  contents: read
+
+jobs:
+  build-and-scan:
+    name: Build and scan (${{ matrix.name }})
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - name: app
+            dockerfile: Dockerfile
+            context: .
+            image: iwrite-app
+          - name: frontend
+            dockerfile: web/Dockerfile
+            context: web
+            image: iwrite-frontend
+
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262  # v4.4.0
+
+      - name: Build image
+        run: |
+          docker build \
+            -f "${{ matrix.dockerfile }}" \
+            -t "${{ matrix.image }}:scan-${{ github.sha }}" \
+            "${{ matrix.context }}"
+
+      # Full HIGH+CRITICAL report, including vulnerabilities without a known fix yet.
+      # Never fails the job by itself — the CRITICAL gate below does that.
+      - name: Scan report (JSON)
+        uses: aquasecurity/trivy-action@ed142fd0673e97e23eac54620cfb913e5ce36c25  # v0.36.0
+        with:
+          image-ref: "${{ matrix.image }}:scan-${{ github.sha }}"
+          format: json
+          output: "trivy-report-${{ matrix.name }}.json"
+          severity: HIGH,CRITICAL
+          ignore-unfixed: false
+          exit-code: "0"
+
+      - name: Generate SBOM (CycloneDX)
+        uses: aquasecurity/trivy-action@ed142fd0673e97e23eac54620cfb913e5ce36c25  # v0.36.0
+        with:
+          image-ref: "${{ matrix.image }}:scan-${{ github.sha }}"
+          format: cyclonedx
+          output: "${{ matrix.image }}-sbom.cdx.json"
+
+      - name: Upload scan report and SBOM
+        if: always()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02  # v4.6.2
+        with:
+          name: "container-security-${{ matrix.name }}"
+          path: |
+            trivy-report-${{ matrix.name }}.json
+            ${{ matrix.image }}-sbom.cdx.json
+          retention-days: 14
+          if-no-files-found: error
+
+      # Gate runs last so the report/SBOM are always uploaded first: a CRITICAL finding fails this
+      # job, it is never silenced with continue-on-error. .trivyignore.yaml applies ONLY here, never
+      # to the report step above, so every CRITICAL/HIGH still shows up in the uploaded report even
+      # when it's an explicit, dated, documented exception (see docs/supply-chain-security.md).
+      - name: Enforce CRITICAL vulnerability gate
+        uses: aquasecurity/trivy-action@ed142fd0673e97e23eac54620cfb913e5ce36c25  # v0.36.0
+        with:
+          image-ref: "${{ matrix.image }}:scan-${{ github.sha }}"
+          format: table
+          severity: CRITICAL
+          ignore-unfixed: false
+          trivyignores: .trivyignore.yaml
+          exit-code: "1"

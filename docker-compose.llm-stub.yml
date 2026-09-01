@@ -9,7 +9,7 @@
 #     -f docker-compose.llm-stub.yml up --build
 services:
   llm-stub:
-    image: python:3.12-alpine
+    image: python:3.12-alpine@sha256:d09d15e60962ca365d1cd544a48773bac9d33f2fb1b00f2aa0deec78ade7dc31
     container_name: iwrite-llm-stub
     command: ["python", "-u", "/app/openai_stub.py"]
     environment:

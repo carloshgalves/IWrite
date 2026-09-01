@@ -108,7 +108,7 @@ class CredentialProvisioningRunnerIntegrationTest {
     @Test
     void legacyCredentialWithOversizedPasswordIsRejectedByTheNewLoginContract() throws Exception {
         String oversizedPassword = "a1" + "b".repeat(71); // 73 UTF-8 bytes
-        insertCredentialDirectly(LEGACY_EMAIL, oversizedPassword);
+        insertCredentialDirectly(LEGACY_EMAIL);
 
         mockMvc.perform(withCsrf(post("/api/auth/login"))
                         .contentType(MediaType.APPLICATION_JSON)
@@ -118,8 +118,7 @@ class CredentialProvisioningRunnerIntegrationTest {
 
     @Test
     void replaceExistingTrueRotatesTheHashAndTheNewPasswordAuthenticates() throws Exception {
-        String oversizedPassword = "a1" + "b".repeat(71);
-        insertCredentialDirectly(LEGACY_EMAIL, oversizedPassword);
+        insertCredentialDirectly(LEGACY_EMAIL);
         String newPassword = "senha-nova-de-upgrade-1";
 
         runner(LEGACY_EMAIL, newPassword, true).run(null);
@@ -150,14 +149,27 @@ class CredentialProvisioningRunnerIntegrationTest {
                 .andExpect(status().isUnauthorized());
     }
 
-    /** Inserts a credential the way the pre-review runner would have: hashing {@code password}
-     *  directly, with no {@link BcryptInputPolicy} guard — reproducing what an installation already
-     *  holds if it provisioned a credential before this slice. */
-    private void insertCredentialDirectly(String email, String password) {
+    // A syntactically valid bcrypt hash (the same "{bcrypt}$2a$..." shape
+    // PasswordEncoderConfig's DelegatingPasswordEncoder produces), precomputed offline via
+    // BCrypt.hashpw — deliberately NOT derived from the oversized password the tests below exercise.
+    // BCryptPasswordEncoder.encode() itself now rejects any input over 72 bytes (Spring Security's
+    // own fix for CVE-2025-41232), so the fixture can no longer produce that hash by hashing the
+    // password live. That's fine: AuthController#login rejects an oversized login attempt via
+    // BcryptInputPolicy.isValid() before ever comparing against the stored hash, so this constant
+    // only needs to be *a* valid stored hash, not one actually derived from the oversized password.
+    private static final String PRECOMPUTED_LEGACY_HASH =
+            "{bcrypt}$2a$10$nObXTWt4GFKeGtcXFVN.c.uCd9TjGD8Yce6kZVuc/ywRJMLHv9KOq";
+
+    /** Inserts a credential the way the pre-review runner would have: a stored bcrypt hash with no
+     *  {@link BcryptInputPolicy} guard ever applied to the password that produced it — reproducing
+     *  what an installation already holds if it provisioned a credential before this slice. Seeds
+     *  {@link #PRECOMPUTED_LEGACY_HASH} rather than hashing an oversized password live; see that
+     *  constant's Javadoc for why. */
+    private void insertCredentialDirectly(String email) {
         UUID userId = userRepository.findByEmail(email).orElseThrow().getId();
         UserCredential credential = new UserCredential();
         credential.setUserId(userId);
-        credential.setPasswordHash(passwordEncoder.encode(password));
+        credential.setPasswordHash(PRECOMPUTED_LEGACY_HASH);
         credentialRepository.save(credential);
     }
 

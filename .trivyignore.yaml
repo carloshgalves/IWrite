@@ -1,0 +1,31 @@
+# Exceções explícitas e documentadas ao gate CRITICAL de container-security.yml
+# (Slice 80B/#80). Cada entrada tem uma justificativa e um prazo de revisão
+# (`expired_at`): passado o prazo, a entrada deixa de valer e a vulnerabilidade
+# volta a bloquear o gate até ser reavaliada. Ver
+# docs/supply-chain-security.md, seção "Exceções de vulnerabilidade documentadas".
+#
+# Este arquivo NÃO afeta o "Scan report (JSON)" do workflow — as vulnerabilidades
+# abaixo continuam aparecendo no relatório completo, só não bloqueiam o gate.
+vulnerabilities:
+  - id: CVE-2026-22732
+    statement: >-
+      spring-security-web: o advisory oficial do Spring cobre toda a linha
+      6.4.0–6.4.14 (inclui o 6.4.13 já adotado nesta slice para corrigir
+      CVE-2025-41232); o fix 6.4.15 é Enterprise-only, e o fix OSS só existe a
+      partir de 6.5.9 — fora da linha 6.4.x que o Spring Boot 3.4.1 gerencia.
+      Remover esta exceção exige um upgrade de linha do Spring
+      Security/Spring Boot (ex.: para 6.5.x/Spring Boot 3.5.x) ou uma
+      mitigação específica, ambos fora do escopo desta slice de supply-chain.
+      Reavaliar junto com a evolução do backend (coordenado com PR #162 e
+      sucessoras, já que qualquer mudança de linha do Spring Security volta a
+      tocar auth/session).
+    expired_at: 2026-11-22
+  - id: CVE-2026-59873
+    statement: >-
+      pacote "tar" embutido no próprio npm CLI que vem dentro da imagem base
+      node:24-alpine (usr/local/lib/node_modules/npm/node_modules/tar), não é
+      dependência do IWrite (nem do backend nem do frontend). O digest de
+      node:24-alpine fixado nesta slice já é o mais recente disponível para a
+      tag no momento da resolução; aguardando o upstream (nodejs/docker-node)
+      publicar uma imagem com um npm que já embuta o tar corrigido.
+    expired_at: 2026-11-22
