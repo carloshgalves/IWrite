@@ -22,7 +22,8 @@ const bookStatuses = Object.keys(statusLabels) as BookStatus[];
 
 export function BookCard({ book }: { book: Book }) {
   const queryClient = useQueryClient();
-  const isOwner = book.accessLevel === "OWNER";
+  const canEditSettings = book.capabilities.includes("EDIT_BOOK_SETTINGS");
+  const canDeleteBook = book.capabilities.includes("DELETE_BOOK");
   const [isEditing, setIsEditing] = useState(false);
   const [title, setTitle] = useState(book.title);
   const [subtitle, setSubtitle] = useState(book.subtitle ?? "");
@@ -166,10 +167,12 @@ export function BookCard({ book }: { book: Book }) {
           Abrir workspace
         </Link>
         <div className="flex flex-wrap gap-2">
-          <Button type="button" variant="secondary" size="sm" onClick={() => setIsEditing(true)}>
-            Editar
-          </Button>
-          {isOwner ? (
+          {canEditSettings ? (
+            <Button type="button" variant="secondary" size="sm" onClick={() => setIsEditing(true)}>
+              Editar
+            </Button>
+          ) : null}
+          {canDeleteBook ? (
             <Button type="button" variant="ghost" size="sm" onClick={handleDelete} disabled={deleteMutation.isPending}>
               {deleteMutation.isPending ? "Excluindo..." : "Excluir"}
             </Button>
