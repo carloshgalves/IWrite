@@ -1,10 +1,7 @@
 package com.iwrite.book.repository;
 
 import com.iwrite.book.entity.BookCollaborator;
-import com.iwrite.book.entity.BookRole;
 import org.springframework.data.jpa.repository.JpaRepository;
-import org.springframework.data.jpa.repository.Query;
-import org.springframework.data.repository.query.Param;
 
 import java.util.List;
 import java.util.Optional;
@@ -17,17 +14,4 @@ public interface BookCollaboratorRepository extends JpaRepository<BookCollaborat
     Optional<BookCollaborator> findByBook_IdAndTenant_IdAndUser_Id(UUID bookId, UUID tenantId, UUID userId);
 
     boolean existsByBook_IdAndTenant_IdAndUser_Id(UUID bookId, UUID tenantId, UUID userId);
-
-    @Query("""
-            select collaborator.role
-            from BookCollaborator collaborator
-            where collaborator.book.id = :bookId
-              and collaborator.tenant.id = :tenantId
-              and collaborator.user.id = :userId
-            """)
-    Optional<BookRole> findRole(
-            @Param("bookId") UUID bookId,
-            @Param("tenantId") UUID tenantId,
-            @Param("userId") UUID userId
-    );
 }

@@ -6,7 +6,7 @@ import com.iwrite.book.authorization.BookCapabilityPolicy;
 import com.iwrite.book.authorization.BookRelationship;
 import com.iwrite.book.entity.Book;
 import com.iwrite.book.entity.BookRole;
-import com.iwrite.book.repository.BookCollaboratorRepository;
+import com.iwrite.book.repository.AccessibleBookWithRole;
 import com.iwrite.book.repository.BookRepository;
 import com.iwrite.common.exception.ResourceNotFoundException;
 import com.iwrite.user.context.CurrentUserMembershipService;
@@ -31,20 +31,17 @@ import java.util.UUID;
 public class BookAccessService {
 
     private final BookRepository bookRepository;
-    private final BookCollaboratorRepository collaboratorRepository;
     private final BookCapabilityPolicy capabilityPolicy;
     private final CurrentUserProvider currentUserProvider;
     private final CurrentUserMembershipService currentUserMembershipService;
 
     public BookAccessService(
             BookRepository bookRepository,
-            BookCollaboratorRepository collaboratorRepository,
             BookCapabilityPolicy capabilityPolicy,
             CurrentUserProvider currentUserProvider,
             CurrentUserMembershipService currentUserMembershipService
     ) {
         this.bookRepository = bookRepository;
-        this.collaboratorRepository = collaboratorRepository;
         this.capabilityPolicy = capabilityPolicy;
         this.currentUserProvider = currentUserProvider;
         this.currentUserMembershipService = currentUserMembershipService;
@@ -66,10 +63,7 @@ public class BookAccessService {
     @Transactional(readOnly = true)
     public AccessibleBook resolveAccessibleBook(UUID bookId) {
         UUID userId = currentUserMembershipService.requireCurrentUserMemberId();
-        UUID tenantId = currentUserProvider.tenantId();
-        Book book = bookRepository.findByIdAndTenant_Id(bookId, tenantId)
-                .orElseThrow(() -> bookNotFound(bookId));
-        return new AccessibleBook(book, accessContext(book, tenantId, userId));
+        return accessibleBook(bookId, currentUserProvider.tenantId(), userId);
     }
 
     /**
@@ -81,11 +75,9 @@ public class BookAccessService {
     @Transactional(readOnly = true)
     public Book requireCapability(UUID bookId, BookCapability capability) {
         UUID userId = currentUserMembershipService.requireCurrentUserMemberId();
-        UUID tenantId = currentUserProvider.tenantId();
-        Book book = bookRepository.findByIdAndTenant_Id(bookId, tenantId)
-                .orElseThrow(() -> bookNotFound(bookId));
-        requireGranted(accessContext(book, tenantId, userId), capability, bookId);
-        return book;
+        AccessibleBook accessible = accessibleBook(bookId, currentUserProvider.tenantId(), userId);
+        requireGranted(accessible.access(), capability, bookId);
+        return accessible.book();
     }
 
     /**
@@ -102,13 +94,11 @@ public class BookAccessService {
     public Book requireCapabilityForUpdate(UUID bookId, BookCapability capability) {
         UUID userId = currentUserMembershipService.requireCurrentUserMemberId();
         UUID tenantId = currentUserProvider.tenantId();
-        Book book = bookRepository.findByIdAndTenant_Id(bookId, tenantId)
-                .orElseThrow(() -> bookNotFound(bookId));
-        requireGranted(accessContext(book, tenantId, userId), capability, bookId);
+        requireGranted(accessibleBook(bookId, tenantId, userId).access(), capability, bookId);
 
         Book lockedBook = bookRepository.findByIdAndTenantIdForUpdate(bookId, tenantId)
                 .orElseThrow(() -> bookNotFound(bookId));
-        requireGranted(accessContext(lockedBook, tenantId, userId), capability, bookId);
+        requireGranted(accessibleBook(bookId, tenantId, userId).access(), capability, bookId);
         return lockedBook;
     }
 
@@ -150,13 +140,11 @@ public class BookAccessService {
     public Book requireBookEditAccessForUpdate(UUID bookId) {
         UUID userId = currentUserMembershipService.requireCurrentUserMemberId();
         UUID tenantId = currentUserProvider.tenantId();
-        bookRepository.findAccessibleByIdAndTenantIdAndUserId(bookId, tenantId, userId)
-                .orElseThrow(() -> bookNotFound(bookId));
+        accessibleBook(bookId, tenantId, userId);
 
         Book lockedBook = bookRepository.findByIdAndTenantIdForUpdate(bookId, tenantId)
                 .orElseThrow(() -> bookNotFound(bookId));
-        bookRepository.findAccessibleByIdAndTenantIdAndUserId(bookId, tenantId, userId)
-                .orElseThrow(() -> bookNotFound(bookId));
+        accessibleBook(bookId, tenantId, userId);
         return lockedBook;
     }
 
@@ -176,13 +164,16 @@ public class BookAccessService {
         return capabilityPolicy.contextFor(book.getId(), tenantId, userId, BookRelationship.COLLABORATOR, role);
     }
 
-    private BookAccessContext accessContext(Book book, UUID tenantId, UUID userId) {
-        if (book.getOwner().getId().equals(userId)) {
-            return capabilityPolicy.contextFor(book.getId(), tenantId, userId, BookRelationship.OWNER, null);
-        }
-        BookRole role = collaboratorRepository.findRole(book.getId(), tenantId, userId)
-                .orElseThrow(() -> bookNotFound(book.getId()));
-        return capabilityPolicy.contextFor(book.getId(), tenantId, userId, BookRelationship.COLLABORATOR, role);
+    /**
+     * Resolves the Book and the Book Role behind the User's access with the single accessible-Book
+     * query, so an unknown Book and an inaccessible one are denied by the same statement.
+     */
+    private AccessibleBook accessibleBook(UUID bookId, UUID tenantId, UUID userId) {
+        AccessibleBookWithRole accessible = bookRepository
+                .findAccessibleWithRoleByIdAndTenantIdAndUserId(bookId, tenantId, userId)
+                .orElseThrow(() -> bookNotFound(bookId));
+        Book book = accessible.book();
+        return new AccessibleBook(book, accessContextFor(book, userId, accessible.role()));
     }
 
     private void requireGranted(BookAccessContext context, BookCapability capability, UUID bookId) {
@@ -193,9 +184,7 @@ public class BookAccessService {
 
     private Book requireAccessibleBook(UUID bookId) {
         UUID userId = currentUserMembershipService.requireCurrentUserMemberId();
-        UUID tenantId = currentUserProvider.tenantId();
-        return bookRepository.findAccessibleByIdAndTenantIdAndUserId(bookId, tenantId, userId)
-                .orElseThrow(() -> bookNotFound(bookId));
+        return accessibleBook(bookId, currentUserProvider.tenantId(), userId).book();
     }
 
     private ResourceNotFoundException bookNotFound(UUID bookId) {
