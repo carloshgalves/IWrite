@@ -91,6 +91,12 @@ class V35BookCollaboratorRoleMigrationIntegrationTest extends PostgresIntegratio
                 assertSqlFails(connection, schema, collaboratorInsert(UUID.randomUUID(), TENANT_B, BOOK_B, OWNER_A, OWNER_B, "'author'"));
                 assertSqlFails(connection, schema, "update book_collaborators set role = null where id = '" + COLLABORATION_A + "'");
 
+                // Both role constraints end the migration validated. They are added as NOT VALID so the
+                // ACCESS EXCLUSIVE lock only covers the catalog change, and the existing rows are then
+                // proven by a separate VALIDATE that does not block concurrent reads and writes.
+                assertConstraintValidated(connection, schema, "book_collaborators", "chk_book_collaborators_role");
+                assertConstraintValidated(connection, schema, "book_collaboration_invitations", "chk_book_collaboration_invitations_role");
+
                 // Rollout compatibility: an application version that predates the role still inserts a
                 // usable row, and it lands on the legacy surface instead of a new policy.
                 UUID rolloutId = UUID.randomUUID();
@@ -218,6 +224,15 @@ class V35BookCollaboratorRoleMigrationIntegrationTest extends PostgresIntegratio
                         )
                   )
                 """.formatted(bookId, tenantId, userId, tenantId, userId));
+    }
+
+    private void assertConstraintValidated(Connection connection, String schema, String table, String constraint) throws SQLException {
+        assertEquals("true", scalar(connection, schema, """
+                select convalidated::text
+                from pg_constraint
+                where conname = '%s'
+                  and conrelid = (current_schema() || '.%s')::regclass
+                """.formatted(constraint, table)));
     }
 
     private void assertSqlFails(Connection connection, String schema, String sql) {

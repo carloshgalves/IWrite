@@ -30,19 +30,4 @@ public interface BookCollaboratorRepository extends JpaRepository<BookCollaborat
             @Param("tenantId") UUID tenantId,
             @Param("userId") UUID userId
     );
-
-    /**
-     * Roles of every Book the User collaborates on in the active Workspace, so a Book listing can
-     * project effective access without one lookup per Book.
-     */
-    @Query("""
-            select new com.iwrite.book.repository.BookRoleAssignment(collaborator.book.id, collaborator.role)
-            from BookCollaborator collaborator
-            where collaborator.tenant.id = :tenantId
-              and collaborator.user.id = :userId
-            """)
-    List<BookRoleAssignment> findRolesByTenantIdAndUserId(
-            @Param("tenantId") UUID tenantId,
-            @Param("userId") UUID userId
-    );
 }

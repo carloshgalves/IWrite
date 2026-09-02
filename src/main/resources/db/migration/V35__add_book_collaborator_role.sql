@@ -15,10 +15,19 @@ alter table book_collaborators
 
 -- Closed catalog of persistable roles. AUTHOR, EDITOR and READER are the assignable product roles;
 -- LEGACY_COLLABORATOR exists only for relationships that predate the role and can never be requested.
+--
+-- The constraint is added as NOT VALID and validated in a separate statement. An immediately valid
+-- ADD CHECK scans every existing row while holding ACCESS EXCLUSIVE, which would block reads and
+-- writes on an established table for the whole scan and defeat the no-rewrite rollout goal. NOT VALID
+-- already rejects every new insert and update; VALIDATE CONSTRAINT then proves the existing rows under
+-- SHARE UPDATE EXCLUSIVE, which concurrent reads and writes do not wait on.
 alter table book_collaborators
     add constraint chk_book_collaborators_role check (
         role in ('AUTHOR', 'EDITOR', 'READER', 'LEGACY_COLLABORATOR')
-    );
+    ) not valid;
+
+alter table book_collaborators
+    validate constraint chk_book_collaborators_role;
 
 -- Invitations move to the assignable roles. Already persisted COLLABORATOR invitations are preserved
 -- as legacy state: they remain auditable and revocable, but they are not converted by inference into
@@ -29,4 +38,7 @@ alter table book_collaboration_invitations
 alter table book_collaboration_invitations
     add constraint chk_book_collaboration_invitations_role check (
         requested_role in ('AUTHOR', 'EDITOR', 'READER', 'COLLABORATOR')
-    );
+    ) not valid;
+
+alter table book_collaboration_invitations
+    validate constraint chk_book_collaboration_invitations_role;

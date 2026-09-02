@@ -50,6 +50,8 @@ Mutações que afetam a contagem total usam lock do livro e uma ordem estável d
 
 **Motivo:** impedir lost updates e reduzir risco de deadlock.
 
+**Regra de ordem:** o acesso é provado antes de tomar o lock da linha do livro e provado de novo sob o lock. O lock é recurso de mutações autorizadas, então um chamador sem acesso é negado sem entrar na fila dele; a segunda prova mantém a revogação vencendo um preflight já obsoleto.
+
 ## ADR-009 — Datas de progresso são históricas
 
 `progressDate` é derivada do timezone efetivo no momento do registro e permanece armazenada como fato histórico. Mudanças posteriores de timezone não reinterpretam registros antigos.

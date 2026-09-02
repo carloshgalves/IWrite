@@ -5,11 +5,8 @@ import com.iwrite.book.dto.BookRequest;
 import com.iwrite.book.dto.BookResponse;
 import com.iwrite.book.dto.BookUpdateRequest;
 import com.iwrite.book.entity.Book;
-import com.iwrite.book.entity.BookRole;
 import com.iwrite.book.entity.BookStatus;
-import com.iwrite.book.repository.BookCollaboratorRepository;
 import com.iwrite.book.repository.BookRepository;
-import com.iwrite.book.repository.BookRoleAssignment;
 import com.iwrite.common.validation.RequestValidation;
 import com.iwrite.tenant.repository.TenantRepository;
 import com.iwrite.user.context.CurrentUserMembershipService;
@@ -21,15 +18,12 @@ import org.springframework.transaction.annotation.Transactional;
 
 import java.time.DayOfWeek;
 import java.util.List;
-import java.util.Map;
 import java.util.UUID;
-import java.util.stream.Collectors;
 
 @Service
 public class BookService {
 
     private final BookRepository bookRepository;
-    private final BookCollaboratorRepository collaboratorRepository;
     private final WritingScheduleService writingScheduleService;
     private final TenantRepository tenantRepository;
     private final CurrentUserProvider currentUserProvider;
@@ -39,7 +33,6 @@ public class BookService {
 
     public BookService(
             BookRepository bookRepository,
-            BookCollaboratorRepository collaboratorRepository,
             WritingScheduleService writingScheduleService,
             TenantRepository tenantRepository,
             CurrentUserProvider currentUserProvider,
@@ -48,7 +41,6 @@ public class BookService {
             UserRepository userRepository
     ) {
         this.bookRepository = bookRepository;
-        this.collaboratorRepository = collaboratorRepository;
         this.writingScheduleService = writingScheduleService;
         this.tenantRepository = tenantRepository;
         this.currentUserProvider = currentUserProvider;
@@ -61,15 +53,12 @@ public class BookService {
     public List<BookResponse> findAll() {
         UUID userId = currentUserMembershipService.requireCurrentUserMemberId();
         UUID tenantId = currentUserProvider.tenantId();
-        Map<UUID, BookRole> rolesByBookId = collaboratorRepository.findRolesByTenantIdAndUserId(tenantId, userId)
+        return bookRepository.findAllAccessibleWithRoleByTenantIdAndUserId(tenantId, userId)
                 .stream()
-                .collect(Collectors.toMap(BookRoleAssignment::bookId, BookRoleAssignment::role));
-        return bookRepository.findAllAccessibleByTenantIdAndUserId(tenantId, userId)
-                .stream()
-                .map(book -> BookResponse.fromEntity(
-                        book,
-                        writingScheduleService.getActivePlannedWritingDays(book),
-                        bookAccessService.accessContextFor(book, userId, rolesByBookId.get(book.getId()))
+                .map(accessible -> BookResponse.fromEntity(
+                        accessible.book(),
+                        writingScheduleService.getActivePlannedWritingDays(accessible.book()),
+                        bookAccessService.accessContextFor(accessible.book(), userId, accessible.role())
                 ))
                 .toList();
     }

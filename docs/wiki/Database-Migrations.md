@@ -170,6 +170,7 @@ Fase expand da fundação de Book Roles (#205):
 - backfill determinístico de toda linha legada para `LEGACY_COLLABORATOR`, preservando exatamente o acesso efetivo anterior sem inferir papel por persona, atividade, ownership ou email;
 - default constante `LEGACY_COLLABORATOR` como caminho de compatibilidade de rollout, para que uma instância anterior à migration continue inserindo linhas utilizáveis e sem elevação; a #213 remove o default quando os novos grants forem role-aware;
 - `book_collaboration_invitations.requested_role` passa a aceitar os papéis atribuíveis, mantendo convites `COLLABORATOR` já persistidos como estado legado auditável que nunca vira grant por inferência.
+- constraints de catálogo adicionadas como `NOT VALID` e validadas em statement separado: o `ACCESS EXCLUSIVE` cobre apenas a mudança de catálogo, e a varredura das linhas existentes acontece sob `SHARE UPDATE EXCLUSIVE`, sem bloquear leituras e escritas concorrentes.
 
 ## Estado atual
 

@@ -89,14 +89,23 @@ public class BookAccessService {
     }
 
     /**
-     * Mutation variant: takes the Book row lock first, so a concurrent change serializes on the same
-     * Book, and only then resolves authorization inside the same transaction. A revocation committed
-     * before this transaction resolves access is therefore already visible to it.
+     * Mutation variant: proves the capability, takes the Book row lock so a concurrent change
+     * serializes on the same Book, and then proves it again under the lock.
+     *
+     * <p>The proof comes first because the row lock belongs to authorized mutations: a caller this
+     * Book never authorizes must be denied without queueing on a lock that an authorized mutation is
+     * holding, and without interacting with the resource before its access is proven. The second proof
+     * is what preserves revocation: a revocation committed while this transaction waited for the lock
+     * is visible to the statements that run after it, so a stale preflight is never trusted.
      */
     @Transactional
     public Book requireCapabilityForUpdate(UUID bookId, BookCapability capability) {
         UUID userId = currentUserMembershipService.requireCurrentUserMemberId();
         UUID tenantId = currentUserProvider.tenantId();
+        Book book = bookRepository.findByIdAndTenant_Id(bookId, tenantId)
+                .orElseThrow(() -> bookNotFound(bookId));
+        requireGranted(accessContext(book, tenantId, userId), capability, bookId);
+
         Book lockedBook = bookRepository.findByIdAndTenantIdForUpdate(bookId, tenantId)
                 .orElseThrow(() -> bookNotFound(bookId));
         requireGranted(accessContext(lockedBook, tenantId, userId), capability, bookId);
@@ -132,10 +141,18 @@ public class BookAccessService {
         return requireAccessibleBook(bookId);
     }
 
+    /**
+     * Legacy generic mutation guard. It follows the same order as
+     * {@link #requireCapabilityForUpdate(UUID, BookCapability)}: prove access, lock the Book, prove it
+     * again under the lock.
+     */
     @Transactional
     public Book requireBookEditAccessForUpdate(UUID bookId) {
         UUID userId = currentUserMembershipService.requireCurrentUserMemberId();
         UUID tenantId = currentUserProvider.tenantId();
+        bookRepository.findAccessibleByIdAndTenantIdAndUserId(bookId, tenantId, userId)
+                .orElseThrow(() -> bookNotFound(bookId));
+
         Book lockedBook = bookRepository.findByIdAndTenantIdForUpdate(bookId, tenantId)
                 .orElseThrow(() -> bookNotFound(bookId));
         bookRepository.findAccessibleByIdAndTenantIdAndUserId(bookId, tenantId, userId)

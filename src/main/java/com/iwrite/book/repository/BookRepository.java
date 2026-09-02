@@ -17,23 +17,23 @@ public interface BookRepository extends JpaRepository<Book, UUID> {
 
     Optional<Book> findByIdAndTenant_Id(UUID bookId, UUID tenantId);
 
+    /**
+     * Every accessible Book of the active Workspace with the Book Role behind it, in one statement.
+     * Reading the Books and the roles separately would let a collaboration committed between the two
+     * statements produce a Book whose role is missing, and the listing would fail as a whole.
+     */
     @Query("""
-            select book
+            select new com.iwrite.book.repository.AccessibleBookWithRole(book, collaborator.role)
             from Book book
+            left join BookCollaborator collaborator
+                on collaborator.book = book
+               and collaborator.tenant.id = :tenantId
+               and collaborator.user.id = :userId
             where book.tenant.id = :tenantId
-              and (
-                    book.owner.id = :userId
-                    or exists (
-                        select 1
-                        from BookCollaborator collaborator
-                        where collaborator.book = book
-                          and collaborator.tenant.id = :tenantId
-                          and collaborator.user.id = :userId
-                    )
-              )
+              and (book.owner.id = :userId or collaborator.id is not null)
             order by book.updatedAt desc, book.id asc
             """)
-    List<Book> findAllAccessibleByTenantIdAndUserId(
+    List<AccessibleBookWithRole> findAllAccessibleWithRoleByTenantIdAndUserId(
             @Param("tenantId") UUID tenantId,
             @Param("userId") UUID userId
     );
