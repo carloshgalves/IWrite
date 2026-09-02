@@ -1,5 +1,6 @@
 package com.iwrite.book.service;
 
+import com.iwrite.book.authorization.BookCapability;
 import com.iwrite.book.dto.BookCollaborationInvitationCreationResult;
 import com.iwrite.book.dto.BookCollaborationInvitationRequest;
 import com.iwrite.book.dto.BookCollaborationInvitationResponse;
@@ -63,7 +64,7 @@ public class BookCollaborationInvitationService {
      */
     @Transactional
     public BookCollaborationInvitationCreationResult create(UUID bookId, BookCollaborationInvitationRequest request) {
-        Book book = bookAccessService.requireBookOwnerAccessForUpdate(bookId);
+        Book book = bookAccessService.requireCapabilityForUpdate(bookId, BookCapability.MANAGE_COLLABORATORS);
         String recipientEmail = normalizeEmail(request.recipientEmail());
         BookCollaborationRole requestedRole = parseRole(request.requestedRole());
         OffsetDateTime now = OffsetDateTime.now();
@@ -98,14 +99,14 @@ public class BookCollaborationInvitationService {
 
     @Transactional(readOnly = true)
     public BookCollaborationInvitationResponse get(UUID bookId, UUID invitationId) {
-        Book book = bookAccessService.requireBookOwnerAccess(bookId);
+        Book book = bookAccessService.requireCapability(bookId, BookCapability.MANAGE_COLLABORATORS);
         BookCollaborationInvitation invitation = requireInvitation(book, invitationId);
         return BookCollaborationInvitationResponse.fromEntity(invitation, OffsetDateTime.now());
     }
 
     @Transactional
     public BookCollaborationInvitationResponse revoke(UUID bookId, UUID invitationId) {
-        Book book = bookAccessService.requireBookOwnerAccessForUpdate(bookId);
+        Book book = bookAccessService.requireCapabilityForUpdate(bookId, BookCapability.MANAGE_COLLABORATORS);
         BookCollaborationInvitation invitation = requireInvitation(book, invitationId);
         OffsetDateTime now = OffsetDateTime.now();
         if (!invitation.isUsable(now)) {

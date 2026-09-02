@@ -1,12 +1,15 @@
 package com.iwrite.book.service;
 
+import com.iwrite.book.authorization.BookCapability;
 import com.iwrite.book.dto.BookRequest;
 import com.iwrite.book.dto.BookResponse;
 import com.iwrite.book.dto.BookUpdateRequest;
 import com.iwrite.book.entity.Book;
-import com.iwrite.book.entity.BookAccessLevel;
+import com.iwrite.book.entity.BookRole;
 import com.iwrite.book.entity.BookStatus;
+import com.iwrite.book.repository.BookCollaboratorRepository;
 import com.iwrite.book.repository.BookRepository;
+import com.iwrite.book.repository.BookRoleAssignment;
 import com.iwrite.common.validation.RequestValidation;
 import com.iwrite.tenant.repository.TenantRepository;
 import com.iwrite.user.context.CurrentUserMembershipService;
@@ -18,12 +21,15 @@ import org.springframework.transaction.annotation.Transactional;
 
 import java.time.DayOfWeek;
 import java.util.List;
+import java.util.Map;
 import java.util.UUID;
+import java.util.stream.Collectors;
 
 @Service
 public class BookService {
 
     private final BookRepository bookRepository;
+    private final BookCollaboratorRepository collaboratorRepository;
     private final WritingScheduleService writingScheduleService;
     private final TenantRepository tenantRepository;
     private final CurrentUserProvider currentUserProvider;
@@ -33,6 +39,7 @@ public class BookService {
 
     public BookService(
             BookRepository bookRepository,
+            BookCollaboratorRepository collaboratorRepository,
             WritingScheduleService writingScheduleService,
             TenantRepository tenantRepository,
             CurrentUserProvider currentUserProvider,
@@ -41,6 +48,7 @@ public class BookService {
             UserRepository userRepository
     ) {
         this.bookRepository = bookRepository;
+        this.collaboratorRepository = collaboratorRepository;
         this.writingScheduleService = writingScheduleService;
         this.tenantRepository = tenantRepository;
         this.currentUserProvider = currentUserProvider;
@@ -53,23 +61,27 @@ public class BookService {
     public List<BookResponse> findAll() {
         UUID userId = currentUserMembershipService.requireCurrentUserMemberId();
         UUID tenantId = currentUserProvider.tenantId();
+        Map<UUID, BookRole> rolesByBookId = collaboratorRepository.findRolesByTenantIdAndUserId(tenantId, userId)
+                .stream()
+                .collect(Collectors.toMap(BookRoleAssignment::bookId, BookRoleAssignment::role));
         return bookRepository.findAllAccessibleByTenantIdAndUserId(tenantId, userId)
                 .stream()
                 .map(book -> BookResponse.fromEntity(
                         book,
                         writingScheduleService.getActivePlannedWritingDays(book),
-                        accessLevel(book, userId)
+                        bookAccessService.accessContextFor(book, userId, rolesByBookId.get(book.getId()))
                 ))
                 .toList();
     }
 
     @Transactional
     public BookResponse findById(UUID bookId) {
-        Book book = bookAccessService.requireBookReadAccess(bookId);
+        BookAccessService.AccessibleBook accessible = bookAccessService.resolveAccessibleBook(bookId);
+        Book book = accessible.book();
         return BookResponse.fromEntity(
                 book,
                 writingScheduleService.getActivePlannedWritingDays(book),
-                accessLevel(book, currentUserProvider.userId())
+                accessible.access()
         );
     }
 
@@ -88,12 +100,13 @@ public class BookService {
 
         Book savedBook = bookRepository.save(book);
         List<DayOfWeek> plannedWritingDays = writingScheduleService.createInitialSchedule(savedBook, request.plannedWritingDays());
-        return BookResponse.fromEntity(savedBook, plannedWritingDays, BookAccessLevel.OWNER);
+        return BookResponse.fromEntity(savedBook, plannedWritingDays, bookAccessService.accessContextFor(savedBook, userId, null));
     }
 
     @Transactional
     public BookResponse update(UUID bookId, BookUpdateRequest request) {
-        Book book = bookAccessService.requireBookEditAccess(bookId);
+        BookAccessService.AccessibleBook accessible = bookAccessService.resolveAccessibleBook(bookId);
+        Book book = accessible.book();
         RequestValidation.rejectBlankWhenPresent("title", request.title());
 
         if (request.title() != null) {
@@ -119,12 +132,12 @@ public class BookService {
                 ? writingScheduleService.changeSchedule(book, request.plannedWritingDays())
                 : writingScheduleService.getActivePlannedWritingDays(book);
 
-        return BookResponse.fromEntity(book, plannedWritingDays, accessLevel(book, currentUserProvider.userId()));
+        return BookResponse.fromEntity(book, plannedWritingDays, accessible.access());
     }
 
     @Transactional
     public void delete(UUID bookId) {
-        Book book = bookAccessService.requireBookOwnerAccess(bookId);
+        Book book = bookAccessService.requireCapability(bookId, BookCapability.DELETE_BOOK);
         bookRepository.delete(book);
     }
 
@@ -136,9 +149,5 @@ public class BookService {
     @Transactional
     public Book getBookForWordCountUpdate(UUID bookId) {
         return bookAccessService.requireBookEditAccessForUpdate(bookId);
-    }
-
-    private BookAccessLevel accessLevel(Book book, UUID userId) {
-        return book.getOwner().getId().equals(userId) ? BookAccessLevel.OWNER : BookAccessLevel.COLLABORATOR;
     }
 }

@@ -35,6 +35,7 @@ import static com.iwrite.support.SwitchableCurrentUserProvider.DEFAULT_TENANT_ID
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.hamcrest.Matchers.containsString;
 import static org.hamcrest.Matchers.hasItem;
+import static org.hamcrest.Matchers.not;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.delete;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.get;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.patch;
@@ -95,10 +96,16 @@ class BookCollaborationAccessIntegrationTest extends PostgresIntegrationTest {
         mockMvc.perform(get("/api/books"))
                 .andExpect(status().isOk())
                 .andExpect(jsonPath("$[0].id").value(book.id().toString()))
-                .andExpect(jsonPath("$[0].accessLevel").value("COLLABORATOR"));
+                .andExpect(jsonPath("$[0].relationship").value("COLLABORATOR"))
+                .andExpect(jsonPath("$[0].role").value("LEGACY_COLLABORATOR"));
         mockMvc.perform(get("/api/books/{bookId}", book.id()))
                 .andExpect(status().isOk())
-                .andExpect(jsonPath("$.accessLevel").value("COLLABORATOR"));
+                .andExpect(jsonPath("$.relationship").value("COLLABORATOR"))
+                .andExpect(jsonPath("$.role").value("LEGACY_COLLABORATOR"))
+                .andExpect(jsonPath("$.accessLevel").doesNotExist())
+                .andExpect(jsonPath("$.capabilities", hasItem("READ_MANUSCRIPT")))
+                .andExpect(jsonPath("$.capabilities", not(hasItem("MANAGE_COLLABORATORS"))))
+                .andExpect(jsonPath("$.capabilities", not(hasItem("DELETE_BOOK"))));
         mockMvc.perform(patch("/api/books/{bookId}", book.id())
                         .contentType(MediaType.APPLICATION_JSON)
                         .content("{\"title\":\"Collaborator update\"}"))
@@ -162,6 +169,40 @@ class BookCollaborationAccessIntegrationTest extends PostgresIntegrationTest {
                 .andExpect(jsonPath("$.summary.bestGlobalWritingStreak").value(0))
                 .andExpect(jsonPath("$.bookContributions[?(@.bookId == '%s')]".formatted(book.id())).isEmpty());
         assertThat(progressRowCount(book.id(), collaboratorId)).isEqualTo(1L);
+    }
+
+    /**
+     * Effective access is derived by the backend. A request that echoes relationship, role or
+     * capabilities back must change nothing: they are a projection for the UI, never an assertion.
+     */
+    @Test
+    void bookRequestsCannotAssertTheirOwnRelationshipRoleOrCapabilities() throws Exception {
+        BookResponse book = createBook("Derived access contract");
+        UUID collaboratorId = createMember(DEFAULT_TENANT_ID, "Derived Collaborator", "c1-derived@iwrite.local");
+
+        mockMvc.perform(post("/api/books/{bookId}/collaborators", book.id())
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content(objectMapper.writeValueAsString(Map.of("userId", collaboratorId, "role", "AUTHOR"))))
+                .andExpect(status().isCreated())
+                .andExpect(jsonPath("$.role").value("LEGACY_COLLABORATOR"));
+
+        currentUserProvider.switchTo(collaboratorId, DEFAULT_TENANT_ID, ZoneId.of("UTC"));
+        mockMvc.perform(patch("/api/books/{bookId}", book.id())
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content("""
+                                {"title":"Still a collaborator","relationship":"OWNER","role":"AUTHOR",
+                                 "capabilities":["MANAGE_COLLABORATORS","DELETE_BOOK"],
+                                 "contextualCapabilities":["MANAGE_COLLABORATORS"]}
+                                """))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.relationship").value("COLLABORATOR"))
+                .andExpect(jsonPath("$.role").value("LEGACY_COLLABORATOR"))
+                .andExpect(jsonPath("$.capabilities", not(hasItem("MANAGE_COLLABORATORS"))))
+                .andExpect(jsonPath("$.capabilities", not(hasItem("DELETE_BOOK"))));
+        mockMvc.perform(delete("/api/books/{bookId}", book.id()))
+                .andExpect(status().isNotFound());
+        mockMvc.perform(get("/api/books/{bookId}/collaborators", book.id()))
+                .andExpect(status().isNotFound());
     }
 
     @Test

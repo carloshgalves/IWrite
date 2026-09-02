@@ -121,14 +121,19 @@ public class IwriteMcpTools {
         }
     }
 
-    public record McpBookSummary(UUID id, String title, String status, String accessLevel) {
+    /**
+     * MCP stays a thin layer over the same authorized services: it reports the relationship and Book
+     * Role the backend derived, and never a second access model of its own.
+     */
+    public record McpBookSummary(UUID id, String title, String status, String relationship, String role) {
 
         static McpBookSummary from(BookResponse book) {
             return new McpBookSummary(
                     book.id(),
                     book.title(),
                     book.status() == null ? null : book.status().name(),
-                    book.accessLevel() == null ? null : book.accessLevel().name()
+                    book.relationship() == null ? null : book.relationship().name(),
+                    book.role() == null ? null : book.role().name()
             );
         }
     }
