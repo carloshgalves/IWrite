@@ -98,7 +98,7 @@ Princípios:
 
 Cada livro possui proprietário explícito. Colaboradores ativos são persistidos e o acesso é autorizado no backend.
 
-Cada colaboração carrega um Book Role explícito e revogável, e a autorização de Book é derivada por uma única policy central parametrizada (`BookCapabilityPolicy`), não mais pelo contrato binário `OWNER | COLLABORATOR`. A fase expand da #205 não altera a superfície efetiva de nenhum colaborador atual: todo grant e todo convite existente entra como `LEGACY_COLLABORATOR`, que reproduz exatamente o acesso genérico anterior. As superfícies de Manuscript, Planning, Notebook, dashboard, export, versions e IA passam a exigir a capability mínima de cada uma nas #206–#212, e a #213 remove o default de compatibilidade e fecha novos grants como role-aware.
+Cada colaboração carrega um Book Role explícito e revogável, e a autorização de Book é derivada por uma única policy central parametrizada (`BookCapabilityPolicy`), não mais pelo contrato binário `OWNER | COLLABORATOR`. A fase expand da #205 não altera a superfície efetiva de nenhum colaborador atual: colaboradores/grants já existentes recebem `LEGACY_COLLABORATOR`, que reproduz exatamente o acesso genérico anterior. Convites legados já persistidos são diferentes: permanecem com `requested_role = COLLABORATOR` apenas como estado de compatibilidade auditável e revogável, não são convertidos em `BookRole` e não são candidatos atribuíveis para aceite. As superfícies de Manuscript, Planning, Notebook, dashboard, export, versions e IA passam a exigir a capability mínima de cada uma nas #206–#212, e a #213 remove o default de compatibilidade e fecha novos grants como role-aware.
 
 A fundação de convite (`book_collaboration_invitations`) já possui:
 
