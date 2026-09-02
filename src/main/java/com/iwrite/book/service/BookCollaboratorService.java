@@ -3,6 +3,7 @@ package com.iwrite.book.service;
 import com.iwrite.book.dto.BookCollaboratorResponse;
 import com.iwrite.book.entity.Book;
 import com.iwrite.book.entity.BookCollaborator;
+import com.iwrite.book.entity.BookRole;
 import com.iwrite.book.repository.BookCollaboratorRepository;
 import com.iwrite.book.repository.BookRepository;
 import com.iwrite.common.exception.ConflictException;
@@ -115,6 +116,10 @@ public class BookCollaboratorService {
         collaborator.setBook(lockedBook);
         collaborator.setUser(userRepository.getReferenceById(targetUserId));
         collaborator.setCreatedBy(userRepository.getReferenceById(grantorUserId));
+        // Compatibility phase (#205): grants still reproduce the previous generic surface. No public flow
+        // offers AUTHOR, EDITOR or READER while the remaining surfaces are guarded by the legacy checks,
+        // so a new grant must not elevate access. #213 makes new grants role-aware and drops this default.
+        collaborator.setRole(BookRole.LEGACY_COLLABORATOR);
 
         try {
             collaboratorRepository.saveAndFlush(collaborator);

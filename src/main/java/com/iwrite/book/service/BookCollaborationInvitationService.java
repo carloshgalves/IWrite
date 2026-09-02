@@ -17,9 +17,11 @@ import org.springframework.transaction.annotation.Transactional;
 
 import java.time.Duration;
 import java.time.OffsetDateTime;
+import java.util.EnumSet;
 import java.util.List;
 import java.util.Locale;
 import java.util.Optional;
+import java.util.Set;
 import java.util.UUID;
 import java.util.regex.Pattern;
 
@@ -27,6 +29,14 @@ import java.util.regex.Pattern;
 public class BookCollaborationInvitationService {
 
     static final Duration DEFAULT_VALIDITY = Duration.ofDays(7);
+
+    /**
+     * Compatibility phase (#205): while the Book surfaces are still guarded by the legacy generic
+     * checks, no public flow may offer AUTHOR, EDITOR or READER — accepting one would promise an
+     * authority the guards do not yet enforce. #213 opens this to the assignable roles and closes the
+     * legacy value once every surface is behind its minimum capability.
+     */
+    private static final Set<BookCollaborationRole> REQUESTABLE_ROLES = EnumSet.of(BookCollaborationRole.COLLABORATOR);
 
     private static final int MAX_EMAIL_LENGTH = 320;
     private static final Pattern EMAIL_PATTERN = Pattern.compile("^[^\\s@]+@[^\\s@]+\\.[^\\s@]+$");
@@ -191,11 +201,20 @@ public class BookCollaborationInvitationService {
         if (requestedRole == null || requestedRole.isBlank()) {
             throw new BadRequestException("requestedRole must be provided");
         }
+        BookCollaborationRole parsed;
         try {
-            return BookCollaborationRole.valueOf(requestedRole.trim());
+            parsed = BookCollaborationRole.valueOf(requestedRole.trim());
         } catch (IllegalArgumentException exception) {
-            throw new BadRequestException("Unsupported collaboration role: " + requestedRole.trim());
+            throw unsupportedRole(requestedRole);
         }
+        if (!REQUESTABLE_ROLES.contains(parsed)) {
+            throw unsupportedRole(requestedRole);
+        }
+        return parsed;
+    }
+
+    private BadRequestException unsupportedRole(String requestedRole) {
+        return new BadRequestException("Unsupported collaboration role: " + requestedRole.trim());
     }
 
     private OffsetDateTime resolveExpiration(OffsetDateTime requestedExpiresAt, OffsetDateTime now) {

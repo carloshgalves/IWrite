@@ -84,6 +84,7 @@ class BookCollaborationAccessIntegrationTest extends PostgresIntegrationTest {
                 .andExpect(status().isCreated())
                 .andExpect(jsonPath("$.userId").value(collaboratorId.toString()))
                 .andExpect(jsonPath("$.displayName").value("B Collaborator"))
+                .andExpect(jsonPath("$.role").value("LEGACY_COLLABORATOR"))
                 .andExpect(jsonPath("$.createdAt").exists());
 
         mockMvc.perform(get("/api/books/{bookId}/collaborators", book.id()))

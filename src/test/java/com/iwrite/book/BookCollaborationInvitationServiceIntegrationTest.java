@@ -7,6 +7,7 @@ import com.iwrite.book.dto.BookResponse;
 import com.iwrite.book.entity.BookCollaborationInvitation;
 import com.iwrite.book.entity.BookCollaborationInvitationStatus;
 import com.iwrite.book.entity.BookCollaborationRole;
+import com.iwrite.book.entity.BookRole;
 import com.iwrite.book.repository.BookCollaborationInvitationRepository;
 import com.iwrite.book.service.BookCollaborationInvitationService;
 import com.iwrite.book.service.BookCollaboratorService;
@@ -120,16 +121,35 @@ class BookCollaborationInvitationServiceIntegrationTest extends PostgresIntegrat
         }
     }
 
+    /**
+     * Compatibility phase (#205): the assignable Book Roles exist in the persisted catalog, but no
+     * public flow may request one while the Book surfaces are still guarded by the legacy checks.
+     * Offering AUTHOR, EDITOR or READER here would promise an authority nothing enforces yet.
+     */
     @Test
-    void createRejectsUnsupportedRoles() {
+    void createRejectsUnsupportedRolesAndDoesNotYetOfferTheAssignableBookRoles() {
         BookResponse book = createBook("Invitation invalid role");
 
-        for (String role : new String[]{null, "", "OWNER", "EDITOR", "collaborator "}) {
+        for (String role : new String[]{
+                null, "", "OWNER", "REVIEWER", "collaborator ",
+                "AUTHOR", "EDITOR", "READER", "LEGACY_COLLABORATOR"
+        }) {
             assertThatThrownBy(() -> invitationService.create(
                     book.id(),
                     new BookCollaborationInvitationRequest("writer@example.com", role, null)
             )).isInstanceOf(BadRequestException.class);
         }
+    }
+
+    @Test
+    void invitationRolesMapToTheClosedBookRoleCatalog() {
+        assertThat(BookCollaborationRole.AUTHOR.bookRole()).isEqualTo(BookRole.AUTHOR);
+        assertThat(BookCollaborationRole.EDITOR.bookRole()).isEqualTo(BookRole.EDITOR);
+        assertThat(BookCollaborationRole.READER.bookRole()).isEqualTo(BookRole.READER);
+
+        // A stored legacy invitation stays legacy: it can never be inferred into an assignable grant.
+        assertThat(BookCollaborationRole.COLLABORATOR.bookRole()).isEqualTo(BookRole.LEGACY_COLLABORATOR);
+        assertThat(BookCollaborationRole.COLLABORATOR.isAssignable()).isFalse();
     }
 
     @Test
