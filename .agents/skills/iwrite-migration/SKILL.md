@@ -84,6 +84,8 @@ Also verify a clean database can migrate from zero to head.
 
 Use deterministic concurrency tests where races/uniqueness/locks are part of the invariant.
 
+If PostgreSQL or supporting infrastructure is started in Docker specifically for this validation, isolate those resources from any long-lived developer stack, register cleanup before startup, and remove all test-created containers and volumes when the validation finishes. Follow `docs/agents/docker-test-lifecycle.md`; the cleanup requirement applies on failing migration tests too.
+
 ## 7. Review
 
 Before completion run `iwrite-review` with special attention to:
@@ -95,6 +97,7 @@ Before completion run `iwrite-review` with special attention to:
 - indexes and query effects;
 - migration from prior state;
 - production lock/startup risk;
-- forward recovery plan.
+- forward recovery plan;
+- no Docker container or volume created for validation left behind.
 
 Document operationally significant migration behavior in the Issue/PR and update migration documentation/ADR only when the change introduces durable new rules.

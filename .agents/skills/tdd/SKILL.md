@@ -32,6 +32,17 @@ For each narrow behavior slice:
 
 Avoid writing a large imagined test suite before learning from the first implementation slice.
 
+## Docker-backed tests
+
+When a test or validation creates Docker infrastructure, resource teardown is part of the test lifecycle, not optional housekeeping.
+
+- Isolate test-created containers/volumes from pre-existing developer resources.
+- Register cleanup before starting the resources so red tests and command failures still tear them down.
+- Remove every container and volume created for the test before considering the run complete.
+- Follow `docs/agents/docker-test-lifecycle.md`; never use broad prune commands to satisfy this rule.
+
+A green assertion with leaked test containers or volumes is not a complete green cycle.
+
 ## Good tests
 
 Prefer tests that:
