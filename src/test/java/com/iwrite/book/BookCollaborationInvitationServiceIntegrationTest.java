@@ -1,6 +1,5 @@
 package com.iwrite.book;
 
-import com.iwrite.book.dto.BookCollaborationInvitationCreationResult;
 import com.iwrite.book.dto.BookCollaborationInvitationRequest;
 import com.iwrite.book.dto.BookCollaborationInvitationResponse;
 import com.iwrite.book.dto.BookResponse;
@@ -31,14 +30,16 @@ import org.springframework.boot.test.context.TestConfiguration;
 import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Import;
 import org.springframework.context.annotation.Primary;
+import org.springframework.dao.DataIntegrityViolationException;
 
 import java.nio.charset.StandardCharsets;
 import java.security.MessageDigest;
 import java.time.OffsetDateTime;
 import java.time.ZoneId;
+import java.util.Base64;
 import java.util.HexFormat;
 import java.util.UUID;
-import java.util.regex.Pattern;
+import java.util.concurrent.ThreadLocalRandom;
 
 import static com.iwrite.support.SwitchableCurrentUserProvider.DEFAULT_TENANT_ID;
 import static com.iwrite.support.SwitchableCurrentUserProvider.DEFAULT_USER_ID;
@@ -47,8 +48,6 @@ import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
 @Import(BookCollaborationInvitationServiceIntegrationTest.CurrentUserTestConfiguration.class)
 class BookCollaborationInvitationServiceIntegrationTest extends PostgresIntegrationTest {
-
-    private static final Pattern URL_SAFE_TOKEN = Pattern.compile("^[A-Za-z0-9_-]{43}$");
 
     @Autowired
     private BookCollaborationInvitationService invitationService;
@@ -73,41 +72,32 @@ class BookCollaborationInvitationServiceIntegrationTest extends PostgresIntegrat
         currentUserProvider.reset();
     }
 
+    /**
+     * A raw invitation token is a credential: only its hash may reach persistence, and no column of the
+     * row may carry the raw value. The canary is a synthetic token this test chose, so the assertion
+     * cannot pass by recomputing whatever the implementation happened to store.
+     *
+     * <p>Public creation is closed in this phase (#205), so the invariant is proven on a persisted row.
+     * Token generation and shape stay covered by {@code InvitationTokenServiceTest}.
+     */
     @Test
-    void createReturnsRawTokenOnceAndPersistsOnlyItsHash() throws Exception {
-        BookResponse book = createBook("Invitation happy path");
-        OffsetDateTime before = OffsetDateTime.now();
-
-        BookCollaborationInvitationCreationResult result = invitationService.create(
-                book.id(),
-                new BookCollaborationInvitationRequest("  Writer@Example.COM  ", "COLLABORATOR", null)
+    void aPersistedInvitationStoresOnlyTheTokenHash() throws Exception {
+        BookResponse book = createBook("Invitation token privacy");
+        String canaryToken = randomRawToken();
+        BookCollaborationInvitation persisted = persistPendingInvitationWithRole(
+                book, "canary@example.com", BookCollaborationRole.COLLABORATOR, canaryToken
         );
 
-        BookCollaborationInvitationResponse invitation = result.invitation();
-        assertThat(invitation.bookId()).isEqualTo(book.id());
-        assertThat(invitation.inviterUserId()).isEqualTo(DEFAULT_USER_ID);
-        assertThat(invitation.recipientEmail()).isEqualTo("writer@example.com");
-        assertThat(invitation.requestedRole()).isEqualTo(BookCollaborationRole.COLLABORATOR);
-        assertThat(invitation.status()).isEqualTo(BookCollaborationInvitationStatus.PENDING);
-        assertThat(invitation.acceptedAt()).isNull();
-        assertThat(invitation.revokedAt()).isNull();
-        assertThat(invitation.createdAt()).isNotNull();
-        assertThat(invitation.updatedAt()).isNotNull();
-        assertThat(invitation.expiresAt()).isAfter(before.plusDays(6));
-        assertThat(invitation.expiresAt()).isBefore(before.plusDays(8));
+        String storedHash = storedTokenHash(persisted.getId());
+        assertThat(storedHash).isEqualTo(sha256Hex(canaryToken));
+        assertThat(wholeRowAsText(persisted.getId())).doesNotContain(canaryToken);
 
-        String rawToken = result.rawToken();
-        assertThat(URL_SAFE_TOKEN.matcher(rawToken).matches()).isTrue();
-
-        String storedHash = storedTokenHash(invitation.id());
-        assertThat(storedHash).isEqualTo(sha256Hex(rawToken));
-
-        String rowText = wholeRowAsText(invitation.id());
-        assertThat(rowText.contains(rawToken)).isFalse();
-
-        assertThat(result.toString().contains(rawToken)).isFalse();
-        assertThat(invitation.toString().contains(rawToken)).isFalse();
-        assertThat(invitation.toString().contains(storedHash)).isFalse();
+        BookCollaborationInvitationResponse response = invitationService.get(book.id(), persisted.getId());
+        assertThat(response.bookId()).isEqualTo(book.id());
+        assertThat(response.inviterUserId()).isEqualTo(DEFAULT_USER_ID);
+        assertThat(response.recipientEmail()).isEqualTo("canary@example.com");
+        assertThat(response.status()).isEqualTo(BookCollaborationInvitationStatus.PENDING);
+        assertThat(response.toString()).doesNotContain(canaryToken).doesNotContain(storedHash);
     }
 
     @Test
@@ -142,6 +132,25 @@ class BookCollaborationInvitationServiceIntegrationTest extends PostgresIntegrat
         }
     }
 
+    /**
+     * The consolidated contract of #205: a legacy COLLABORATOR invitation is preserved state, never new
+     * state. No assignable role may be requested in this phase either, so creation is closed
+     * altogether — issuing a raw token for an invitation that {@code lookupUsableByRawToken} can never
+     * surface would report success for an access that can never come to exist. #213 reopens creation
+     * once every surface is behind its minimum capability and grants are role-aware.
+     */
+    @Test
+    void createNeverProducesANewLegacyInvitation() {
+        BookResponse book = createBook("Invitation legacy creation closed");
+
+        assertThatThrownBy(() -> invitationService.create(
+                book.id(),
+                new BookCollaborationInvitationRequest("new-legacy@example.com", "COLLABORATOR", null)
+        )).isInstanceOf(BadRequestException.class);
+
+        assertThat(countInvitations(book.id())).isZero();
+    }
+
     @Test
     void invitationRolesMapToTheClosedBookRoleCatalog() {
         assertThat(BookCollaborationRole.AUTHOR.grantedBookRole()).contains(BookRole.AUTHOR);
@@ -158,34 +167,14 @@ class BookCollaborationInvitationServiceIntegrationTest extends PostgresIntegrat
     }
 
     @Test
-    void createHonorsCustomExpirationAndRejectsPastExpiration() {
-        BookResponse book = createBook("Invitation custom expiration");
-        OffsetDateTime customExpiresAt = OffsetDateTime.now().plusDays(1);
-
-        BookCollaborationInvitationCreationResult result = invitationService.create(
-                book.id(),
-                new BookCollaborationInvitationRequest("custom@example.com", "COLLABORATOR", customExpiresAt)
-        );
-        assertThat(result.invitation().expiresAt()).isEqualTo(customExpiresAt);
-
-        assertThatThrownBy(() -> invitationService.create(
-                book.id(),
-                new BookCollaborationInvitationRequest("past@example.com", "COLLABORATOR", OffsetDateTime.now().minusMinutes(1))
-        )).isInstanceOf(BadRequestException.class);
-    }
-
-    @Test
-    void onlyTheBookOwnerCanCreateGetAndRevokeInvitations() {
+    void onlyTheBookOwnerCanCreateGetAndRevokeInvitations() throws Exception {
         BookResponse book = createBook("Invitation authorization");
         UUID collaboratorId = createMember(DEFAULT_TENANT_ID, "Invited Collaborator", "c2-collab@iwrite.local");
         UUID unrelatedId = createMember(DEFAULT_TENANT_ID, "Unrelated Member", "c2-unrelated@iwrite.local");
         collaboratorService.grantInternal(book.id(), collaboratorId, DEFAULT_USER_ID);
         ForeignIdentity foreign = createForeignIdentity();
 
-        UUID invitationId = invitationService.create(
-                book.id(),
-                new BookCollaborationInvitationRequest("target@example.com", "COLLABORATOR", null)
-        ).invitation().id();
+        UUID invitationId = persistLegacyInvitation(book, "target@example.com").id();
 
         for (UUID deniedUserId : new UUID[]{collaboratorId, unrelatedId}) {
             currentUserProvider.switchTo(deniedUserId, DEFAULT_TENANT_ID, ZoneId.of("UTC"));
@@ -200,12 +189,9 @@ class BookCollaborationInvitationServiceIntegrationTest extends PostgresIntegrat
     }
 
     @Test
-    void invitationIdsDoNotBypassTenantOrBookAuthorization() {
+    void invitationIdsDoNotBypassTenantOrBookAuthorization() throws Exception {
         BookResponse book = createBook("Invitation tenant isolation");
-        UUID invitationId = invitationService.create(
-                book.id(),
-                new BookCollaborationInvitationRequest("isolated@example.com", "COLLABORATOR", null)
-        ).invitation().id();
+        UUID invitationId = persistLegacyInvitation(book, "isolated@example.com").id();
 
         ForeignIdentity foreign = createForeignIdentity();
         currentUserProvider.switchTo(foreign.userId(), foreign.tenantId(), ZoneId.of("UTC"));
@@ -227,13 +213,10 @@ class BookCollaborationInvitationServiceIntegrationTest extends PostgresIntegrat
     }
 
     @Test
-    void expiredInvitationBecomesUnusableWithoutRowMutation() {
+    void expiredInvitationBecomesUnusableWithoutRowMutation() throws Exception {
         BookResponse book = createBook("Invitation expiration");
-        BookCollaborationInvitationCreationResult result = invitationService.create(
-                book.id(),
-                new BookCollaborationInvitationRequest("expiring@example.com", "COLLABORATOR", null)
-        );
-        UUID invitationId = result.invitation().id();
+        PersistedInvitation result = persistLegacyInvitation(book, "expiring@example.com");
+        UUID invitationId = result.id();
 
         forceExpiration(invitationId);
 
@@ -246,13 +229,10 @@ class BookCollaborationInvitationServiceIntegrationTest extends PostgresIntegrat
     }
 
     @Test
-    void revocationMakesInvitationUnusableAndIsTerminal() {
+    void revocationMakesInvitationUnusableAndIsTerminal() throws Exception {
         BookResponse book = createBook("Invitation revocation");
-        BookCollaborationInvitationCreationResult result = invitationService.create(
-                book.id(),
-                new BookCollaborationInvitationRequest("revoked@example.com", "COLLABORATOR", null)
-        );
-        UUID invitationId = result.invitation().id();
+        PersistedInvitation result = persistLegacyInvitation(book, "revoked@example.com");
+        UUID invitationId = result.id();
 
         BookCollaborationInvitationResponse revoked = invitationService.revoke(book.id(), invitationId);
         assertThat(revoked.status()).isEqualTo(BookCollaborationInvitationStatus.REVOKED);
@@ -264,25 +244,19 @@ class BookCollaborationInvitationServiceIntegrationTest extends PostgresIntegrat
     }
 
     @Test
-    void terminalInvitationsCannotReturnToPendingOrBeReused() {
+    void terminalInvitationsCannotReturnToPendingOrBeReused() throws Exception {
         BookResponse book = createBook("Invitation terminal lifecycle");
         OffsetDateTime now = OffsetDateTime.now();
 
-        UUID revokedId = invitationService.create(
-                book.id(),
-                new BookCollaborationInvitationRequest("terminal-revoked@example.com", "COLLABORATOR", null)
-        ).invitation().id();
+        UUID revokedId = persistLegacyInvitation(book, "terminal-revoked@example.com").id();
         invitationService.revoke(book.id(), revokedId);
         BookCollaborationInvitation revoked = invitationRepository.findById(revokedId).orElseThrow();
         assertThatThrownBy(() -> revoked.markAccepted(now)).isInstanceOf(IllegalStateException.class);
         assertThatThrownBy(() -> revoked.revoke(now)).isInstanceOf(IllegalStateException.class);
         assertThatThrownBy(() -> revoked.markExpired(now)).isInstanceOf(IllegalStateException.class);
 
-        BookCollaborationInvitationCreationResult acceptedResult = invitationService.create(
-                book.id(),
-                new BookCollaborationInvitationRequest("terminal-accepted@example.com", "COLLABORATOR", null)
-        );
-        BookCollaborationInvitation accepted = invitationRepository.findById(acceptedResult.invitation().id()).orElseThrow();
+        PersistedInvitation acceptedResult = persistLegacyInvitation(book, "terminal-accepted@example.com");
+        BookCollaborationInvitation accepted = invitationRepository.findById(acceptedResult.id()).orElseThrow();
         accepted.markAccepted(now);
         invitationRepository.saveAndFlush(accepted);
 
@@ -293,49 +267,40 @@ class BookCollaborationInvitationServiceIntegrationTest extends PostgresIntegrat
                 .isInstanceOf(ConflictException.class);
     }
 
+    /**
+     * The guarantee against two usable invitations for the same (Workspace, Book, recipient, role) is
+     * the partial unique index over PENDING rows, not the service. Public creation is closed in this
+     * phase (#205), so the invariant is proven against the database directly — it is what a reopened
+     * creation in #213 will still rely on. The rejected insert comes last: it poisons the transaction.
+     */
     @Test
-    void duplicateActiveInvitationIsRejected() {
+    void aSecondPendingInvitationForTheSameRecipientAndRoleIsRejectedByTheDatabase() throws Exception {
         BookResponse book = createBook("Invitation duplicates");
-        invitationService.create(
-                book.id(),
-                new BookCollaborationInvitationRequest("duplicate@example.com", "COLLABORATOR", null)
-        );
+        persistLegacyInvitation(book, "duplicate@example.com");
 
-        assertThatThrownBy(() -> invitationService.create(
-                book.id(),
-                new BookCollaborationInvitationRequest(" Duplicate@Example.com ", "COLLABORATOR", null)
-        )).isInstanceOf(ConflictException.class);
+        assertThat(storedStatus(persistLegacyInvitation(book, "different@example.com").id())).isEqualTo("PENDING");
+        assertThat(storedStatus(persistInvitation(book, "duplicate@example.com", BookCollaborationRole.AUTHOR).id()))
+                .isEqualTo("PENDING");
 
-        assertThat(invitationService.create(
-                book.id(),
-                new BookCollaborationInvitationRequest("different@example.com", "COLLABORATOR", null)
-        ).invitation().status()).isEqualTo(BookCollaborationInvitationStatus.PENDING);
+        assertThatThrownBy(() -> persistLegacyInvitation(book, "duplicate@example.com"))
+                .isInstanceOf(DataIntegrityViolationException.class);
     }
 
+    /**
+     * Revocation is what releases the pending slot: the row leaves PENDING, so the partial unique index
+     * admits a replacement for the same recipient and role while the revoked row stays in the audit
+     * trail.
+     */
     @Test
-    void newInvitationIsAllowedAfterRevocationOrExpiration() {
+    void revokingAnInvitationReleasesThePendingSlotForTheSameRecipientAndRole() throws Exception {
         BookResponse book = createBook("Invitation replacement");
+        PersistedInvitation revoked = persistLegacyInvitation(book, "replace-revoked@example.com");
 
-        UUID revokedId = invitationService.create(
-                book.id(),
-                new BookCollaborationInvitationRequest("replace-revoked@example.com", "COLLABORATOR", null)
-        ).invitation().id();
-        invitationService.revoke(book.id(), revokedId);
-        assertThat(invitationService.create(
-                book.id(),
-                new BookCollaborationInvitationRequest("replace-revoked@example.com", "COLLABORATOR", null)
-        ).invitation().status()).isEqualTo(BookCollaborationInvitationStatus.PENDING);
+        invitationService.revoke(book.id(), revoked.id());
 
-        UUID expiredId = invitationService.create(
-                book.id(),
-                new BookCollaborationInvitationRequest("replace-expired@example.com", "COLLABORATOR", null)
-        ).invitation().id();
-        forceExpiration(expiredId);
-        assertThat(invitationService.create(
-                book.id(),
-                new BookCollaborationInvitationRequest("replace-expired@example.com", "COLLABORATOR", null)
-        ).invitation().status()).isEqualTo(BookCollaborationInvitationStatus.PENDING);
-        assertThat(storedStatus(expiredId)).isEqualTo("EXPIRED");
+        PersistedInvitation replacement = persistLegacyInvitation(book, "replace-revoked@example.com");
+        assertThat(storedStatus(replacement.id())).isEqualTo("PENDING");
+        assertThat(storedStatus(revoked.id())).isEqualTo("REVOKED");
     }
 
     @Test
@@ -365,13 +330,10 @@ class BookCollaborationInvitationServiceIntegrationTest extends PostgresIntegrat
      * the broad legacy read/edit/export/AI surface.
      */
     @Test
-    void legacyCollaboratorInvitationStaysAuditableAndRevocableButNeverAGrantCandidate() {
+    void legacyCollaboratorInvitationStaysAuditableAndRevocableButNeverAGrantCandidate() throws Exception {
         BookResponse book = createBook("Invitation legacy grant guard");
-        BookCollaborationInvitationCreationResult result = invitationService.create(
-                book.id(),
-                new BookCollaborationInvitationRequest("legacy@example.com", "COLLABORATOR", null)
-        );
-        UUID invitationId = result.invitation().id();
+        PersistedInvitation result = persistLegacyInvitation(book, "legacy@example.com");
+        UUID invitationId = result.id();
 
         BookCollaborationInvitationResponse queried = invitationService.get(book.id(), invitationId);
         assertThat(queried.requestedRole()).isEqualTo(BookCollaborationRole.COLLABORATOR);
@@ -381,6 +343,33 @@ class BookCollaborationInvitationServiceIntegrationTest extends PostgresIntegrat
 
         BookCollaborationInvitationResponse revoked = invitationService.revoke(book.id(), invitationId);
         assertThat(revoked.status()).isEqualTo(BookCollaborationInvitationStatus.REVOKED);
+    }
+
+    /** A legacy COLLABORATOR invitation persisted directly, as rows created before #205 exist today. */
+    private PersistedInvitation persistLegacyInvitation(BookResponse book, String recipientEmail) throws Exception {
+        return persistInvitation(book, recipientEmail, BookCollaborationRole.COLLABORATOR);
+    }
+
+    private PersistedInvitation persistInvitation(
+            BookResponse book,
+            String recipientEmail,
+            BookCollaborationRole role
+    ) throws Exception {
+        String rawToken = randomRawToken();
+        return new PersistedInvitation(
+                persistPendingInvitationWithRole(book, recipientEmail, role, rawToken).getId(),
+                rawToken
+        );
+    }
+
+    /** A token of the same shape the generator produces, chosen by the test so it stays a known canary. */
+    private static String randomRawToken() {
+        byte[] bytes = new byte[32];
+        ThreadLocalRandom.current().nextBytes(bytes);
+        return Base64.getUrlEncoder().withoutPadding().encodeToString(bytes);
+    }
+
+    private record PersistedInvitation(UUID id, String rawToken) {
     }
 
     private BookCollaborationInvitation persistPendingInvitationWithRole(
@@ -425,6 +414,15 @@ class BookCollaborationInvitationServiceIntegrationTest extends PostgresIntegrat
                 .setParameter("id", invitationId)
                 .executeUpdate();
         entityManager.clear();
+    }
+
+    private long countInvitations(UUID bookId) {
+        Number count = (Number) entityManager.createNativeQuery(
+                        "select count(*) from book_collaboration_invitations where book_id = :bookId"
+                )
+                .setParameter("bookId", bookId)
+                .getSingleResult();
+        return count.longValue();
     }
 
     private String storedTokenHash(UUID invitationId) {

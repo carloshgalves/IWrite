@@ -32,12 +32,19 @@ public class BookCollaborationInvitationService {
     static final Duration DEFAULT_VALIDITY = Duration.ofDays(7);
 
     /**
-     * Compatibility phase (#205): while the Book surfaces are still guarded by the legacy generic
-     * checks, no public flow may offer AUTHOR, EDITOR or READER — accepting one would promise an
-     * authority the guards do not yet enforce. #213 opens this to the assignable roles and closes the
-     * legacy value once every surface is behind its minimum capability.
+     * Compatibility phase (#205): no role may be requested for a new invitation, so creation is closed.
+     *
+     * <p>AUTHOR, EDITOR and READER stay closed because the Book surfaces are still behind the legacy
+     * generic guards, and offering one would promise an authority nothing enforces yet. COLLABORATOR
+     * stays closed because it is preserved state, not new state: it grants no Book Role by inference,
+     * so {@code lookupUsableByRawToken} can never surface it and a new one would only report success
+     * for an access that can never come to exist.
+     *
+     * <p>Already persisted invitations are unaffected — {@link #get} and {@link #revoke} keep the
+     * legacy rows auditable and revocable. #213 reopens creation with the assignable roles once every
+     * surface is behind its minimum capability and grants are role-aware.
      */
-    private static final Set<BookCollaborationRole> REQUESTABLE_ROLES = EnumSet.of(BookCollaborationRole.COLLABORATOR);
+    private static final Set<BookCollaborationRole> REQUESTABLE_ROLES = EnumSet.noneOf(BookCollaborationRole.class);
 
     private static final int MAX_EMAIL_LENGTH = 320;
     private static final Pattern EMAIL_PATTERN = Pattern.compile("^[^\\s@]+@[^\\s@]+\\.[^\\s@]+$");
