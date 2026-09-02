@@ -121,6 +121,10 @@ public class BookCollaborationInvitationService {
      * Internal foundation for the future acceptance flow: resolves a raw token to
      * a usable invitation. Not exposed through any endpoint; performs no
      * tenant-scoped authorization because the token itself is the credential.
+     *
+     * <p>Only an invitation whose requested role is assignable is surfaced. A legacy COLLABORATOR
+     * invitation stays auditable and revocable, but it grants no Book Role by inference, so it never
+     * becomes an acceptance candidate here.
      */
     @Transactional(readOnly = true)
     public Optional<BookCollaborationInvitationResponse> lookupUsableByRawToken(String rawToken) {
@@ -130,6 +134,7 @@ public class BookCollaborationInvitationService {
         OffsetDateTime now = OffsetDateTime.now();
         return invitationRepository.findByTokenHash(tokenService.hash(rawToken))
                 .filter(invitation -> tokenService.matches(rawToken, invitation.getTokenHash()))
+                .filter(invitation -> invitation.getRequestedRole().isAssignable())
                 .filter(invitation -> invitation.isUsable(now))
                 .map(invitation -> BookCollaborationInvitationResponse.fromEntity(invitation, now));
     }

@@ -4,6 +4,7 @@ import com.iwrite.book.dto.BookCollaborationInvitationCreationResult;
 import com.iwrite.book.dto.BookCollaborationInvitationRequest;
 import com.iwrite.book.dto.BookCollaborationInvitationResponse;
 import com.iwrite.book.dto.BookResponse;
+import com.iwrite.book.entity.Book;
 import com.iwrite.book.entity.BookCollaborationInvitation;
 import com.iwrite.book.entity.BookCollaborationInvitationStatus;
 import com.iwrite.book.entity.BookCollaborationRole;
@@ -143,12 +144,16 @@ class BookCollaborationInvitationServiceIntegrationTest extends PostgresIntegrat
 
     @Test
     void invitationRolesMapToTheClosedBookRoleCatalog() {
-        assertThat(BookCollaborationRole.AUTHOR.bookRole()).isEqualTo(BookRole.AUTHOR);
-        assertThat(BookCollaborationRole.EDITOR.bookRole()).isEqualTo(BookRole.EDITOR);
-        assertThat(BookCollaborationRole.READER.bookRole()).isEqualTo(BookRole.READER);
+        assertThat(BookCollaborationRole.AUTHOR.grantedBookRole()).contains(BookRole.AUTHOR);
+        assertThat(BookCollaborationRole.EDITOR.grantedBookRole()).contains(BookRole.EDITOR);
+        assertThat(BookCollaborationRole.READER.grantedBookRole()).contains(BookRole.READER);
+        assertThat(BookCollaborationRole.AUTHOR.isAssignable()).isTrue();
+        assertThat(BookCollaborationRole.EDITOR.isAssignable()).isTrue();
+        assertThat(BookCollaborationRole.READER.isAssignable()).isTrue();
 
-        // A stored legacy invitation stays legacy: it can never be inferred into an assignable grant.
-        assertThat(BookCollaborationRole.COLLABORATOR.bookRole()).isEqualTo(BookRole.LEGACY_COLLABORATOR);
+        // A legacy invitation grants no Book Role by inference: there is no conversion to hand a
+        // future acceptance flow, so it can never become an assignable grant.
+        assertThat(BookCollaborationRole.COLLABORATOR.grantedBookRole()).isEmpty();
         assertThat(BookCollaborationRole.COLLABORATOR.isAssignable()).isFalse();
     }
 
@@ -334,23 +339,67 @@ class BookCollaborationInvitationServiceIntegrationTest extends PostgresIntegrat
     }
 
     @Test
-    void usableInvitationCanBeLookedUpByRawTokenOnly() {
+    void usableAssignableInvitationCanBeLookedUpByRawTokenOnly() throws Exception {
         BookResponse book = createBook("Invitation token lookup");
-        BookCollaborationInvitationCreationResult result = invitationService.create(
-                book.id(),
-                new BookCollaborationInvitationRequest("lookup@example.com", "COLLABORATOR", null)
+        String rawToken = "L".repeat(43);
+        BookCollaborationInvitation persisted = persistPendingInvitationWithRole(
+                book, "assignable-lookup@example.com", BookCollaborationRole.AUTHOR, rawToken
         );
 
-        assertThat(invitationService.lookupUsableByRawToken(result.rawToken()))
+        assertThat(invitationService.lookupUsableByRawToken(rawToken))
                 .isPresent()
                 .hasValueSatisfying(found -> {
-                    assertThat(found.id()).isEqualTo(result.invitation().id());
+                    assertThat(found.id()).isEqualTo(persisted.getId());
                     assertThat(found.status()).isEqualTo(BookCollaborationInvitationStatus.PENDING);
                 });
 
         assertThat(invitationService.lookupUsableByRawToken("A".repeat(43))).isEmpty();
         assertThat(invitationService.lookupUsableByRawToken(null)).isEmpty();
         assertThat(invitationService.lookupUsableByRawToken("  ")).isEmpty();
+    }
+
+    /**
+     * A legacy COLLABORATOR invitation stays part of the audit trail and can still be revoked, but it
+     * grants no assignable Book Role, so the acceptance-facing token lookup never surfaces it even
+     * while it is pending and unexpired. This keeps #147 from being handed a direct conversion into
+     * the broad legacy read/edit/export/AI surface.
+     */
+    @Test
+    void legacyCollaboratorInvitationStaysAuditableAndRevocableButNeverAGrantCandidate() {
+        BookResponse book = createBook("Invitation legacy grant guard");
+        BookCollaborationInvitationCreationResult result = invitationService.create(
+                book.id(),
+                new BookCollaborationInvitationRequest("legacy@example.com", "COLLABORATOR", null)
+        );
+        UUID invitationId = result.invitation().id();
+
+        BookCollaborationInvitationResponse queried = invitationService.get(book.id(), invitationId);
+        assertThat(queried.requestedRole()).isEqualTo(BookCollaborationRole.COLLABORATOR);
+        assertThat(queried.status()).isEqualTo(BookCollaborationInvitationStatus.PENDING);
+
+        assertThat(invitationService.lookupUsableByRawToken(result.rawToken())).isEmpty();
+
+        BookCollaborationInvitationResponse revoked = invitationService.revoke(book.id(), invitationId);
+        assertThat(revoked.status()).isEqualTo(BookCollaborationInvitationStatus.REVOKED);
+    }
+
+    private BookCollaborationInvitation persistPendingInvitationWithRole(
+            BookResponse book,
+            String recipientEmail,
+            BookCollaborationRole role,
+            String rawToken
+    ) throws Exception {
+        BookCollaborationInvitation invitation = new BookCollaborationInvitation();
+        invitation.setTenant(entityManager.getReference(Tenant.class, DEFAULT_TENANT_ID));
+        invitation.setBook(entityManager.getReference(Book.class, book.id()));
+        invitation.setInviter(entityManager.getReference(User.class, DEFAULT_USER_ID));
+        invitation.setRecipientEmail(recipientEmail);
+        invitation.setRequestedRole(role);
+        invitation.setTokenHash(sha256Hex(rawToken));
+        invitation.setExpiresAt(OffsetDateTime.now().plusDays(7));
+        invitationRepository.saveAndFlush(invitation);
+        entityManager.clear();
+        return invitation;
     }
 
     private void assertDeniedAsBookNotFound(UUID bookId, UUID invitationId) {
