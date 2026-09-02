@@ -98,7 +98,7 @@ Princípios:
 
 Cada livro possui proprietário explícito. Colaboradores ativos são persistidos e o acesso é autorizado no backend.
 
-O modelo atual ainda possui colaboração genérica herdada da C1. A #145 vai separar papéis/capabilities contextuais por livro.
+Cada colaboração carrega um Book Role explícito e revogável, e a autorização de Book é derivada por uma única policy central parametrizada (`BookCapabilityPolicy`), não mais pelo contrato binário `OWNER | COLLABORATOR`. A fase expand da #205 não altera a superfície efetiva de nenhum colaborador atual: todo grant e todo convite existente entra como `LEGACY_COLLABORATOR`, que reproduz exatamente o acesso genérico anterior. As superfícies de Manuscript, Planning, Notebook, dashboard, export, versions e IA passam a exigir a capability mínima de cada uma nas #206–#212, e a #213 remove o default de compatibilidade e fecha novos grants como role-aware.
 
 A fundação de convite (`book_collaboration_invitations`) já possui:
 
@@ -215,7 +215,7 @@ O workspace atual possui modos de visão separados para overview, storyboard, ka
 
 ## Banco e migrations
 
-Flyway é a única forma aceita para evolução do schema. O head atual é **V34**.
+Flyway é a única forma aceita para evolução do schema. O head atual é **V35**.
 
 Migrations críticas são verificadas em PostgreSQL real, inclusive cenários de backfill, constraints, concorrência e migração a partir de versão anterior relevante.
 

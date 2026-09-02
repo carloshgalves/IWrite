@@ -181,6 +181,7 @@ Fase expand da fundação de Book Roles (#205):
 - auditoria de domínio e LLM persistidas;
 - credenciais reais persistidas separadamente;
 - personas declarativas persistidas;
+- a #213 ainda removerá o default de compatibilidade `LEGACY_COLLABORATOR` e tornará novos grants role-aware, como cutover após as #206–#212 colocarem cada superfície atrás de capabilities;
 - múltiplos workspaces e aceite completo de convites ainda exigirão migrations futuras conforme #146–#147.
 
 ## Checklist para nova migration
