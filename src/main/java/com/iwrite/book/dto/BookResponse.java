@@ -7,7 +7,6 @@ import com.iwrite.book.entity.Book;
 import com.iwrite.book.entity.BookRole;
 import com.iwrite.book.entity.BookStatus;
 
-import java.time.DayOfWeek;
 import java.time.OffsetDateTime;
 import java.util.Comparator;
 import java.util.List;
@@ -16,6 +15,10 @@ import java.util.UUID;
 
 /**
  * Book projection carrying the effective access derived by the backend.
+ *
+ * <p>The Personal Book Writing Goal is not projected here. A daily word target and planned writing
+ * days belong to one User inside the Book, so they are read through
+ * {@code /api/books/{bookId}/writing-goal} instead of being repeated as if they were shared Book data.
  *
  * <p>{@code relationship}, {@code role} and the capability sets replace the former binary
  * {@code OWNER | COLLABORATOR} contract. They exist so a consumer can present only the actions it may
@@ -33,8 +36,6 @@ public record BookResponse(
         String description,
         BookStatus status,
         Integer targetWordCount,
-        Integer dailyTargetWordCount,
-        List<DayOfWeek> plannedWritingDays,
         BookRelationship relationship,
         BookRole role,
         List<BookCapability> capabilities,
@@ -43,7 +44,7 @@ public record BookResponse(
         OffsetDateTime updatedAt
 ) {
 
-    public static BookResponse fromEntity(Book book, List<DayOfWeek> plannedWritingDays, BookAccessContext access) {
+    public static BookResponse fromEntity(Book book, BookAccessContext access) {
         return new BookResponse(
                 book.getId(),
                 book.getTitle(),
@@ -51,8 +52,6 @@ public record BookResponse(
                 book.getDescription(),
                 book.getStatus(),
                 book.getTargetWordCount(),
-                book.getDailyTargetWordCount(),
-                plannedWritingDays,
                 access.relationship(),
                 access.role(),
                 sorted(access.capabilities()),

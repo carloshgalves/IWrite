@@ -1,5 +1,7 @@
 package com.iwrite.dashboard.service;
 
+import com.iwrite.book.authorization.BookAccessContext;
+import com.iwrite.book.authorization.BookCapability;
 import com.iwrite.book.entity.Book;
 import com.iwrite.book.service.BookAccessService;
 import com.iwrite.chapter.entity.Chapter;
@@ -27,6 +29,7 @@ import com.iwrite.section.entity.BookSection;
 import com.iwrite.section.repository.BookSectionRepository;
 import com.iwrite.writingprogress.entity.DailyWritingProgress;
 import com.iwrite.writingprogress.service.DailyWritingProgressService;
+import com.iwrite.writingprogress.service.PersonalBookWritingGoalService;
 import com.iwrite.writingprogress.service.WritingScheduleService;
 import com.iwrite.writingprogress.service.WritingProgressPeriod;
 import org.springframework.stereotype.Service;
@@ -38,6 +41,7 @@ import java.util.EnumMap;
 import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
+import java.util.Set;
 import java.util.UUID;
 
 @Service
@@ -49,6 +53,7 @@ public class BookDashboardService {
     private final SceneRepository sceneRepository;
     private final DailyWritingProgressService dailyWritingProgressService;
     private final WritingScheduleService writingScheduleService;
+    private final PersonalBookWritingGoalService personalBookWritingGoalService;
     private final ScenePlanningCompletenessService planningCompletenessService;
 
     public BookDashboardService(
@@ -58,6 +63,7 @@ public class BookDashboardService {
             SceneRepository sceneRepository,
             DailyWritingProgressService dailyWritingProgressService,
             WritingScheduleService writingScheduleService,
+            PersonalBookWritingGoalService personalBookWritingGoalService,
             ScenePlanningCompletenessService planningCompletenessService
     ) {
         this.bookAccessService = bookAccessService;
@@ -66,6 +72,7 @@ public class BookDashboardService {
         this.sceneRepository = sceneRepository;
         this.dailyWritingProgressService = dailyWritingProgressService;
         this.writingScheduleService = writingScheduleService;
+        this.personalBookWritingGoalService = personalBookWritingGoalService;
         this.planningCompletenessService = planningCompletenessService;
     }
 
@@ -76,7 +83,9 @@ public class BookDashboardService {
 
     @Transactional
     public BookDashboardResponse getDashboard(UUID bookId, WritingProgressPeriod progressPeriod) {
-        Book book = bookAccessService.requireBookReadAccess(bookId);
+        BookAccessService.AccessibleBook accessible = bookAccessService.resolveAccessibleBook(bookId);
+        Book book = accessible.book();
+        BookAccessContext access = accessible.access();
         List<Scene> scenes = sceneRepository.findByBookIdOrderBySortOrderAsc(bookId);
 
         int totalScenes = scenes.size();
@@ -92,7 +101,7 @@ public class BookDashboardService {
                 book.getTitle(),
                 totalWordCount,
                 book.getTargetWordCount(),
-                book.getDailyTargetWordCount(),
+                personalDailyTargetWordCount(access),
                 remainingWordCount(totalWordCount, book.getTargetWordCount()),
                 wordCountProgressPercent(totalWordCount, book.getTargetWordCount()),
                 exceededTargetWordCount(totalWordCount, book.getTargetWordCount()),
@@ -109,8 +118,26 @@ public class BookDashboardService {
                 buildNarrativeGaps(scenes),
                 buildCharacterUsage(scenes),
                 buildLocationUsage(scenes),
-                buildItemUsage(scenes)
+                buildItemUsage(scenes),
+                sortedCapabilities(access.capabilities()),
+                sortedCapabilities(access.contextualCapabilities())
         );
+    }
+
+    /**
+     * The caller's own daily target, and only when the policy lets this User have one at all. A role
+     * without {@link BookCapability#MANAGE_OWN_PERSONAL_WRITING_GOAL} reads {@code null} even if a goal
+     * row survived a role change, so an Editor or Reader never sees a Personal Book Writing Goal here.
+     */
+    private Integer personalDailyTargetWordCount(BookAccessContext access) {
+        if (!access.isGranted(BookCapability.MANAGE_OWN_PERSONAL_WRITING_GOAL)) {
+            return null;
+        }
+        return personalBookWritingGoalService.dailyTargetWordCountFor(access.bookId(), access.userId());
+    }
+
+    private List<BookCapability> sortedCapabilities(Set<BookCapability> capabilities) {
+        return capabilities.stream().sorted(Comparator.comparing(Enum::name)).toList();
     }
 
     private WritingProgressDashboardResponse buildWritingProgress(UUID bookId, int totalWordCount, WritingProgressPeriod progressPeriod) {

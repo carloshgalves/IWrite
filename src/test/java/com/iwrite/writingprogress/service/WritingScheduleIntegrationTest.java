@@ -1,7 +1,6 @@
 package com.iwrite.writingprogress.service;
 
 import com.iwrite.book.dto.BookRequest;
-import com.iwrite.book.dto.BookUpdateRequest;
 import com.iwrite.book.service.BookCollaboratorService;
 import com.iwrite.common.exception.BadRequestException;
 import com.iwrite.support.PostgresIntegrationTest;
@@ -70,7 +69,6 @@ class WritingScheduleIntegrationTest extends PostgresIntegrationTest {
     void newBooksDefaultToEveryDaySchedule() {
         var book = createBook("default schedule");
 
-        assertThat(book.plannedWritingDays()).containsExactly(DayOfWeek.values());
         var activeSchedule = scheduleRepository.findFirstByUser_IdAndBookIdAndEffectiveToIsNull(DEFAULT_USER_ID, book.id()).orElseThrow();
         assertThat(activeSchedule.getEffectiveFrom()).isEqualTo(TODAY);
         assertThat(activeSchedule.getEffectiveTo()).isNull();
@@ -80,33 +78,23 @@ class WritingScheduleIntegrationTest extends PostgresIntegrationTest {
     }
 
     @Test
-    void newBooksCanStartWithCustomSchedule() {
-        var book = bookService.create(new BookRequest(
-                "custom schedule",
-                null,
-                null,
-                null,
-                null,
-                null,
-                List.of(DayOfWeek.MONDAY, DayOfWeek.WEDNESDAY)
-        ));
+    void creatingABookDoesNotCarryAPersonalRoutine() {
+        // The routine is a Personal Book Writing Goal, so it is not part of the shared Book contract:
+        // a new Book starts on the default routine and each User changes their own from the goal.
+        BookRequest request = new BookRequest("custom schedule", null, null, null, null);
 
-        assertThat(book.plannedWritingDays()).containsExactly(DayOfWeek.MONDAY, DayOfWeek.WEDNESDAY);
+        var book = bookService.create(request);
+
         var activeSchedule = scheduleRepository.findFirstByUser_IdAndBookIdAndEffectiveToIsNull(DEFAULT_USER_ID, book.id()).orElseThrow();
-        assertThat(activeSchedule.getPlannedDays()).containsExactlyInAnyOrder(DayOfWeek.MONDAY, DayOfWeek.WEDNESDAY);
+        assertThat(activeSchedule.getPlannedDays()).containsExactlyInAnyOrder(DayOfWeek.values());
     }
 
     @Test
     void emptyScheduleIsRejected() {
-        assertThatThrownBy(() -> bookService.create(new BookRequest(
-                "empty schedule",
-                null,
-                null,
-                null,
-                null,
-                null,
-                List.of()
-        ))).isInstanceOf(BadRequestException.class)
+        var book = createBook("empty schedule");
+
+        assertThatThrownBy(() -> setPersonalPlannedWritingDays(book.id(), List.of()))
+                .isInstanceOf(BadRequestException.class)
                 .hasMessageContaining("plannedWritingDays");
     }
 
@@ -114,12 +102,13 @@ class WritingScheduleIntegrationTest extends PostgresIntegrationTest {
     void updatingScheduleClosesCurrentVersionAndCreatesTomorrowVersion() {
         var book = createBook("change schedule");
         writingScheduleClock.setInstant(DEFAULT_INSTANT);
-        BookUpdateRequest request = new BookUpdateRequest();
-        request.setPlannedWritingDays(List.of(DayOfWeek.MONDAY, DayOfWeek.TUESDAY, DayOfWeek.WEDNESDAY, DayOfWeek.THURSDAY, DayOfWeek.FRIDAY));
 
-        var updatedBook = bookService.update(book.id(), request);
+        var updatedGoal = setPersonalPlannedWritingDays(
+                book.id(),
+                List.of(DayOfWeek.MONDAY, DayOfWeek.TUESDAY, DayOfWeek.WEDNESDAY, DayOfWeek.THURSDAY, DayOfWeek.FRIDAY)
+        );
 
-        assertThat(updatedBook.plannedWritingDays())
+        assertThat(updatedGoal.plannedWritingDays())
                 .containsExactly(DayOfWeek.MONDAY, DayOfWeek.TUESDAY, DayOfWeek.WEDNESDAY, DayOfWeek.THURSDAY, DayOfWeek.FRIDAY);
         var schedules = scheduleRepository.findByUserIdAndBookIdOverlappingPeriod(DEFAULT_USER_ID, book.id(), TODAY.minusDays(1), TODAY.plusDays(2));
         assertThat(schedules).hasSize(2);
@@ -133,15 +122,14 @@ class WritingScheduleIntegrationTest extends PostgresIntegrationTest {
     @Test
     void repeatedFutureScheduleEditReplacesPendingActiveVersion() {
         var book = createBook("replace pending schedule");
-        BookUpdateRequest weekdaysRequest = new BookUpdateRequest();
-        weekdaysRequest.setPlannedWritingDays(List.of(DayOfWeek.MONDAY, DayOfWeek.TUESDAY, DayOfWeek.WEDNESDAY, DayOfWeek.THURSDAY, DayOfWeek.FRIDAY));
         writingScheduleClock.setInstant(DEFAULT_INSTANT);
-        bookService.update(book.id(), weekdaysRequest);
+        setPersonalPlannedWritingDays(
+                book.id(),
+                List.of(DayOfWeek.MONDAY, DayOfWeek.TUESDAY, DayOfWeek.WEDNESDAY, DayOfWeek.THURSDAY, DayOfWeek.FRIDAY)
+        );
 
-        BookUpdateRequest mondayRequest = new BookUpdateRequest();
-        mondayRequest.setPlannedWritingDays(List.of(DayOfWeek.MONDAY));
         writingScheduleClock.setInstant(DEFAULT_INSTANT);
-        bookService.update(book.id(), mondayRequest);
+        setPersonalPlannedWritingDays(book.id(), List.of(DayOfWeek.MONDAY));
 
         var schedules = scheduleRepository.findByUserIdAndBookIdOverlappingPeriod(DEFAULT_USER_ID, book.id(), TODAY.minusDays(1), TODAY.plusDays(2));
         assertThat(schedules).hasSize(2);
@@ -153,11 +141,8 @@ class WritingScheduleIntegrationTest extends PostgresIntegrationTest {
     @Test
     void unchangedScheduleDoesNotCreateNewVersion() {
         var book = createBook("unchanged schedule");
-        BookUpdateRequest request = new BookUpdateRequest();
-        request.setPlannedWritingDays(List.of(DayOfWeek.MONDAY, DayOfWeek.TUESDAY, DayOfWeek.WEDNESDAY, DayOfWeek.THURSDAY, DayOfWeek.FRIDAY, DayOfWeek.SATURDAY, DayOfWeek.SUNDAY));
-
         writingScheduleClock.setInstant(DEFAULT_INSTANT);
-        bookService.update(book.id(), request);
+        setPersonalPlannedWritingDays(book.id(), List.of(DayOfWeek.values()));
 
         var schedules = scheduleRepository.findByUserIdAndBookIdOverlappingPeriod(DEFAULT_USER_ID, book.id(), TODAY.minusDays(1), TODAY.plusDays(2));
         assertThat(schedules).hasSize(1);
@@ -176,13 +161,11 @@ class WritingScheduleIntegrationTest extends PostgresIntegrationTest {
 
         Instant changeInstant = Instant.parse("2026-05-30T01:30:00Z");
         writingScheduleClock.setInstant(changeInstant);
-        BookUpdateRequest request = new BookUpdateRequest();
-        request.setPlannedWritingDays(List.of(DayOfWeek.MONDAY));
 
-        var updatedBook = bookService.update(book.id(), request);
+        var updatedGoal = setPersonalPlannedWritingDays(book.id(), List.of(DayOfWeek.MONDAY));
 
         assertThat(writingScheduleClock.readCount()).isEqualTo(1);
-        assertThat(updatedBook.plannedWritingDays()).containsExactly(DayOfWeek.MONDAY);
+        assertThat(updatedGoal.plannedWritingDays()).containsExactly(DayOfWeek.MONDAY);
         var schedules = scheduleRepository.findByUserIdAndBookIdOverlappingPeriod(
                 DEFAULT_USER_ID,
                 book.id(),
@@ -230,23 +213,20 @@ class WritingScheduleIntegrationTest extends PostgresIntegrationTest {
         collaboratorService.grantInternal(book.id(), otherUserId, DEFAULT_USER_ID);
         switchUser(otherUserId, tokyo);
         writingScheduleClock.setInstant(creationInstant);
-        bookService.findById(book.id());
+        personalBookWritingGoalService.getGoal(book.id());
 
         switchUser(DEFAULT_USER_ID, tokyo);
         writingScheduleClock.setInstant(changeInstant);
-        BookUpdateRequest firstRequest = new BookUpdateRequest();
-        firstRequest.setPlannedWritingDays(List.of(DayOfWeek.MONDAY));
-        bookService.update(book.id(), firstRequest);
+        setPersonalPlannedWritingDays(book.id(), List.of(DayOfWeek.MONDAY));
         assertThat(writingScheduleClock.readCount()).isEqualTo(1);
 
         switchUser(DEFAULT_USER_ID, losAngeles);
         writingScheduleClock.setInstant(changeInstant);
-        BookUpdateRequest rollbackRequest = new BookUpdateRequest();
-        rollbackRequest.setPlannedWritingDays(List.of(DayOfWeek.TUESDAY));
-        var updatedBook = bookService.update(book.id(), rollbackRequest);
+
+        var updatedGoal = setPersonalPlannedWritingDays(book.id(), List.of(DayOfWeek.TUESDAY));
 
         assertThat(writingScheduleClock.readCount()).isEqualTo(1);
-        assertThat(updatedBook.plannedWritingDays()).containsExactly(DayOfWeek.TUESDAY);
+        assertThat(updatedGoal.plannedWritingDays()).containsExactly(DayOfWeek.TUESDAY);
         var schedules = scheduleRepository.findByUserIdAndBookIdOverlappingPeriod(
                 DEFAULT_USER_ID,
                 book.id(),
@@ -297,15 +277,11 @@ class WritingScheduleIntegrationTest extends PostgresIntegrationTest {
         var book = createBook("timezone east pending schedule");
 
         writingScheduleClock.setInstant(changeInstant);
-        BookUpdateRequest firstRequest = new BookUpdateRequest();
-        firstRequest.setPlannedWritingDays(List.of(DayOfWeek.MONDAY));
-        bookService.update(book.id(), firstRequest);
+        setPersonalPlannedWritingDays(book.id(), List.of(DayOfWeek.MONDAY));
 
         switchUser(DEFAULT_USER_ID, tokyo);
         writingScheduleClock.setInstant(changeInstant);
-        BookUpdateRequest eastRequest = new BookUpdateRequest();
-        eastRequest.setPlannedWritingDays(List.of(DayOfWeek.WEDNESDAY));
-        bookService.update(book.id(), eastRequest);
+        setPersonalPlannedWritingDays(book.id(), List.of(DayOfWeek.WEDNESDAY));
 
         var schedules = scheduleRepository.findByUserIdAndBookIdOverlappingPeriod(
                 DEFAULT_USER_ID,
@@ -354,7 +330,7 @@ class WritingScheduleIntegrationTest extends PostgresIntegrationTest {
         writingScheduleClock.setInstants(beforeLocalMidnight, afterLocalMidnight);
         currentUserProvider.switchTo(DEFAULT_USER_ID, DEFAULT_TENANT_ID, ZoneId.of("America/Sao_Paulo"));
 
-        bookService.findById(book.id());
+        personalBookWritingGoalService.getGoal(book.id());
 
         var activeSchedule = scheduleRepository.findFirstByUser_IdAndBookIdAndEffectiveToIsNull(DEFAULT_USER_ID, book.id()).orElseThrow();
         assertThat(activeSchedule.getEffectiveFrom()).isEqualTo(LocalDate.of(2026, 5, 29));
@@ -368,10 +344,8 @@ class WritingScheduleIntegrationTest extends PostgresIntegrationTest {
         Instant creationInstant = DEFAULT_INSTANT;
         Instant updateInstant = Instant.parse("2026-05-31T12:00:00Z");
         writingScheduleClock.setInstant(updateInstant);
-        BookUpdateRequest request = new BookUpdateRequest();
-        request.setPlannedWritingDays(List.of(DayOfWeek.MONDAY));
 
-        bookService.update(book.id(), request);
+        setPersonalPlannedWritingDays(book.id(), List.of(DayOfWeek.MONDAY));
 
         var schedules = scheduleRepository.findByUserIdAndBookIdOverlappingPeriod(
                 DEFAULT_USER_ID,

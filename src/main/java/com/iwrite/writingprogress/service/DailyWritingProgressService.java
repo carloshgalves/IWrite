@@ -25,6 +25,7 @@ public class DailyWritingProgressService {
     private final BookService bookService;
     private final DailyWritingProgressRepository progressRepository;
     private final WritingScheduleService writingScheduleService;
+    private final PersonalBookWritingGoalService personalBookWritingGoalService;
     private final CurrentUserMembershipService currentUserMembershipService;
     private final UserRepository userRepository;
     private final WritingDayResolver writingDayResolver;
@@ -33,6 +34,7 @@ public class DailyWritingProgressService {
             BookService bookService,
             DailyWritingProgressRepository progressRepository,
             WritingScheduleService writingScheduleService,
+            PersonalBookWritingGoalService personalBookWritingGoalService,
             CurrentUserMembershipService currentUserMembershipService,
             UserRepository userRepository,
             WritingDayResolver writingDayResolver
@@ -40,6 +42,7 @@ public class DailyWritingProgressService {
         this.bookService = bookService;
         this.progressRepository = progressRepository;
         this.writingScheduleService = writingScheduleService;
+        this.personalBookWritingGoalService = personalBookWritingGoalService;
         this.currentUserMembershipService = currentUserMembershipService;
         this.userRepository = userRepository;
         this.writingDayResolver = writingDayResolver;
@@ -240,12 +243,16 @@ public class DailyWritingProgressService {
         return progress != null && progress.getProductiveWordCountChange() > WRITING_DAY_THRESHOLD;
     }
 
+    /**
+     * Snapshots the target of the User the progress belongs to, never a Book-wide one. A day with no
+     * chosen target keeps {@code null}, which stays an intentional absence rather than a target of zero.
+     */
     private DailyWritingProgress createProgress(Book book, UUID userId, LocalDate progressDate, int totalBefore) {
         DailyWritingProgress progress = new DailyWritingProgress();
         progress.setBook(book);
         progress.setUser(userRepository.getReferenceById(userId));
         progress.setProgressDate(progressDate);
-        progress.setDailyTargetWordCount(book.getDailyTargetWordCount());
+        progress.setDailyTargetWordCount(personalBookWritingGoalService.dailyTargetWordCountFor(book.getId(), userId));
         progress.setStartingManuscriptWordCount(totalBefore);
         progress.setEndingManuscriptWordCount(totalBefore);
         progress.setProductiveWordCountChange(0);
@@ -258,7 +265,7 @@ public class DailyWritingProgressService {
         progress.setBook(book);
         progress.setUser(userRepository.getReferenceById(userId));
         progress.setProgressDate(progressDate);
-        progress.setDailyTargetWordCount(book.getDailyTargetWordCount());
+        progress.setDailyTargetWordCount(personalBookWritingGoalService.dailyTargetWordCountFor(book.getId(), userId));
         progress.setStartingManuscriptWordCount(currentTotalWordCount);
         progress.setEndingManuscriptWordCount(currentTotalWordCount);
         progress.setProductiveWordCountChange(0);

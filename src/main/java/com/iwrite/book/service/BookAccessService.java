@@ -92,14 +92,25 @@ public class BookAccessService {
      */
     @Transactional
     public Book requireCapabilityForUpdate(UUID bookId, BookCapability capability) {
+        return requireAccessibleBookForUpdate(bookId, capability).book();
+    }
+
+    /**
+     * Same guard as {@link #requireCapabilityForUpdate(UUID, BookCapability)}, paired with the access
+     * it resolved, for a mutation that also projects the effective access back to the caller. The
+     * projection reuses the proof instead of resolving the relationship a third time.
+     */
+    @Transactional
+    public AccessibleBook requireAccessibleBookForUpdate(UUID bookId, BookCapability capability) {
         UUID userId = currentUserMembershipService.requireCurrentUserMemberId();
         UUID tenantId = currentUserProvider.tenantId();
         requireGranted(accessibleBook(bookId, tenantId, userId).access(), capability, bookId);
 
         Book lockedBook = bookRepository.findByIdAndTenantIdForUpdate(bookId, tenantId)
                 .orElseThrow(() -> bookNotFound(bookId));
-        requireGranted(accessibleBook(bookId, tenantId, userId).access(), capability, bookId);
-        return lockedBook;
+        AccessibleBook reproven = accessibleBook(bookId, tenantId, userId);
+        requireGranted(reproven.access(), capability, bookId);
+        return new AccessibleBook(lockedBook, reproven.access());
     }
 
     /**

@@ -89,8 +89,6 @@ class IwriteMcpToolsContractTest {
                 null,
                 BookStatus.WRITING,
                 null,
-                null,
-                List.of(),
                 relationship,
                 role,
                 capabilities,

@@ -1,12 +1,22 @@
 package com.iwrite.book.dto;
 
+import com.fasterxml.jackson.annotation.JsonAnySetter;
 import com.fasterxml.jackson.annotation.JsonSetter;
 import com.iwrite.book.entity.BookStatus;
+import com.iwrite.common.exception.BadRequestException;
 import jakarta.validation.constraints.Positive;
 
-import java.time.DayOfWeek;
-import java.util.List;
-
+/**
+ * Partial update of the shared Book settings the Book Owner controls (#206).
+ *
+ * <p>Only shared data lives here: metadata, {@link BookStatus} and the optional Book-wide
+ * {@code targetWordCount}. The Personal Book Writing Goal is not part of this contract, so this
+ * request can never change one collaborator's daily target — let alone everybody's.
+ *
+ * <p>Unknown fields are rejected instead of being ignored. A request that still carries
+ * {@code dailyTargetWordCount} or {@code plannedWritingDays} fails loudly rather than appearing to
+ * save a personal goal it no longer owns, and no hidden field can be mass assigned here.
+ */
 public class BookUpdateRequest {
 
     private String title;
@@ -17,13 +27,6 @@ public class BookUpdateRequest {
     @Positive
     private Integer targetWordCount;
     private boolean targetWordCountPresent;
-
-    @Positive
-    private Integer dailyTargetWordCount;
-    private boolean dailyTargetWordCountPresent;
-
-    private List<DayOfWeek> plannedWritingDays;
-    private boolean plannedWritingDaysPresent;
 
     public String title() {
         return title;
@@ -49,22 +52,6 @@ public class BookUpdateRequest {
         return targetWordCountPresent;
     }
 
-    public Integer dailyTargetWordCount() {
-        return dailyTargetWordCount;
-    }
-
-    public boolean isDailyTargetWordCountPresent() {
-        return dailyTargetWordCountPresent;
-    }
-
-    public List<DayOfWeek> plannedWritingDays() {
-        return plannedWritingDays;
-    }
-
-    public boolean isPlannedWritingDaysPresent() {
-        return plannedWritingDaysPresent;
-    }
-
     public void setTitle(String title) {
         this.title = title;
     }
@@ -87,15 +74,8 @@ public class BookUpdateRequest {
         this.targetWordCountPresent = true;
     }
 
-    @JsonSetter("dailyTargetWordCount")
-    public void setDailyTargetWordCount(Integer dailyTargetWordCount) {
-        this.dailyTargetWordCount = dailyTargetWordCount;
-        this.dailyTargetWordCountPresent = true;
-    }
-
-    @JsonSetter("plannedWritingDays")
-    public void setPlannedWritingDays(List<DayOfWeek> plannedWritingDays) {
-        this.plannedWritingDays = plannedWritingDays;
-        this.plannedWritingDaysPresent = true;
+    @JsonAnySetter
+    void rejectUnknownField(String name, Object ignoredValue) {
+        throw new BadRequestException("Unknown book setting: " + name);
     }
 }

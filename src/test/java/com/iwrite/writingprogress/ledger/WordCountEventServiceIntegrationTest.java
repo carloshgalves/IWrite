@@ -85,7 +85,8 @@ class WordCountEventServiceIntegrationTest extends PostgresIntegrationTest {
 
     @Test
     void firstContentSaveEventCreatesLedgerRowAndDailyRollup() {
-        var book = bookService.create(new BookRequest("ledger first event", null, null, null, null, 400));
+        var book = bookService.create(new BookRequest("ledger first event", null, null, null, null));
+        setPersonalDailyTarget(book.id(), 400);
         var scene = createEmptyScene(book.id(), "First scene");
         entityManager.flush();
         UUID idempotencyKey = UUID.randomUUID();

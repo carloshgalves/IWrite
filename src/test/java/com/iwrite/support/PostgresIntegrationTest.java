@@ -23,12 +23,18 @@ import com.iwrite.section.dto.BookSectionRequest;
 import com.iwrite.section.dto.BookSectionResponse;
 import com.iwrite.section.entity.SectionType;
 import com.iwrite.section.service.BookSectionService;
+import com.iwrite.writingprogress.dto.PersonalBookWritingGoalResponse;
+import com.iwrite.writingprogress.dto.PersonalBookWritingGoalUpdateRequest;
+import com.iwrite.writingprogress.service.PersonalBookWritingGoalService;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.test.context.SpringBootTest;
 import org.springframework.test.context.DynamicPropertyRegistry;
 import org.springframework.test.context.DynamicPropertySource;
 import org.springframework.transaction.annotation.Transactional;
 
+import java.time.DayOfWeek;
+import java.util.List;
+import java.util.UUID;
 import java.util.stream.Collectors;
 import java.util.stream.IntStream;
 
@@ -67,12 +73,29 @@ public abstract class PostgresIntegrationTest {
     @Autowired
     protected SceneService sceneService;
 
+    @Autowired
+    protected PersonalBookWritingGoalService personalBookWritingGoalService;
+
     protected BookResponse createBook(String title) {
         return bookService.create(new BookRequest(title, null, null, null, null));
     }
 
     protected BookResponse createBook(String title, Integer targetWordCount) {
         return bookService.create(new BookRequest(title, null, null, null, targetWordCount));
+    }
+
+    /** Sets the current User's own daily target; {@code null} clears it back to no chosen target. */
+    protected PersonalBookWritingGoalResponse setPersonalDailyTarget(UUID bookId, Integer dailyTargetWordCount) {
+        PersonalBookWritingGoalUpdateRequest request = new PersonalBookWritingGoalUpdateRequest();
+        request.setDailyTargetWordCount(dailyTargetWordCount);
+        return personalBookWritingGoalService.updateGoal(bookId, request);
+    }
+
+    /** Changes the current User's own planned writing days. */
+    protected PersonalBookWritingGoalResponse setPersonalPlannedWritingDays(UUID bookId, List<DayOfWeek> plannedWritingDays) {
+        PersonalBookWritingGoalUpdateRequest request = new PersonalBookWritingGoalUpdateRequest();
+        request.setPlannedWritingDays(plannedWritingDays);
+        return personalBookWritingGoalService.updateGoal(bookId, request);
     }
 
     protected BookSectionResponse createSection(BookResponse book, String title) {
