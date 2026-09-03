@@ -72,17 +72,20 @@ Do not assume an empty or tiny database merely because development data is small
 
 For critical migrations:
 
-1. migrate a real PostgreSQL database to the relevant previous version;
-2. insert representative valid legacy data plus edge cases;
-3. apply the new migration;
-4. verify transformed data;
-5. verify new constraints/indexes;
-6. attempt invalid direct SQL writes that the database should now reject;
-7. verify the current application can start/use the migrated schema as appropriate.
+1. provision a fresh isolated PostgreSQL instance/container for this validation run; never reuse a pre-existing developer database or Docker container;
+2. migrate that fresh PostgreSQL database to the relevant previous version;
+3. insert representative valid legacy data plus edge cases;
+4. apply the new migration;
+5. verify transformed data;
+6. verify new constraints/indexes;
+7. attempt invalid direct SQL writes that the database should now reject;
+8. verify the current application can start/use the migrated schema as appropriate.
 
-Also verify a clean database can migrate from zero to head.
+Also verify a separate fresh database can migrate from zero to head.
 
 Use deterministic concurrency tests where races/uniqueness/locks are part of the invariant.
+
+If PostgreSQL or supporting infrastructure is started in Docker for validation, it must be newly created for that run with fresh test-owned storage. Register cleanup before startup, do not use reusable Testcontainers or an existing Compose/dev stack, and remove all test-created containers and volumes when validation finishes. Follow `docs/agents/docker-test-lifecycle.md`; the cleanup requirement applies on failing migration tests too.
 
 ## 7. Review
 
@@ -95,6 +98,8 @@ Before completion run `iwrite-review` with special attention to:
 - indexes and query effects;
 - migration from prior state;
 - production lock/startup risk;
-- forward recovery plan.
+- forward recovery plan;
+- no pre-existing database/container reused for validation;
+- no Docker container or volume created for validation left behind.
 
 Document operationally significant migration behavior in the Issue/PR and update migration documentation/ADR only when the change introduces durable new rules.

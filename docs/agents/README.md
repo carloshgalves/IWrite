@@ -7,7 +7,8 @@ IWrite keeps project-specific agent instructions in the repository so coding ses
 - `AGENTS.md` — mandatory working rules and source-of-truth hierarchy;
 - `CONTEXT.md` — canonical domain glossary;
 - `docs/agents/issue-tracker.md` — GitHub Issue conventions for agent work;
-- `.agents/skills/` — reusable engineering procedures;
+- `.agents/skills/` — canonical reusable engineering procedures;
+- `.claude/skills/` — thin Claude Code discovery bridges that load the canonical skills;
 - `docs/wiki/Architecture.md` — current system architecture;
 - `docs/wiki/Architectural-Decisions.md` — settled architectural decisions;
 - `docs/wiki/Quality-and-Review.md` — IWrite test/review baseline.
@@ -73,11 +74,12 @@ handoff
 2. **Prefer vertical slices.** A ticket should produce a narrow but complete behavior, not merely modify one technical layer.
 3. **Use the correct proof seam.** HTTP/UI tests are not automatically better than database tests. Pick the highest stable seam that can prove the actual invariant.
 4. **Review behavior against both the Issue and IWrite invariants.** Passing tests do not prove tenant isolation, idempotency, concurrency safety, privacy, or migration correctness.
-5. **Keep provider choice outside the domain.** Agent tooling may vary; repository guidance should remain useful across Codex, Claude, and other compatible coding agents.
+5. **Keep provider choice outside the domain.** Agent tooling may vary; repository guidance should remain useful across Codex, Claude, and other compatible coding agents. Provider-native discovery files are adapters only; they must defer to the canonical `.agents/skills/` procedures.
 6. **Persist durable knowledge, not chat history.** Glossary terms belong in `CONTEXT.md`; hard-to-reverse trade-offs belong in ADRs; external technical evidence belongs in `docs/research/`; implementation work belongs in Issues/PRs and code.
+7. **Leave Docker test resources clean.** Any container or volume created specifically for temporary verification must be torn down when that verification ends, following `docs/agents/docker-test-lifecycle.md`.
 
 ## Skill policy
 
-The local skills are adapted to IWrite rather than vendored unchanged. They intentionally differ from their inspiration where the product requires stronger database testing, semantic security review, provider neutrality, or safer Git behavior.
+The local skills are adapted to IWrite rather than vendored unchanged. They intentionally differ from their inspiration where the product requires stronger database testing, semantic security review, provider neutrality, safer Git behavior, or deterministic cleanup of local test infrastructure.
 
 See `docs/agents/skills-attribution.md` for attribution and licensing notes.

@@ -64,6 +64,22 @@ Do not force a database invariant through HTTP merely to claim the test is more 
 
 For defects, add a regression test at the seam that reproduces the real bug pattern whenever such a seam exists.
 
+## Docker resources created for tests
+
+Database-backed or Docker-backed tests must run against fresh, isolated infrastructure created specifically for that validation run. Do not point tests at an already-running developer database, an existing PostgreSQL container, an existing Compose stack, or any other pre-existing Docker container/volume/network.
+
+- Provision a new database/container stack for the run before executing the test. A unique Testcontainers instance or an isolated Compose project created for that run is acceptable; reusing a long-lived local service is not.
+- Any Docker container, volume, or network created specifically for a test, review, benchmark, migration validation, or other temporary verification is ephemeral and must be removed from the developer machine when that verification finishes.
+- Register cleanup before creating the resource so the failure path is covered too; use `trap`/`finally`/test-framework teardown as appropriate.
+- For Docker Compose test stacks, use an isolated project name and fresh test-owned storage, then finish with the matching `docker compose ... down -v --remove-orphans`.
+- For direct `docker run`, prefer `--rm` for containers and explicitly remove every volume created for the test.
+- Never use broad cleanup such as `docker system prune` or `docker volume prune` as a substitute for scoped teardown.
+- Never delete a container, volume, database, or other resource that existed before the verification. Scope cleanup using the Compose project, labels, or exact resource IDs/names captured when the test creates them.
+- Framework-managed resources such as CI service containers or Testcontainers are valid only when they are fresh for that run and their lifecycle manager removes them afterward; reusable Testcontainers are not allowed for test-only infrastructure.
+- Before declaring database/Docker-backed validation complete, verify that no container or volume created by that validation remains.
+
+Detailed examples and failure-safe patterns live in `docs/agents/docker-test-lifecycle.md`.
+
 ## Required validation before completion
 
 Run the smallest relevant feedback loop throughout implementation, then the appropriate broader checks before declaring work complete.
@@ -91,7 +107,9 @@ A green suite is necessary but not sufficient. Review semantic invariants using 
 
 ## Local skills
 
-Project-specific and adapted engineering skills live under `.agents/skills/`.
+Project-specific and adapted engineering skills live under `.agents/skills/`. This directory is the canonical source of skill behavior.
+
+Claude Code discovers thin provider-native bridges under `.claude/skills/`. Those bridge files must only load the matching canonical `.agents/skills/<name>/SKILL.md`; do not duplicate the procedure there. If a bridge and its canonical skill ever disagree, `.agents/skills/` wins.
 
 Recommended flows:
 

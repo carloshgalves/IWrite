@@ -58,10 +58,13 @@ For identity/workspace/session-sensitive UI:
 
 Run focused checks repeatedly, then the broader relevant suite. Typical commands are documented in `AGENTS.md` and `docs/wiki/Quality-and-Review.md`.
 
+If validation needs a database or Docker infrastructure, provision a fresh isolated database/container stack specifically for that run. Do not reuse an already-running developer database, PostgreSQL container, Compose stack, or pre-existing volume. Register scoped teardown before startup and follow `docs/agents/docker-test-lifecycle.md`; completion requires every test-created container and volume to be removed even when the validation fails, while pre-existing developer resources remain untouched.
+
 Before completion:
 
 - run `git diff --check`;
 - inspect the final diff for unrelated changes;
+- verify no Docker container or volume created by the validation remains;
 - run `iwrite-review` against the originating spec/Issue;
 - fix valid findings and add regression tests when appropriate;
 - document remaining known risk or explicit out-of-scope work.
