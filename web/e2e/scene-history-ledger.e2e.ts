@@ -272,6 +272,10 @@ async function createSeededBook(
     description: null,
     status: "WRITING",
     targetWordCount: 1000,
+  });
+  // The daily target is the creator's own Personal Book Writing Goal, not a book setting, so it is
+  // set through its own contract.
+  await patchJson(request, `/api/books/${book.id}/writing-goal`, {
     dailyTargetWordCount: options.dailyTargetWordCount ?? null,
     plannedWritingDays: ["MONDAY", "TUESDAY", "WEDNESDAY", "THURSDAY", "FRIDAY", "SATURDAY", "SUNDAY"],
   });

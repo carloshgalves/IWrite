@@ -1,5 +1,5 @@
 import type { SceneStatus } from "@/features/scenes/types";
-import type { DayOfWeek } from "@/features/books/types";
+import type { BookCapability, DayOfWeek } from "@/features/books/types";
 
 export type PlanningProgressResponse = {
   plannedScenesCount: number;
@@ -161,6 +161,12 @@ export type BookContributionDashboardResponse = {
   dailySeries: ContributionDailyWritingResponse[];
 };
 
+/**
+ * `dailyTargetWordCount` is the signed-in user's own Personal Book Writing Goal, not a book-wide
+ * setting; `targetWordCount` is the shared book-wide target. `capabilities` says which controls this
+ * user may attempt — the server authorizes every request again, so hiding a control is presentation,
+ * never the authorization boundary.
+ */
 export type BookDashboardResponse = {
   bookId: string;
   title: string;
@@ -181,4 +187,6 @@ export type BookDashboardResponse = {
   mostUsedCharacters: EntityUsageResponse[];
   mostUsedLocations: EntityUsageResponse[];
   mostUsedItems: EntityUsageResponse[];
+  capabilities: BookCapability[];
+  contextualCapabilities: BookCapability[];
 };

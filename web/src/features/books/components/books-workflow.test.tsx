@@ -22,8 +22,6 @@ const ownerBook: Book = {
   description: "Uma aventura",
   status: "WRITING",
   targetWordCount: 80_000,
-  dailyTargetWordCount: 500,
-  plannedWritingDays: ["MONDAY"],
   relationship: "OWNER",
   role: null,
   capabilities: [

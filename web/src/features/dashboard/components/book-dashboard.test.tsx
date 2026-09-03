@@ -12,6 +12,7 @@ const mocks = vi.hoisted(() => ({
   useLocation: vi.fn(),
   useItem: vi.fn(),
   updateBook: vi.fn(),
+  updateWritingGoal: vi.fn(),
 }));
 
 vi.mock("@/features/dashboard/api/dashboard-hooks", () => ({
@@ -33,6 +34,10 @@ vi.mock("@/features/items/api/items-hooks", () => ({
 
 vi.mock("@/features/books/api/books-api", () => ({
   updateBook: mocks.updateBook,
+}));
+
+vi.mock("@/features/writing-goal/api/writing-goal-api", () => ({
+  updateWritingGoal: mocks.updateWritingGoal,
 }));
 
 describe("BookDashboard", () => {
@@ -61,6 +66,7 @@ describe("BookDashboard", () => {
       },
     });
     mocks.updateBook.mockResolvedValue({});
+    mocks.updateWritingGoal.mockResolvedValue({});
   });
 
   test("renderiza estado de loading", () => {
@@ -483,7 +489,8 @@ describe("BookDashboard", () => {
     fireEvent.change(screen.getByLabelText("Meta diária de palavras"), { target: { value: "750" } });
     fireEvent.click(screen.getByRole("button", { name: "Salvar meta diária" }));
 
-    await waitFor(() => expect(mocks.updateBook).toHaveBeenCalledWith("book-1", { dailyTargetWordCount: 750 }));
+    await waitFor(() => expect(mocks.updateWritingGoal).toHaveBeenCalledWith("book-1", { dailyTargetWordCount: 750 }));
+    expect(mocks.updateBook).not.toHaveBeenCalled();
     await waitFor(() => expect(screen.queryByText("Nenhuma meta diária definida.")).not.toBeInTheDocument());
     expect(screen.getByText("Hoje: 0 / 750 palavras")).toBeInTheDocument();
   });
@@ -499,9 +506,10 @@ describe("BookDashboard", () => {
     fireEvent.click(screen.getByRole("button", { name: "Dias uteis" }));
     fireEvent.click(screen.getByRole("button", { name: "Salvar rotina" }));
 
-    await waitFor(() => expect(mocks.updateBook).toHaveBeenCalledWith("book-1", {
+    await waitFor(() => expect(mocks.updateWritingGoal).toHaveBeenCalledWith("book-1", {
       plannedWritingDays: ["MONDAY", "TUESDAY", "WEDNESDAY", "THURSDAY", "FRIDAY"],
     }));
+    expect(mocks.updateBook).not.toHaveBeenCalled();
     expect(screen.getByText(/mudanca passa a valer amanha/i)).toBeInTheDocument();
   });
 
@@ -517,7 +525,7 @@ describe("BookDashboard", () => {
     fireEvent.click(screen.getByRole("button", { name: "Salvar rotina" }));
 
     expect(screen.getByText("Selecione pelo menos um dia de escrita.")).toBeInTheDocument();
-    expect(mocks.updateBook).not.toHaveBeenCalled();
+    expect(mocks.updateWritingGoal).not.toHaveBeenCalled();
   });
 
   test("mostra dia de descanso com progresso extra", () => {
@@ -559,8 +567,32 @@ describe("BookDashboard", () => {
     fireEvent.click(screen.getByRole("button", { name: "Editar meta diária" }));
     fireEvent.click(screen.getByRole("button", { name: "Remover meta diária" }));
 
-    await waitFor(() => expect(mocks.updateBook).toHaveBeenCalledWith("book-1", { dailyTargetWordCount: null }));
+    await waitFor(() => expect(mocks.updateWritingGoal).toHaveBeenCalledWith("book-1", { dailyTargetWordCount: null }));
     await waitFor(() => expect(screen.getByText("Nenhuma meta diária definida.")).toBeInTheDocument());
+  });
+
+  test("nao oferece controles de meta quando as capabilities nao autorizam", () => {
+    // An Editor sees the book dashboard but manages no personal goal and no shared book setting.
+    const editorDashboard = {
+      ...dashboardWithScenes,
+      dailyTargetWordCount: null,
+      capabilities: ["READ_MANUSCRIPT", "VIEW_BOOK_CONTRIBUTOR_PROGRESS"] as const,
+      contextualCapabilities: [],
+    };
+    mocks.useBookDashboard.mockReturnValue({ isLoading: false, isError: false, data: editorDashboard });
+
+    renderWithClient(<BookDashboard bookId="book-1" />);
+
+    expect(screen.queryByRole("button", { name: "Editar rotina" })).not.toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "Definir meta diária" })).not.toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "Editar meta diária" })).not.toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "Editar meta" })).not.toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "Definir meta" })).not.toBeInTheDocument();
+    // Absence of a target is stated as an absence, never as failure or zero performance.
+    expect(screen.getByText("Nenhuma meta diária definida.")).toBeInTheDocument();
+    expect(
+      screen.getByText("Sem meta diária não significa progresso zero: ela é opcional e pessoal.")
+    ).toBeInTheDocument();
   });
 
   test("meta diária removida não reaparece a partir do snapshot histórico de hoje", () => {

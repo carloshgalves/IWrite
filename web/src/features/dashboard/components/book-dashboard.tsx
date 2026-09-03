@@ -11,6 +11,7 @@ import { FeedbackMessage } from "@/components/ui/feedback-message";
 import { Input } from "@/components/ui/input";
 import { updateBook } from "@/features/books/api/books-api";
 import type { DayOfWeek } from "@/features/books/types";
+import { updateWritingGoal } from "@/features/writing-goal/api/writing-goal-api";
 import type { WritingProgressPeriod } from "@/features/dashboard/api/dashboard-api";
 import { useBookContributions, useBookDashboard } from "@/features/dashboard/api/dashboard-hooks";
 import {
@@ -267,21 +268,20 @@ function DailyWritingGoalCard({
   const [validationMessage, setValidationMessage] = useState<string | null>(null);
   const [successMessage, setSuccessMessage] = useState<string | null>(null);
 
+  // The goal is the signed-in user's own, so nothing shared is refreshed: the book list keeps its
+  // cache. The dashboard already projects this user's own target, and it is deliberately the only
+  // place that reads it, so there is no second cache of the same value to invalidate here.
   const updateTargetMutation = useMutation({
-    mutationFn: (dailyTargetWordCount: number | null) => updateBook(dashboard.bookId, { dailyTargetWordCount }),
+    mutationFn: (dailyTargetWordCount: number | null) => updateWritingGoal(dashboard.bookId, { dailyTargetWordCount }),
     onSuccess: () => {
       void queryClient.invalidateQueries({ queryKey: queryKeys.bookDashboard(dashboard.bookId) });
-      void queryClient.invalidateQueries({ queryKey: queryKeys.book(dashboard.bookId) });
-      void queryClient.invalidateQueries({ queryKey: queryKeys.books });
     },
   });
 
   const updateScheduleMutation = useMutation({
-    mutationFn: (plannedWritingDays: DayOfWeek[]) => updateBook(dashboard.bookId, { plannedWritingDays }),
+    mutationFn: (plannedWritingDays: DayOfWeek[]) => updateWritingGoal(dashboard.bookId, { plannedWritingDays }),
     onSuccess: () => {
       void queryClient.invalidateQueries({ queryKey: queryKeys.bookDashboard(dashboard.bookId) });
-      void queryClient.invalidateQueries({ queryKey: queryKeys.book(dashboard.bookId) });
-      void queryClient.invalidateQueries({ queryKey: queryKeys.books });
     },
   });
 
@@ -386,6 +386,9 @@ function DailyWritingGoalCard({
 
   const errorMessage = getBookTargetErrorMessage(updateTargetMutation.error);
   const scheduleErrorMessage = getBookTargetErrorMessage(updateScheduleMutation.error);
+  // Presentation only: the backend authorizes every save again, so a hidden control never stands in
+  // for the authorization boundary.
+  const canManageOwnGoal = dashboard.capabilities.includes("MANAGE_OWN_PERSONAL_WRITING_GOAL");
   const effectiveDailyTargetWordCount = savedTargetValue;
   const hasTarget = effectiveDailyTargetWordCount != null;
   const isTodayPlannedWritingDay = writingSchedule.todayPlannedWritingDay;
@@ -402,7 +405,7 @@ function DailyWritingGoalCard({
           <p className="mt-1 text-sm text-zinc-500">Acompanhe os dias planejados e o avanco de escrita registrado hoje.</p>
           <p className="mt-2 text-sm font-medium text-zinc-900">{routineSummary}</p>
         </div>
-        {!isEditing && !isEditingRoutine ? (
+        {canManageOwnGoal && !isEditing && !isEditingRoutine ? (
           <div className="flex flex-wrap gap-2">
             <Button type="button" variant="secondary" size="sm" onClick={startEditingRoutine}>
               Editar rotina
@@ -467,7 +470,9 @@ function DailyWritingGoalCard({
         <div className="mt-4 rounded-md border border-dashed border-zinc-300 bg-zinc-50 p-4">
           <p className="text-sm font-medium text-zinc-900">Nenhuma meta diária definida.</p>
           <p className="mt-1 text-sm text-zinc-500">
-            Defina uma meta opcional para acompanhar o progresso de hoje e dos últimos dias.
+            {canManageOwnGoal
+              ? "Defina uma meta opcional para acompanhar o progresso de hoje e dos últimos dias."
+              : "Sem meta diária não significa progresso zero: ela é opcional e pessoal."}
           </p>
           {!isTodayPlannedWritingDay ? (
             <p className="mt-3 text-sm font-medium text-zinc-900">Hoje e um dia de descanso planejado.</p>
@@ -1033,6 +1038,9 @@ function WordTargetCard({ dashboard }: { dashboard: BookDashboardResponse }) {
   }
 
   const errorMessage = getBookTargetErrorMessage(updateTargetMutation.error);
+  // The book-wide target is shared book data, so only a user who may edit book settings sees the
+  // control. The server enforces the same rule on the request itself.
+  const canEditBookSettings = dashboard.capabilities.includes("EDIT_BOOK_SETTINGS");
   const hasTarget = dashboard.targetWordCount != null;
   const progressPercent = dashboard.wordCountProgressPercent ?? 0;
   const visualProgressPercent = clampPercent(progressPercent);
@@ -1044,7 +1052,7 @@ function WordTargetCard({ dashboard }: { dashboard: BookDashboardResponse }) {
           <h2 className="text-base font-semibold text-zinc-950">Meta de palavras</h2>
           <p className="mt-1 text-sm text-zinc-500">Referência editorial opcional para acompanhar o tamanho do livro.</p>
         </div>
-        {!isEditing ? (
+        {canEditBookSettings && !isEditing ? (
           <Button type="button" variant="secondary" size="sm" onClick={startEditing}>
             {hasTarget ? "Editar meta" : "Definir meta"}
           </Button>

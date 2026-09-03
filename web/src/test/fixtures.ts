@@ -204,6 +204,15 @@ export const dashboardWithScenes: BookDashboardResponse = {
   mostUsedItems: [
     { id: itemKey.id, name: itemKey.name, scenesCount: 1 },
   ],
+  capabilities: [
+    "READ_MANUSCRIPT",
+    "MUTATE_MANUSCRIPT_STRUCTURE",
+    "MANAGE_OWN_PERSONAL_WRITING_GOAL",
+    "EDIT_BOOK_SETTINGS",
+    "MANAGE_COLLABORATORS",
+    "DELETE_BOOK",
+  ],
+  contextualCapabilities: ["EDIT_AUTHORED_CONTRIBUTION"],
 };
 
 export const emptyDashboard: BookDashboardResponse = {

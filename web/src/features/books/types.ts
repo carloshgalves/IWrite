@@ -45,8 +45,6 @@ export type Book = {
   description: string | null;
   status: BookStatus;
   targetWordCount: number | null;
-  dailyTargetWordCount: number | null;
-  plannedWritingDays: DayOfWeek[];
   relationship: BookRelationship;
   role: BookRole | null;
   capabilities: BookCapability[];
@@ -55,13 +53,15 @@ export type Book = {
   updatedAt: string;
 };
 
+/**
+ * Shared book settings only. A daily word target and planned writing days belong to one user inside
+ * the book, so they travel through the writing-goal contract instead; the backend refuses them here.
+ */
 export type CreateBookRequest = {
   title: string;
   subtitle?: string;
   description?: string;
   targetWordCount?: number | null;
-  dailyTargetWordCount?: number | null;
-  plannedWritingDays?: DayOfWeek[];
 };
 
 export type UpdateBookRequest = {
@@ -70,6 +70,4 @@ export type UpdateBookRequest = {
   description?: string;
   status?: BookStatus;
   targetWordCount?: number | null;
-  dailyTargetWordCount?: number | null;
-  plannedWritingDays?: DayOfWeek[];
 };
