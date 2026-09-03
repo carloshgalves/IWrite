@@ -1,6 +1,6 @@
 # Migrations e evolução do banco
 
-O IWrite usa Flyway e PostgreSQL. O migration head atual é **V34**.
+O IWrite usa Flyway e PostgreSQL. O migration head atual é **V35**.
 
 ## Regras
 
@@ -160,16 +160,29 @@ Aperfeiçoa a canonicalização para coincidir com a política da aplicação, i
 
 Repete com segurança o backfill do usuário legado depois da canonicalização de email, somente quando ele ainda não possui persona, evitando duplicação.
 
+### V35 — papel explícito do Book Collaborator
+
+`V35__add_book_collaborator_role.sql`
+
+Fase expand da fundação de Book Roles (#205):
+
+- `book_collaborators.role` não nulo, com catálogo fechado `AUTHOR`, `EDITOR`, `READER` e `LEGACY_COLLABORATOR`;
+- backfill determinístico de toda linha legada para `LEGACY_COLLABORATOR`, preservando exatamente o acesso efetivo anterior sem inferir papel por persona, atividade, ownership ou email;
+- default constante `LEGACY_COLLABORATOR` como caminho de compatibilidade de rollout, para que uma instância anterior à migration continue inserindo linhas utilizáveis e sem elevação; a #213 remove o default quando os novos grants forem role-aware;
+- `book_collaboration_invitations.requested_role` passa a aceitar os papéis atribuíveis, mantendo convites `COLLABORATOR` já persistidos como estado legado auditável que nunca vira grant por inferência; a criação de novos convites fica fechada nesta fase, e a #213 a reabre com os papéis atribuíveis.
+- constraints de catálogo adicionadas como `NOT VALID` e validadas em statement separado: o `ACCESS EXCLUSIVE` cobre apenas a mudança de catálogo, e a varredura das linhas existentes acontece sob `SHARE UPDATE EXCLUSIVE`, sem bloquear leituras e escritas concorrentes.
+
 ## Estado atual
 
-- migration head: **V34**;
+- migration head: **V35**;
 - tenant e ownership de livro persistidos;
-- colaboradores base persistidos;
+- colaboradores persistidos com Book Role explícito e revogável;
 - convites seguros persistidos;
 - auditoria de domínio e LLM persistidas;
 - credenciais reais persistidas separadamente;
 - personas declarativas persistidas;
-- granular RBAC por livro, múltiplos workspaces e aceite completo de convites ainda exigirão migrations futuras conforme #145–#147.
+- a #213 ainda removerá o default de compatibilidade `LEGACY_COLLABORATOR` e tornará novos grants role-aware, como cutover após as #206–#212 colocarem cada superfície atrás de capabilities;
+- múltiplos workspaces e aceite completo de convites ainda exigirão migrations futuras conforme #146–#147.
 
 ## Checklist para nova migration
 

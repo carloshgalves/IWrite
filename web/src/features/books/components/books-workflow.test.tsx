@@ -24,7 +24,16 @@ const ownerBook: Book = {
   targetWordCount: 80_000,
   dailyTargetWordCount: 500,
   plannedWritingDays: ["MONDAY"],
-  accessLevel: "OWNER",
+  relationship: "OWNER",
+  role: null,
+  capabilities: [
+    "READ_MANUSCRIPT",
+    "MUTATE_MANUSCRIPT_STRUCTURE",
+    "EDIT_BOOK_SETTINGS",
+    "MANAGE_COLLABORATORS",
+    "DELETE_BOOK",
+  ],
+  contextualCapabilities: ["EDIT_AUTHORED_CONTRIBUTION"],
   createdAt: "2026-01-01T00:00:00Z",
   updatedAt: "2026-01-02T00:00:00Z",
 };
@@ -36,7 +45,10 @@ const collaboratorBook: Book = {
   subtitle: null,
   description: null,
   status: "PLANNING",
-  accessLevel: "COLLABORATOR",
+  relationship: "COLLABORATOR",
+  role: "LEGACY_COLLABORATOR",
+  capabilities: ["READ_MANUSCRIPT", "EDIT_AUTHORED_CONTRIBUTION", "EDIT_BOOK_SETTINGS"],
+  contextualCapabilities: [],
   updatedAt: "2026-01-03T00:00:00Z",
 };
 
@@ -117,6 +129,25 @@ describe("books workflow", () => {
     ownerCard = screen.getByText(ownerBook.title).closest("article")!;
     fireEvent.click(within(ownerCard).getByRole("button", { name: "Excluir" }));
     await waitFor(() => expect(api.deleteBook).toHaveBeenCalledWith(ownerBook.id));
+  });
+
+  test("projects controls from the backend capabilities instead of an owner flag", async () => {
+    const readOnlyBook: Book = {
+      ...collaboratorBook,
+      id: "book-read-only",
+      title: "Livro somente leitura",
+      role: "EDITOR",
+      capabilities: ["READ_MANUSCRIPT", "READ_CANONICAL_PLANNING"],
+      contextualCapabilities: [],
+    };
+    api.listBooks.mockResolvedValue([readOnlyBook]);
+
+    renderWithClient(<LibraryPage />);
+
+    const card = (await screen.findByText(readOnlyBook.title)).closest("article")!;
+    expect(within(card).queryByRole("button", { name: "Editar" })).not.toBeInTheDocument();
+    expect(within(card).queryByRole("button", { name: "Excluir" })).not.toBeInTheDocument();
+    expect(within(card).getByRole("link", { name: "Abrir workspace" })).toBeInTheDocument();
   });
 
   test("shows loading, empty, and error library states", async () => {

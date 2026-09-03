@@ -2,6 +2,7 @@ package com.iwrite.writingprogress.ledger;
 
 import com.iwrite.common.exception.ConflictException;
 import com.iwrite.common.exception.ResourceNotFoundException;
+import com.iwrite.book.authorization.BookCapability;
 import com.iwrite.book.entity.Book;
 import com.iwrite.book.repository.BookCollaboratorRepository;
 import com.iwrite.book.service.BookAccessService;
@@ -344,7 +345,10 @@ class SceneWordCountConcurrencyIntegrationTest extends PostgresIntegrationTest {
 
         try {
             CompletableFuture<Void> ownerFuture = CompletableFuture.runAsync(() -> inNewTransaction(() -> {
-                Book lockedBook = bookAccessService.requireBookOwnerAccessForUpdate(world.book().id());
+                Book lockedBook = bookAccessService.requireCapabilityForUpdate(
+                        world.book().id(),
+                        BookCapability.MANAGE_COLLABORATORS
+                );
                 var collaborator = collaboratorRepository.findByBook_IdAndTenant_IdAndUser_Id(
                                 lockedBook.getId(),
                                 DEFAULT_TENANT_ID,

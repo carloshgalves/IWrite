@@ -133,6 +133,13 @@ class McpServerDiscoveryIntegrationTest {
                     .extracting(McpSchema.Tool::name)
                     .containsExactlyInAnyOrder("listar_livros_acessiveis", "obter_outline_livro", "analisar_cena");
 
+            assertThat(tools.tools())
+                    .filteredOn(tool -> tool.name().equals("listar_livros_acessiveis"))
+                    .singleElement()
+                    .satisfies(tool -> assertThat(tool.description())
+                            .contains("`relationship`", "`role`", "`capabilities`", "`contextualCapabilities`")
+                            .doesNotContain("nível de acesso"));
+
             McpSchema.ListResourceTemplatesResult templates = client.listResourceTemplates();
             assertThat(templates.resourceTemplates())
                     .extracting(McpSchema.ResourceTemplate::uriTemplate)
@@ -141,7 +148,9 @@ class McpServerDiscoveryIntegrationTest {
             McpSchema.CallToolResult listResult = client.callTool(
                     new McpSchema.CallToolRequest("listar_livros_acessiveis", Map.of()));
             assertThat(listResult.isError()).isFalse();
-            assertThat(textOf(listResult)).contains("Livro MCP Discovery");
+            assertThat(textOf(listResult))
+                    .contains("Livro MCP Discovery")
+                    .contains("\"relationship\"", "\"role\"", "\"capabilities\"", "\"contextualCapabilities\"");
 
             McpSchema.ReadResourceResult outline = client.readResource(
                     new McpSchema.ReadResourceRequest("iwrite://books/" + book.id() + "/outline"));

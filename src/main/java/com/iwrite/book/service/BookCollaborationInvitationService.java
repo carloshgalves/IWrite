@@ -1,5 +1,6 @@
 package com.iwrite.book.service;
 
+import com.iwrite.book.authorization.BookCapability;
 import com.iwrite.book.dto.BookCollaborationInvitationCreationResult;
 import com.iwrite.book.dto.BookCollaborationInvitationRequest;
 import com.iwrite.book.dto.BookCollaborationInvitationResponse;
@@ -17,9 +18,11 @@ import org.springframework.transaction.annotation.Transactional;
 
 import java.time.Duration;
 import java.time.OffsetDateTime;
+import java.util.EnumSet;
 import java.util.List;
 import java.util.Locale;
 import java.util.Optional;
+import java.util.Set;
 import java.util.UUID;
 import java.util.regex.Pattern;
 
@@ -27,6 +30,21 @@ import java.util.regex.Pattern;
 public class BookCollaborationInvitationService {
 
     static final Duration DEFAULT_VALIDITY = Duration.ofDays(7);
+
+    /**
+     * Compatibility phase (#205): no role may be requested for a new invitation, so creation is closed.
+     *
+     * <p>AUTHOR, EDITOR and READER stay closed because the Book surfaces are still behind the legacy
+     * generic guards, and offering one would promise an authority nothing enforces yet. COLLABORATOR
+     * stays closed because it is preserved state, not new state: it grants no Book Role by inference,
+     * so {@code lookupUsableByRawToken} can never surface it and a new one would only report success
+     * for an access that can never come to exist.
+     *
+     * <p>Already persisted invitations are unaffected — {@link #get} and {@link #revoke} keep the
+     * legacy rows auditable and revocable. #213 reopens creation with the assignable roles once every
+     * surface is behind its minimum capability and grants are role-aware.
+     */
+    private static final Set<BookCollaborationRole> REQUESTABLE_ROLES = EnumSet.noneOf(BookCollaborationRole.class);
 
     private static final int MAX_EMAIL_LENGTH = 320;
     private static final Pattern EMAIL_PATTERN = Pattern.compile("^[^\\s@]+@[^\\s@]+\\.[^\\s@]+$");
@@ -53,7 +71,7 @@ public class BookCollaborationInvitationService {
      */
     @Transactional
     public BookCollaborationInvitationCreationResult create(UUID bookId, BookCollaborationInvitationRequest request) {
-        Book book = bookAccessService.requireBookOwnerAccessForUpdate(bookId);
+        Book book = bookAccessService.requireCapabilityForUpdate(bookId, BookCapability.MANAGE_COLLABORATORS);
         String recipientEmail = normalizeEmail(request.recipientEmail());
         BookCollaborationRole requestedRole = parseRole(request.requestedRole());
         OffsetDateTime now = OffsetDateTime.now();
@@ -88,14 +106,14 @@ public class BookCollaborationInvitationService {
 
     @Transactional(readOnly = true)
     public BookCollaborationInvitationResponse get(UUID bookId, UUID invitationId) {
-        Book book = bookAccessService.requireBookOwnerAccess(bookId);
+        Book book = bookAccessService.requireCapability(bookId, BookCapability.MANAGE_COLLABORATORS);
         BookCollaborationInvitation invitation = requireInvitation(book, invitationId);
         return BookCollaborationInvitationResponse.fromEntity(invitation, OffsetDateTime.now());
     }
 
     @Transactional
     public BookCollaborationInvitationResponse revoke(UUID bookId, UUID invitationId) {
-        Book book = bookAccessService.requireBookOwnerAccessForUpdate(bookId);
+        Book book = bookAccessService.requireCapabilityForUpdate(bookId, BookCapability.MANAGE_COLLABORATORS);
         BookCollaborationInvitation invitation = requireInvitation(book, invitationId);
         OffsetDateTime now = OffsetDateTime.now();
         if (!invitation.isUsable(now)) {
@@ -110,6 +128,10 @@ public class BookCollaborationInvitationService {
      * Internal foundation for the future acceptance flow: resolves a raw token to
      * a usable invitation. Not exposed through any endpoint; performs no
      * tenant-scoped authorization because the token itself is the credential.
+     *
+     * <p>Only an invitation whose requested role is assignable is surfaced. A legacy COLLABORATOR
+     * invitation stays auditable and revocable, but it grants no Book Role by inference, so it never
+     * becomes an acceptance candidate here.
      */
     @Transactional(readOnly = true)
     public Optional<BookCollaborationInvitationResponse> lookupUsableByRawToken(String rawToken) {
@@ -119,6 +141,7 @@ public class BookCollaborationInvitationService {
         OffsetDateTime now = OffsetDateTime.now();
         return invitationRepository.findByTokenHash(tokenService.hash(rawToken))
                 .filter(invitation -> tokenService.matches(rawToken, invitation.getTokenHash()))
+                .filter(invitation -> invitation.getRequestedRole().isAssignable())
                 .filter(invitation -> invitation.isUsable(now))
                 .map(invitation -> BookCollaborationInvitationResponse.fromEntity(invitation, now));
     }
@@ -191,11 +214,20 @@ public class BookCollaborationInvitationService {
         if (requestedRole == null || requestedRole.isBlank()) {
             throw new BadRequestException("requestedRole must be provided");
         }
+        BookCollaborationRole parsed;
         try {
-            return BookCollaborationRole.valueOf(requestedRole.trim());
+            parsed = BookCollaborationRole.valueOf(requestedRole.trim());
         } catch (IllegalArgumentException exception) {
-            throw new BadRequestException("Unsupported collaboration role: " + requestedRole.trim());
+            throw unsupportedRole(requestedRole);
         }
+        if (!REQUESTABLE_ROLES.contains(parsed)) {
+            throw unsupportedRole(requestedRole);
+        }
+        return parsed;
+    }
+
+    private BadRequestException unsupportedRole(String requestedRole) {
+        return new BadRequestException("Unsupported collaboration role: " + requestedRole.trim());
     }
 
     private OffsetDateTime resolveExpiration(OffsetDateTime requestedExpiresAt, OffsetDateTime now) {

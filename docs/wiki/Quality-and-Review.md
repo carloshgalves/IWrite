@@ -133,7 +133,7 @@ Exemplos já cobertos em diferentes fases:
 
 - autosave/troca de cena;
 - ledger e `operationId`;
-- criação concorrente de convites;
+- inserção concorrente de convites pendentes equivalentes contra o índice único parcial;
 - rate limiting;
 - cadastro concorrente;
 - ownership de sessão durante cadastro/login concorrentes.

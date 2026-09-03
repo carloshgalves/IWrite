@@ -50,6 +50,8 @@ Mutações que afetam a contagem total usam lock do livro e uma ordem estável d
 
 **Motivo:** impedir lost updates e reduzir risco de deadlock.
 
+**Regra de ordem:** o acesso é provado antes de tomar o lock da linha do livro e provado de novo sob o lock. O lock é recurso de mutações autorizadas, então um chamador sem acesso é negado sem entrar na fila dele; a segunda prova mantém a revogação vencendo um preflight já obsoleto.
+
 ## ADR-009 — Datas de progresso são históricas
 
 `progressDate` é derivada do timezone efetivo no momento do registro e permanece armazenada como fato histórico. Mudanças posteriores de timezone não reinterpretam registros antigos.
@@ -88,7 +90,7 @@ Timezone, stale state, idempotência, sessão, concorrência e isolamento já pr
 
 **Motivo:** tenant membership por si só não deve significar acesso a todos os livros de um workspace.
 
-O modelo atual ainda será refinado pela #145 para papéis/capabilities granulares.
+**Status:** a fase expand da #205 concretizou esta decisão — cada colaboração persiste um Book Role explícito e revogável, e a derivação de acesso foi centralizada na `BookCapabilityPolicy` (ver Database-Migrations.md, V35). A superfície efetiva dos colaboradores atuais permanece inalterada: eles entram como `LEGACY_COLLABORATOR` até as #206–#213 migrarem cada superfície para a capability mínima e removerem o default de compatibilidade.
 
 ## ADR-017 — Sessão de servidor e tenant resolvido por membership persistida
 
@@ -109,7 +111,7 @@ A autenticação usa Spring Security e sessão de servidor. O tenant efetivo é 
 
 **Motivo:** a mesma pessoa pode exercer papéis diferentes em livros diferentes.
 
-Papéis efetivos serão contextuais e centralizados na #145.
+**Status:** desde a #205 os papéis efetivos são contextuais por livro (Book Role) e centralizados na `BookCapabilityPolicy`; persona continua não concedendo capability alguma.
 
 ## ADR-019 — Convites persistem somente hash do token
 
@@ -173,7 +175,7 @@ Grafana, Umami, OpenTelemetry, MCP, k6, auditoria e healthcheck permanecem porqu
 
 ## Decisões ainda abertas
 
-- matriz final de papéis/capabilities por livro (#145);
+- migração de cada superfície para a capability mínima e cutover do default legado de Book Role (#206–#213); a matriz e a policy central já foram decididas pela #145/#205;
 - modelo de seleção de múltiplos workspaces (#146);
 - aceite completo e entrega de convites (#147/#57);
 - provider/topologia de object storage (#68);

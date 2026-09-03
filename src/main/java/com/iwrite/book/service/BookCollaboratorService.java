@@ -1,8 +1,10 @@
 package com.iwrite.book.service;
 
+import com.iwrite.book.authorization.BookCapability;
 import com.iwrite.book.dto.BookCollaboratorResponse;
 import com.iwrite.book.entity.Book;
 import com.iwrite.book.entity.BookCollaborator;
+import com.iwrite.book.entity.BookRole;
 import com.iwrite.book.repository.BookCollaboratorRepository;
 import com.iwrite.book.repository.BookRepository;
 import com.iwrite.common.exception.ConflictException;
@@ -49,7 +51,7 @@ public class BookCollaboratorService {
 
     @Transactional(readOnly = true)
     public List<BookCollaboratorResponse> list(UUID bookId) {
-        Book book = bookAccessService.requireBookOwnerAccess(bookId);
+        Book book = bookAccessService.requireCapability(bookId, BookCapability.MANAGE_COLLABORATORS);
         return collaboratorRepository.findByBook_IdAndTenant_IdOrderByUser_DisplayNameAscUser_IdAsc(
                         book.getId(),
                         book.getTenant().getId()
@@ -61,7 +63,7 @@ public class BookCollaboratorService {
 
     @Transactional
     public BookCollaboratorResponse add(UUID bookId, UUID targetUserId) {
-        Book book = bookAccessService.requireBookOwnerAccessForUpdate(bookId);
+        Book book = bookAccessService.requireCapabilityForUpdate(bookId, BookCapability.MANAGE_COLLABORATORS);
         UUID grantorUserId = currentUserMembershipService.requireCurrentUserMemberId();
         BookCollaboratorGrantResult result = grantLocked(book, targetUserId, grantorUserId);
         if (result == BookCollaboratorGrantResult.ALREADY_GRANTED) {
@@ -78,7 +80,7 @@ public class BookCollaboratorService {
 
     @Transactional
     public void remove(UUID bookId, UUID userId) {
-        Book lockedBook = bookAccessService.requireBookOwnerAccessForUpdate(bookId);
+        Book lockedBook = bookAccessService.requireCapabilityForUpdate(bookId, BookCapability.MANAGE_COLLABORATORS);
         BookCollaborator collaborator = collaboratorRepository.findByBook_IdAndTenant_IdAndUser_Id(
                         lockedBook.getId(),
                         lockedBook.getTenant().getId(),
@@ -115,6 +117,10 @@ public class BookCollaboratorService {
         collaborator.setBook(lockedBook);
         collaborator.setUser(userRepository.getReferenceById(targetUserId));
         collaborator.setCreatedBy(userRepository.getReferenceById(grantorUserId));
+        // Compatibility phase (#205): grants still reproduce the previous generic surface. No public flow
+        // offers AUTHOR, EDITOR or READER while the remaining surfaces are guarded by the legacy checks,
+        // so a new grant must not elevate access. #213 makes new grants role-aware and drops this default.
+        collaborator.setRole(BookRole.LEGACY_COLLABORATOR);
 
         try {
             collaboratorRepository.saveAndFlush(collaborator);

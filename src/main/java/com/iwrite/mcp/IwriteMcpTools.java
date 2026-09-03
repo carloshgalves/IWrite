@@ -2,6 +2,7 @@ package com.iwrite.mcp;
 
 import com.iwrite.audit.entity.AuditAction;
 import com.iwrite.audit.entity.AuditResourceType;
+import com.iwrite.book.authorization.BookCapability;
 import com.iwrite.book.dto.BookResponse;
 import com.iwrite.book.service.BookService;
 import com.iwrite.outline.dto.BookOutlineResponse;
@@ -51,8 +52,13 @@ public class IwriteMcpTools {
 
     @Tool(
             name = "listar_livros_acessiveis",
-            description = "Lista os livros que o usuário atual pode acessar (próprios e colaborações), "
-                    + "com id, título, status e nível de acesso. Não recebe parâmetros."
+            description = "Lista os livros que o usuário atual pode acessar, próprios e colaborações. "
+                    + "Cada item traz `id`, `title`, `status`, `relationship`, `role`, `capabilities` e "
+                    + "`contextualCapabilities`. `relationship` é OWNER ou COLLABORATOR; `role` é o Book "
+                    + "Role derivado pelo backend e vem nulo quando `relationship` é OWNER; "
+                    + "`capabilities` são as operações autorizadas apenas pelo escopo do livro e "
+                    + "`contextualCapabilities` as que ainda dependem de um predicado do próprio "
+                    + "recurso. Não recebe parâmetros."
     )
     public List<McpBookSummary> listarLivrosAcessiveis() {
         return invocationSupport.invoke(
@@ -121,15 +127,39 @@ public class IwriteMcpTools {
         }
     }
 
-    public record McpBookSummary(UUID id, String title, String status, String accessLevel) {
+    /**
+     * MCP stays a thin layer over the same authorized services: it reports the relationship, Book
+     * Role and derived capability sets the backend already computed, and never a second access model
+     * of its own. {@code capabilities} and {@code contextualCapabilities} are copied straight from
+     * {@link BookResponse} so an MCP client reuses the central policy instead of rebuilding the
+     * matrix; every mutation is still authorized again on the server.
+     */
+    public record McpBookSummary(
+            UUID id,
+            String title,
+            String status,
+            String relationship,
+            String role,
+            List<String> capabilities,
+            List<String> contextualCapabilities
+    ) {
 
         static McpBookSummary from(BookResponse book) {
             return new McpBookSummary(
                     book.id(),
                     book.title(),
                     book.status() == null ? null : book.status().name(),
-                    book.accessLevel() == null ? null : book.accessLevel().name()
+                    book.relationship() == null ? null : book.relationship().name(),
+                    book.role() == null ? null : book.role().name(),
+                    names(book.capabilities()),
+                    names(book.contextualCapabilities())
             );
+        }
+
+        private static List<String> names(List<BookCapability> capabilities) {
+            return capabilities == null
+                    ? List.of()
+                    : capabilities.stream().map(BookCapability::name).toList();
         }
     }
 }
