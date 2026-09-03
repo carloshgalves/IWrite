@@ -66,15 +66,17 @@ For defects, add a regression test at the seam that reproduces the real bug patt
 
 ## Docker resources created for tests
 
-Any Docker container, volume, or network created specifically for a test, review, benchmark, migration validation, or other temporary verification is ephemeral and must be removed from the developer machine when that verification finishes.
+Database-backed or Docker-backed tests must run against fresh, isolated infrastructure created specifically for that validation run. Do not point tests at an already-running developer database, an existing PostgreSQL container, an existing Compose stack, or any other pre-existing Docker container/volume/network.
 
+- Provision a new database/container stack for the run before executing the test. A unique Testcontainers instance or an isolated Compose project created for that run is acceptable; reusing a long-lived local service is not.
+- Any Docker container, volume, or network created specifically for a test, review, benchmark, migration validation, or other temporary verification is ephemeral and must be removed from the developer machine when that verification finishes.
 - Register cleanup before creating the resource so the failure path is covered too; use `trap`/`finally`/test-framework teardown as appropriate.
-- For Docker Compose test stacks, use an isolated project name when practical and finish with the matching `docker compose ... down -v --remove-orphans`.
-- For direct `docker run`, prefer `--rm` for containers and explicitly remove any named or anonymous volume created for the test.
-- Never use broad cleanup such as `docker system prune` as a substitute for scoped teardown.
-- Never delete a container or volume that existed before the verification. Scope cleanup using the compose project, labels, or exact resource IDs/names captured when the test creates them.
-- Reusing an already-running developer service is allowed; because the test did not create it, the test must not remove it.
-- Before declaring Docker-backed validation complete, verify that no container or volume created by that validation remains.
+- For Docker Compose test stacks, use an isolated project name and fresh test-owned storage, then finish with the matching `docker compose ... down -v --remove-orphans`.
+- For direct `docker run`, prefer `--rm` for containers and explicitly remove every volume created for the test.
+- Never use broad cleanup such as `docker system prune` or `docker volume prune` as a substitute for scoped teardown.
+- Never delete a container, volume, database, or other resource that existed before the verification. Scope cleanup using the Compose project, labels, or exact resource IDs/names captured when the test creates them.
+- Framework-managed resources such as CI service containers or Testcontainers are valid only when they are fresh for that run and their lifecycle manager removes them afterward; reusable Testcontainers are not allowed for test-only infrastructure.
+- Before declaring database/Docker-backed validation complete, verify that no container or volume created by that validation remains.
 
 Detailed examples and failure-safe patterns live in `docs/agents/docker-test-lifecycle.md`.
 

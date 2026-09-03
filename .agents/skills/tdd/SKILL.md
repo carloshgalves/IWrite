@@ -34,14 +34,16 @@ Avoid writing a large imagined test suite before learning from the first impleme
 
 ## Docker-backed tests
 
-When a test or validation creates Docker infrastructure, resource teardown is part of the test lifecycle, not optional housekeeping.
+Database-backed or Docker-backed test runs must provision fresh isolated infrastructure for that run. Never reuse an already-running developer database, PostgreSQL container, Compose stack, Docker container, or pre-existing test volume.
 
-- Isolate test-created containers/volumes from pre-existing developer resources.
+- Create the required database/container stack before the test starts; CI service containers or Testcontainers are valid when they are fresh for the run.
+- Do not enable reusable Testcontainers for test-only infrastructure.
+- Isolate test-created containers/volumes/networks from every pre-existing developer resource.
 - Register cleanup before starting the resources so red tests and command failures still tear them down.
 - Remove every container and volume created for the test before considering the run complete.
 - Follow `docs/agents/docker-test-lifecycle.md`; never use broad prune commands to satisfy this rule.
 
-A green assertion with leaked test containers or volumes is not a complete green cycle.
+A green assertion that ran on shared/pre-existing database state or leaked test containers/volumes is not a complete green cycle.
 
 ## Good tests
 

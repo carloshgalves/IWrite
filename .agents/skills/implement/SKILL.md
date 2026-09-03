@@ -58,7 +58,7 @@ For identity/workspace/session-sensitive UI:
 
 Run focused checks repeatedly, then the broader relevant suite. Typical commands are documented in `AGENTS.md` and `docs/wiki/Quality-and-Review.md`.
 
-If validation creates Docker containers, volumes, or networks, register scoped teardown before startup and follow `docs/agents/docker-test-lifecycle.md`. Completion requires those test-created resources to be removed even when the validation fails; never delete pre-existing developer resources.
+If validation needs a database or Docker infrastructure, provision a fresh isolated database/container stack specifically for that run. Do not reuse an already-running developer database, PostgreSQL container, Compose stack, or pre-existing volume. Register scoped teardown before startup and follow `docs/agents/docker-test-lifecycle.md`; completion requires every test-created container and volume to be removed even when the validation fails, while pre-existing developer resources remain untouched.
 
 Before completion:
 
