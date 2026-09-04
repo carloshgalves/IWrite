@@ -12,6 +12,11 @@ import java.util.UUID;
  * Book-wide setting: it is {@code null} when this User chose no target, and it never exposes another
  * collaborator's goal. {@code targetWordCount} remains the shared Book-wide target.
  *
+ * @param myWriting the caller's own Personal Book Writing Goal projection — routine, per-day target
+ *                  snapshots and the consistency measured against them — or {@code null} for a role
+ *                  without {@code MANAGE_OWN_PERSONAL_WRITING_GOAL}, which has no personal goal to
+ *                  project even if a goal row survived a role change
+ *
  * @param capabilities capabilities authorized by Book scope alone, so the dashboard can present only
  *                     the controls this User may actually attempt; the server authorizes every
  *                     request again and a hidden control is never the authorization boundary

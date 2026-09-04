@@ -1,5 +1,12 @@
 import type { CharacterResponse } from "@/features/characters/types";
-import type { BookDashboardResponse, DashboardSceneSummaryResponse } from "@/features/dashboard/types";
+import type {
+  BookDashboardResponse,
+  BookMyWritingResponse,
+  DashboardSceneSummaryResponse,
+} from "@/features/dashboard/types";
+
+/** A dashboard whose personal writing projection is present, as it is for a role that may keep one. */
+type DashboardWithMyWriting = BookDashboardResponse & { myWriting: BookMyWritingResponse };
 import type { ItemResponse } from "@/features/items/types";
 import type { LocationResponse } from "@/features/locations/types";
 import type { Scene } from "@/features/scenes/types";
@@ -109,7 +116,7 @@ export const gapScene: DashboardSceneSummaryResponse = {
   planningNotes: null,
 };
 
-export const dashboardWithScenes: BookDashboardResponse = {
+export const dashboardWithScenes: DashboardWithMyWriting = {
   bookId: "book-1",
   title: "Livro de teste",
   totalWordCount: 1200,
@@ -170,6 +177,9 @@ export const dashboardWithScenes: BookDashboardResponse = {
     todayPlannedWritingDay: true,
     currentScheduleEffectiveFrom: "2026-05-14",
   },
+  // Deliberately not 0: a save that forgot to quote the revision it read would send `undefined`
+  // here, which a 0 would not tell apart from the value the fixture actually carries.
+  writingGoalRevision: 4,
   },
   planningProgress: {
     plannedScenesCount: 1,
@@ -215,7 +225,7 @@ export const dashboardWithScenes: BookDashboardResponse = {
   contextualCapabilities: ["EDIT_AUTHORED_CONTRIBUTION"],
 };
 
-export const emptyDashboard: BookDashboardResponse = {
+export const emptyDashboard: DashboardWithMyWriting = {
   ...dashboardWithScenes,
   totalWordCount: 0,
   targetWordCount: null,
@@ -255,6 +265,7 @@ export const emptyDashboard: BookDashboardResponse = {
     },
   },
   schedule: dashboardWithScenes.myWriting.schedule,
+  writingGoalRevision: 0,
   },
   scenesByStatus: dashboardWithScenes.scenesByStatus.map((status) => ({
     ...status,

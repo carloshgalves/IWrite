@@ -26,7 +26,8 @@ import java.util.UUID;
  * contribution.
  *
  * <p>The planned writing days of the same goal live in {@link BookWritingSchedule}, which already
- * versions them by period so past progress keeps the routine that was actually in effect.
+ * versions them by period so past progress keeps the routine that was actually in effect. They are
+ * still the same goal, so {@code revision} versions both halves together.
  */
 @Entity
 @Table(name = "book_personal_writing_goals")
@@ -45,6 +46,13 @@ public class PersonalBookWritingGoal {
     private Book book;
 
     private Integer dailyTargetWordCount;
+
+    /**
+     * Versions the whole goal, both halves together, so a save can declare the state it was made
+     * against and a stale one is refused instead of silently replacing a newer choice.
+     */
+    @Column(nullable = false)
+    private int revision;
 
     @Column(nullable = false, updatable = false)
     private OffsetDateTime createdAt;
@@ -90,6 +98,14 @@ public class PersonalBookWritingGoal {
 
     public void setDailyTargetWordCount(Integer dailyTargetWordCount) {
         this.dailyTargetWordCount = dailyTargetWordCount;
+    }
+
+    public int getRevision() {
+        return revision;
+    }
+
+    public void setRevision(int revision) {
+        this.revision = revision;
     }
 
     public OffsetDateTime getCreatedAt() {

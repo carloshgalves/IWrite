@@ -95,23 +95,21 @@ public class BookDashboardService {
         int plannedScenesCount = (int) scenes.stream()
                 .filter(this::isPlanned)
                 .count();
+        boolean managesOwnGoal = access.isGranted(BookCapability.MANAGE_OWN_PERSONAL_WRITING_GOAL);
 
         return new BookDashboardResponse(
                 book.getId(),
                 book.getTitle(),
                 totalWordCount,
                 book.getTargetWordCount(),
-                personalDailyTargetWordCount(access),
+                managesOwnGoal ? personalDailyTargetWordCount(access) : null,
                 remainingWordCount(totalWordCount, book.getTargetWordCount()),
                 wordCountProgressPercent(totalWordCount, book.getTargetWordCount()),
                 exceededTargetWordCount(totalWordCount, book.getTargetWordCount()),
                 sectionRepository.countByBookId(bookId),
                 chapterRepository.countByBookId(bookId),
                 totalScenes,
-                new BookMyWritingResponse(
-                        buildWritingProgress(bookId, totalWordCount, progressPeriod),
-                        buildWritingSchedule(book)
-                ),
+                managesOwnGoal ? buildMyWriting(access, book, totalWordCount, progressPeriod) : null,
                 new PlanningProgressResponse(plannedScenesCount, totalScenes, plannedScenesPercent(plannedScenesCount, totalScenes)),
                 buildStatusCounts(scenes),
                 buildPovStats(scenes),
@@ -125,14 +123,35 @@ public class BookDashboardService {
     }
 
     /**
-     * The caller's own daily target, and only when the policy lets this User have one at all. A role
-     * without {@link BookCapability#MANAGE_OWN_PERSONAL_WRITING_GOAL} reads {@code null} even if a goal
-     * row survived a role change, so an Editor or Reader never sees a Personal Book Writing Goal here.
+     * The caller's own Personal Book Writing Goal projection, built only for a role the policy lets
+     * have one at all.
+     *
+     * <p>The whole block is the goal, not just the daily target beside it: the per-day
+     * {@code dailyTargetWordCount} snapshots, the planned writing days and the consistency measured
+     * against them are all state {@code /writing-goal} is non-enumerable for without
+     * {@link BookCapability#MANAGE_OWN_PERSONAL_WRITING_GOAL}. Projecting it here would hand a
+     * demoted collaborator, whose goal row survived the role change, the same state through a
+     * different door.
+     *
+     * <p>Not building it also keeps a denied read a read: the routine is created lazily by the first
+     * call that needs it, so a dashboard that always built this block would persist a default
+     * schedule for a User the policy says keeps no personal routine.
      */
+    private BookMyWritingResponse buildMyWriting(
+            BookAccessContext access,
+            Book book,
+            int totalWordCount,
+            WritingProgressPeriod progressPeriod
+    ) {
+        return new BookMyWritingResponse(
+                buildWritingProgress(book.getId(), totalWordCount, progressPeriod),
+                buildWritingSchedule(book),
+                personalBookWritingGoalService.revisionFor(access.bookId(), access.userId())
+        );
+    }
+
+    /** The caller's own daily target, resolved from the identity the guard already established. */
     private Integer personalDailyTargetWordCount(BookAccessContext access) {
-        if (!access.isGranted(BookCapability.MANAGE_OWN_PERSONAL_WRITING_GOAL)) {
-            return null;
-        }
         return personalBookWritingGoalService.dailyTargetWordCountFor(access.bookId(), access.userId());
     }
 

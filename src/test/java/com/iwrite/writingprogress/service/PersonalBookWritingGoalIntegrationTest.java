@@ -8,6 +8,7 @@ import com.iwrite.book.entity.BookRole;
 import com.iwrite.book.entity.BookStatus;
 import com.iwrite.book.repository.BookCollaboratorRepository;
 import com.iwrite.book.service.BookService;
+import com.iwrite.common.exception.ConflictException;
 import com.iwrite.common.exception.ResourceNotFoundException;
 import com.iwrite.dashboard.service.BookDashboardService;
 import com.iwrite.support.PostgresIntegrationTest;
@@ -18,6 +19,7 @@ import com.iwrite.tenant.entity.TenantMembershipRole;
 import com.iwrite.tenant.repository.TenantRepository;
 import com.iwrite.user.entity.User;
 import com.iwrite.writingprogress.dto.PersonalBookWritingGoalUpdateRequest;
+import com.iwrite.writingprogress.repository.BookWritingScheduleRepository;
 import jakarta.persistence.EntityManager;
 import jakarta.persistence.PersistenceContext;
 import org.junit.jupiter.api.AfterEach;
@@ -55,6 +57,9 @@ class PersonalBookWritingGoalIntegrationTest extends PostgresIntegrationTest {
 
     @Autowired
     private BookCollaboratorRepository collaboratorRepository;
+
+    @Autowired
+    private BookWritingScheduleRepository scheduleRepository;
 
     @Autowired
     private TenantRepository tenantRepository;
@@ -134,6 +139,105 @@ class PersonalBookWritingGoalIntegrationTest extends PostgresIntegrationTest {
     }
 
     @Test
+    void aSaveMadeAgainstASupersededRevisionIsRefusedInsteadOfReplacingTheNewerGoal() {
+        BookResponse book = createBook("Stale goal save");
+        // What a second tab read before the first one saved.
+        int staleRevision = personalBookWritingGoalService.getGoal(book.id()).revision();
+
+        setPersonalDailyTarget(book.id(), 800);
+
+        assertThatThrownBy(() -> setPersonalDailyTarget(book.id(), 1200, staleRevision))
+                .isInstanceOf(ConflictException.class);
+        assertThat(personalBookWritingGoalService.getGoal(book.id()).dailyTargetWordCount()).isEqualTo(800);
+    }
+
+    @Test
+    void theRevisionCoversBothHalvesSoARoutineChangeSupersedesAStaleTargetSave() {
+        BookResponse book = createBook("Whole goal revision");
+        int staleRevision = personalBookWritingGoalService.getGoal(book.id()).revision();
+
+        setPersonalPlannedWritingDays(book.id(), List.of(DayOfWeek.MONDAY));
+
+        // The target half of the goal never moved, but the goal did: a save decided against the
+        // routine that has since been replaced is not a save against the current goal.
+        assertThatThrownBy(() -> setPersonalDailyTarget(book.id(), 1200, staleRevision))
+                .isInstanceOf(ConflictException.class);
+        assertThat(personalBookWritingGoalService.getGoal(book.id()).dailyTargetWordCount()).isNull();
+        assertThat(personalBookWritingGoalService.getGoal(book.id()).plannedWritingDays())
+                .containsExactly(DayOfWeek.MONDAY);
+    }
+
+    @Test
+    void everyAcceptedSaveAdvancesTheRevisionTheNextSaveMustQuote() {
+        BookResponse book = createBook("Revision advances");
+
+        assertThat(personalBookWritingGoalService.getGoal(book.id()).revision()).isZero();
+
+        int afterTarget = setPersonalDailyTarget(book.id(), 500).revision();
+        int afterRoutine = setPersonalPlannedWritingDays(book.id(), List.of(DayOfWeek.FRIDAY)).revision();
+        int afterClearing = setPersonalDailyTarget(book.id(), null).revision();
+
+        assertThat(afterTarget).isEqualTo(1);
+        assertThat(afterRoutine).isEqualTo(2);
+        assertThat(afterClearing).isEqualTo(3);
+        assertThat(personalBookWritingGoalService.getGoal(book.id()).revision()).isEqualTo(3);
+    }
+
+    @Test
+    void aRetainedGoalIsUnreachableThroughTheDashboardAfterTheRoleStopsAllowingOne() {
+        BookResponse book = createBook("Demoted goal");
+        UUID authorId = grantRole(book.id(), "Author", "goal-demoted@iwrite.local", BookRole.AUTHOR);
+
+        switchTo(authorId);
+        setPersonalDailyTarget(book.id(), 700);
+        setPersonalPlannedWritingDays(book.id(), List.of(DayOfWeek.MONDAY));
+
+        currentUserProvider.reset();
+        changeRole(book.id(), authorId, BookRole.EDITOR);
+
+        switchTo(authorId);
+        var dashboard = dashboardService.getDashboard(book.id());
+        // The whole personal projection goes, not only the top-level target: the per-day snapshots,
+        // the routine and the consistency built against it are all the goal this role may not manage.
+        assertThat(dashboard.dailyTargetWordCount()).isNull();
+        assertThat(dashboard.myWriting()).isNull();
+
+        // The row itself survives the demotion, exactly as revocation leaves it: it simply is not
+        // reachable any more, through this surface or any other.
+        currentUserProvider.reset();
+        assertThat(personalBookWritingGoalService.dailyTargetWordCountFor(book.id(), authorId)).isEqualTo(700);
+    }
+
+    @Test
+    void aDashboardReadByARoleWithoutTheCapabilityCreatesNoWritingSchedule() {
+        BookResponse book = createBook("No lazy schedule");
+        UUID editorId = grantRole(book.id(), "Editor", "dash-editor@iwrite.local", BookRole.EDITOR);
+        UUID readerId = grantRole(book.id(), "Reader", "dash-reader@iwrite.local", BookRole.READER);
+
+        for (UUID deniedUserId : List.of(editorId, readerId)) {
+            switchTo(deniedUserId);
+            assertThat(dashboardService.getDashboard(book.id()).myWriting()).isNull();
+            // Reading is not a mutation. A denied read must not persist a default routine for a User
+            // the policy says has no Personal Book Writing Goal to keep one for.
+            assertThat(scheduleRepository.countByUser_IdAndBookIdAndEffectiveToIsNull(deniedUserId, book.id()))
+                    .isZero();
+        }
+    }
+
+    @Test
+    void theDashboardCarriesTheRevisionTheNextSaveHasToQuote() {
+        BookResponse book = createBook("Dashboard revision");
+
+        // The dashboard is the only place the client reads its own goal from, so it is the only place
+        // the revision can come from. A save quoting what the dashboard showed must be accepted.
+        int readRevision = dashboardService.getDashboard(book.id()).myWriting().writingGoalRevision();
+        assertThat(readRevision).isZero();
+        assertThat(setPersonalDailyTarget(book.id(), 500, readRevision).dailyTargetWordCount()).isEqualTo(500);
+
+        assertThat(dashboardService.getDashboard(book.id()).myWriting().writingGoalRevision()).isEqualTo(1);
+    }
+
+    @Test
     void sharedBookSettingsStayOwnerOnlyWithTheLegacyCompatibilitySurfacePreserved() {
         BookResponse book = createBook("Shared settings");
         UUID authorId = grantRole(book.id(), "Author", "settings-author@iwrite.local", BookRole.AUTHOR);
@@ -208,6 +312,14 @@ class PersonalBookWritingGoalIntegrationTest extends PostgresIntegrationTest {
             request.setTargetWordCount(targetWordCount);
         }
         return request;
+    }
+
+    private void changeRole(UUID bookId, UUID userId, BookRole role) {
+        BookCollaborator collaborator = collaboratorRepository
+                .findByBook_IdAndTenant_IdAndUser_Id(bookId, DEFAULT_TENANT_ID, userId)
+                .orElseThrow();
+        collaborator.setRole(role);
+        collaboratorRepository.saveAndFlush(collaborator);
     }
 
     private UUID grantRole(UUID bookId, String displayName, String email, BookRole role) {

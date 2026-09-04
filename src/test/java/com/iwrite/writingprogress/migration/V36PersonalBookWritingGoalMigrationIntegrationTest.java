@@ -86,6 +86,22 @@ class V36PersonalBookWritingGoalMigrationIntegrationTest extends PostgresIntegra
                         scalar(connection, schema, "select user_id || '|' || progress_date || '|' || productive_word_count_change from book_daily_writing_progress where id = '" + OWNER_HISTORY + "'")
                 );
 
+                // The goal is versioned as a whole so a save can say which state it was decided
+                // against. It is required and defaults to the revision an unsaved goal reads, so a
+                // backfilled row -- which carries the target that was already effective, not a choice
+                // made through the new contract -- starts there too.
+                assertEquals(
+                        "NO|0",
+                        scalar(connection, schema, "select is_nullable || '|' || column_default from information_schema.columns "
+                                + "where table_schema = current_schema() and table_name = 'book_personal_writing_goals' "
+                                + "and column_name = 'revision'")
+                );
+                assertEquals(
+                        "0",
+                        scalar(connection, schema, "select revision::text from book_personal_writing_goals "
+                                + "where user_id = '" + OWNER + "' and book_id = '" + BOOK_WITH_TARGET + "'")
+                );
+
                 // The cascade from books has to find its rows by book_id alone, so that direction is
                 // indexed instead of scanning every goal in the installation per Book deletion.
                 assertEquals(

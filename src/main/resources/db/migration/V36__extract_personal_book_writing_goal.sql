@@ -52,11 +52,18 @@
 lock table books in share row exclusive mode;
 lock table book_collaborators in share row exclusive mode;
 
+-- revision versions the whole goal -- the daily target and the planned writing days together -- so a
+-- save can say which state it was made against. Both halves move through the same surface, so one
+-- counter is enough and a routine change correctly supersedes a target write made before it. Rows
+-- created by the backfill start at 0, the same revision a User with no row at all reads, because
+-- neither has been saved through the new contract yet.
+
 create table book_personal_writing_goals (
     id uuid primary key,
     user_id uuid not null references users (id),
     book_id uuid not null references books (id) on delete cascade,
     daily_target_word_count integer,
+    revision integer not null default 0,
     created_at timestamptz not null,
     updated_at timestamptz not null,
     constraint uk_book_personal_writing_goals_user_book unique (user_id, book_id),

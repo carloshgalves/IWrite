@@ -179,6 +179,7 @@ Fase expand da fundação de Book Roles (#205):
 Separa a meta diária pessoal dos settings compartilhados do Book (#206):
 
 - cria `book_personal_writing_goals`, único por `user_id + book_id`, com `daily_target_word_count` opcional e positivo quando presente;
+- versiona o goal inteiro — meta diária e dias planejados juntos — em `revision`, obrigatório e com default `0`. Cada save do contrato `/writing-goal` cita a revision que leu e é comparado com ela sob o lock de linha do Book, então duas abas que partiram do mesmo estado produzem exatamente um sucesso e um `409`, nunca um lost update silencioso. Linhas criadas pelo backfill começam em `0`, a mesma revision que um User sem linha lê: nenhuma das duas foi escolhida através do novo contrato;
 - indexa `book_id` separadamente: a chave única lidera por `user_id`, que é o caminho de leitura da meta, mas a exclusão de um Book precisa encontrar as linhas apenas por `book_id`, e sem esse índice o cascade varreria a tabela inteira a cada Book removido;
 - migra a antiga meta compartilhada para o Owner e para cada colaborador já existente do Book, sem criar meta para Users sem relação com o livro;
 - valores legados não positivos são tratados como ausência de meta, não como zero;

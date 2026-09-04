@@ -10,10 +10,18 @@ export type PersonalBookWritingGoal = {
   dailyTargetWordCount: number | null;
   plannedWritingDays: DayOfWeek[];
   plannedWritingDaysEffectiveFrom: string;
+  revision: number;
 };
 
-/** Partial update: an omitted field is left alone, an explicit `null` target clears it. */
+/**
+ * Partial update: an omitted field is left alone, an explicit `null` target clears it.
+ *
+ * `expectedRevision` is required and names the goal state this save was decided against. Without it
+ * two tabs could both save and the later one would silently discard the earlier choice; the server
+ * answers `409` when the quoted revision has been superseded.
+ */
 export type UpdatePersonalBookWritingGoalRequest = {
+  expectedRevision: number;
   dailyTargetWordCount?: number | null;
   plannedWritingDays?: DayOfWeek[];
 };

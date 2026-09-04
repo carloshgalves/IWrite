@@ -477,6 +477,7 @@ class ControllerContractIntegrationTest extends PostgresIntegrationTest {
         mockMvc.perform(patch("/api/books/{bookId}/writing-goal", book.id())
                         .contentType(MediaType.APPLICATION_JSON)
                         .content(json(Map.of(
+                                "expectedRevision", 0,
                                 "dailyTargetWordCount", 1000,
                                 "plannedWritingDays", List.of("MONDAY", "WEDNESDAY")
                         ))))
@@ -495,7 +496,7 @@ class ControllerContractIntegrationTest extends PostgresIntegrationTest {
         // "no target chosen" without touching the routine.
         mockMvc.perform(patch("/api/books/{bookId}/writing-goal", book.id())
                         .contentType(MediaType.APPLICATION_JSON)
-                        .content("{\"dailyTargetWordCount\":null}"))
+                        .content("{\"expectedRevision\":1,\"dailyTargetWordCount\":null}"))
                 .andExpect(status().isOk())
                 .andExpect(jsonPath("$.dailyTargetWordCount").value(nullValue()))
                 .andExpect(jsonPath("$.plannedWritingDays[0]").value("MONDAY"));
@@ -507,7 +508,7 @@ class ControllerContractIntegrationTest extends PostgresIntegrationTest {
 
         mockMvc.perform(patch("/api/books/{bookId}/writing-goal", book.id())
                         .contentType(MediaType.APPLICATION_JSON)
-                        .content(json(Map.of("plannedWritingDays", List.of()))))
+                        .content(json(Map.of("expectedRevision", 0, "plannedWritingDays", List.of()))))
                 .andExpect(status().isBadRequest())
                 .andExpect(jsonPath("$.messages", hasItem(containsString("plannedWritingDays"))));
     }
@@ -519,7 +520,7 @@ class ControllerContractIntegrationTest extends PostgresIntegrationTest {
         for (int invalidTarget : new int[]{0, -1}) {
             mockMvc.perform(patch("/api/books/{bookId}/writing-goal", book.id())
                             .contentType(MediaType.APPLICATION_JSON)
-                            .content(json(Map.of("dailyTargetWordCount", invalidTarget))))
+                            .content(json(Map.of("expectedRevision", 0, "dailyTargetWordCount", invalidTarget))))
                     .andExpect(status().isBadRequest())
                     .andExpect(jsonPath("$.messages", hasItem(containsString("dailyTargetWordCount"))));
         }
@@ -527,9 +528,39 @@ class ControllerContractIntegrationTest extends PostgresIntegrationTest {
         // The goal contract cannot be used to reach a Book setting either.
         mockMvc.perform(patch("/api/books/{bookId}/writing-goal", book.id())
                         .contentType(MediaType.APPLICATION_JSON)
-                        .content(json(Map.of("targetWordCount", 1000))))
+                        .content(json(Map.of("expectedRevision", 0, "targetWordCount", 1000))))
                 .andExpect(status().isBadRequest())
                 .andExpect(jsonPath("$.messages", hasItem(containsString("targetWordCount"))));
+
+        // A save that does not say which state it was decided against is not a save this contract can
+        // accept: it is exactly the request that silently overwrites another tab.
+        mockMvc.perform(patch("/api/books/{bookId}/writing-goal", book.id())
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content(json(Map.of("dailyTargetWordCount", 1000))))
+                .andExpect(status().isBadRequest())
+                .andExpect(jsonPath("$.messages", hasItem(containsString("expectedRevision"))));
+    }
+
+    @Test
+    void patchWritingGoalFromASupersededRevisionConflictsInsteadOfOverwriting() throws Exception {
+        var book = createBook("HTTP stale goal");
+
+        mockMvc.perform(patch("/api/books/{bookId}/writing-goal", book.id())
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content(json(Map.of("expectedRevision", 0, "dailyTargetWordCount", 800))))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.revision").value(1));
+
+        // A second tab still holding revision 0 loses instead of replacing the newer choice.
+        mockMvc.perform(patch("/api/books/{bookId}/writing-goal", book.id())
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content(json(Map.of("expectedRevision", 0, "dailyTargetWordCount", 1200))))
+                .andExpect(status().isConflict());
+
+        mockMvc.perform(get("/api/books/{bookId}/writing-goal", book.id()))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.dailyTargetWordCount").value(800))
+                .andExpect(jsonPath("$.revision").value(1));
     }
 
     @Test

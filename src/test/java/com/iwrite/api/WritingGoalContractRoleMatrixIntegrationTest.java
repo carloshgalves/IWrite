@@ -124,7 +124,7 @@ class WritingGoalContractRoleMatrixIntegrationTest extends PostgresIntegrationTe
     private void assertGoalWritable(UUID bookId) throws Exception {
         mockMvc.perform(patch("/api/books/{bookId}/writing-goal", bookId)
                         .contentType(MediaType.APPLICATION_JSON)
-                        .content(json(Map.of("dailyTargetWordCount", 640))))
+                        .content(json(Map.of("expectedRevision", 0, "dailyTargetWordCount", 640))))
                 .andExpect(status().isOk())
                 .andExpect(jsonPath("$.dailyTargetWordCount").value(640));
     }
@@ -144,7 +144,7 @@ class WritingGoalContractRoleMatrixIntegrationTest extends PostgresIntegrationTe
 
         mockMvc.perform(patch("/api/books/{bookId}/writing-goal", bookId)
                         .contentType(MediaType.APPLICATION_JSON)
-                        .content(json(Map.of("dailyTargetWordCount", 640))))
+                        .content(json(Map.of("expectedRevision", 0, "dailyTargetWordCount", 640))))
                 .andExpect(status().isNotFound())
                 .andExpect(jsonPath("$.messages", hasItem(containsString("Book not found"))));
     }

@@ -3,7 +3,9 @@ package com.iwrite.writingprogress.dto;
 import com.fasterxml.jackson.annotation.JsonAnySetter;
 import com.fasterxml.jackson.annotation.JsonSetter;
 import com.iwrite.common.exception.BadRequestException;
+import jakarta.validation.constraints.NotNull;
 import jakarta.validation.constraints.Positive;
+import jakarta.validation.constraints.PositiveOrZero;
 
 import java.time.DayOfWeek;
 import java.util.List;
@@ -18,6 +20,11 @@ import java.util.List;
  * <p>The request describes the goal and nothing else. It cannot carry Book settings, another User's
  * goal, a Book Role or a capability: unknown fields are rejected instead of silently ignored, so a
  * hidden field can never be mass assigned into a surface this contract does not own.
+ *
+ * <p>{@code expectedRevision} is required: it names the goal state this save was decided against, so
+ * two tabs that both read the same goal cannot both succeed with the later one silently discarding
+ * the earlier choice. It is not optional, because a save that may omit it is a lost update the
+ * contract still allows.
  */
 public class PersonalBookWritingGoalUpdateRequest {
 
@@ -27,6 +34,14 @@ public class PersonalBookWritingGoalUpdateRequest {
 
     private List<DayOfWeek> plannedWritingDays;
     private boolean plannedWritingDaysPresent;
+
+    @NotNull
+    @PositiveOrZero
+    private Integer expectedRevision;
+
+    public Integer expectedRevision() {
+        return expectedRevision;
+    }
 
     public Integer dailyTargetWordCount() {
         return dailyTargetWordCount;
@@ -42,6 +57,11 @@ public class PersonalBookWritingGoalUpdateRequest {
 
     public boolean isPlannedWritingDaysPresent() {
         return plannedWritingDaysPresent;
+    }
+
+    @JsonSetter("expectedRevision")
+    public void setExpectedRevision(Integer expectedRevision) {
+        this.expectedRevision = expectedRevision;
     }
 
     @JsonSetter("dailyTargetWordCount")

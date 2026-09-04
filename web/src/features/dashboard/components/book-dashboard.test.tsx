@@ -3,6 +3,7 @@ import React from "react";
 import { beforeEach, describe, expect, test, vi } from "vitest";
 import { BookDashboard } from "@/features/dashboard/components/book-dashboard";
 import { characterAda, dashboardWithScenes, emptyDashboard, itemKey, locationLibrary } from "@/test/fixtures";
+import { ApiError } from "@/lib/api/client";
 import { renderWithClient } from "@/test/test-utils";
 
 const mocks = vi.hoisted(() => ({
@@ -489,10 +490,75 @@ describe("BookDashboard", () => {
     fireEvent.change(screen.getByLabelText("Meta diária de palavras"), { target: { value: "750" } });
     fireEvent.click(screen.getByRole("button", { name: "Salvar meta diária" }));
 
-    await waitFor(() => expect(mocks.updateWritingGoal).toHaveBeenCalledWith("book-1", { dailyTargetWordCount: 750 }));
+    await waitFor(() => expect(mocks.updateWritingGoal).toHaveBeenCalledWith("book-1", {
+      expectedRevision: emptyDashboard.myWriting.writingGoalRevision,
+      dailyTargetWordCount: 750,
+    }));
     expect(mocks.updateBook).not.toHaveBeenCalled();
     await waitFor(() => expect(screen.queryByText("Nenhuma meta diária definida.")).not.toBeInTheDocument());
     expect(screen.getByText("Hoje: 0 / 750 palavras")).toBeInTheDocument();
+  });
+
+  test("nao projeta rotina nem meta pessoal quando o backend nao autoriza um objetivo pessoal", () => {
+    // An Editor or Reader has no Personal Book Writing Goal at all, so the backend sends no personal
+    // projection. Nothing about it may be rendered — not the routine, not a per-day target.
+    mocks.useBookDashboard.mockReturnValue({
+      isLoading: false,
+      isError: false,
+      data: {
+        ...dashboardWithScenes,
+        dailyTargetWordCount: null,
+        myWriting: null,
+        capabilities: dashboardWithScenes.capabilities.filter(
+          (capability) => capability !== "MANAGE_OWN_PERSONAL_WRITING_GOAL"
+        ),
+      },
+    });
+
+    renderWithClient(<BookDashboard bookId="book-1" />);
+
+    expect(screen.queryByText("Rotina e meta diaria")).not.toBeInTheDocument();
+    expect(screen.queryByText("Meu progresso")).not.toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "Definir meta diária" })).not.toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "Editar rotina" })).not.toBeInTheDocument();
+    // The shared book-wide target is not personal state and keeps rendering.
+    expect(screen.getByText("Progresso do manuscrito")).toBeInTheDocument();
+  });
+
+  test("cada save do objetivo pessoal cita a revisao lida", async () => {
+    mocks.useBookDashboard.mockReturnValue({ isLoading: false, isError: false, data: dashboardWithScenes });
+
+    renderWithClient(<BookDashboard bookId="book-1" />);
+
+    fireEvent.click(screen.getByRole("button", { name: "Editar meta diária" }));
+    fireEvent.change(screen.getByLabelText("Meta diária de palavras"), { target: { value: "750" } });
+    fireEvent.click(screen.getByRole("button", { name: "Salvar meta diária" }));
+
+    await waitFor(() => expect(mocks.updateWritingGoal).toHaveBeenCalledWith("book-1", {
+      expectedRevision: dashboardWithScenes.myWriting.writingGoalRevision,
+      dailyTargetWordCount: 750,
+    }));
+  });
+
+  test("informa conflito quando outra aba ja salvou o objetivo pessoal", async () => {
+    mocks.useBookDashboard.mockReturnValue({ isLoading: false, isError: false, data: dashboardWithScenes });
+    mocks.updateWritingGoal.mockRejectedValue(
+      new ApiError("Personal writing goal was changed by a newer save; reload it and try again", 409)
+    );
+
+    renderWithClient(<BookDashboard bookId="book-1" />);
+
+    fireEvent.click(screen.getByRole("button", { name: "Editar meta diária" }));
+    fireEvent.change(screen.getByLabelText("Meta diária de palavras"), { target: { value: "750" } });
+    fireEvent.click(screen.getByRole("button", { name: "Salvar meta diária" }));
+
+    await waitFor(() =>
+      expect(screen.getByText(/salva em outra aba/i)).toBeInTheDocument()
+    );
+    // The refused save is not reported as one, and the card still holds the target the server has.
+    expect(screen.queryByText("Meta diária salva.")).not.toBeInTheDocument();
+    fireEvent.click(screen.getByRole("button", { name: "Cancelar" }));
+    expect(screen.getByText("Hoje: 300 / 500 palavras")).toBeInTheDocument();
   });
 
   test("mostra resumo da rotina e salva predefinicao de dias uteis", async () => {
@@ -507,6 +573,7 @@ describe("BookDashboard", () => {
     fireEvent.click(screen.getByRole("button", { name: "Salvar rotina" }));
 
     await waitFor(() => expect(mocks.updateWritingGoal).toHaveBeenCalledWith("book-1", {
+      expectedRevision: dashboardWithScenes.myWriting.writingGoalRevision,
       plannedWritingDays: ["MONDAY", "TUESDAY", "WEDNESDAY", "THURSDAY", "FRIDAY"],
     }));
     expect(mocks.updateBook).not.toHaveBeenCalled();
@@ -567,7 +634,10 @@ describe("BookDashboard", () => {
     fireEvent.click(screen.getByRole("button", { name: "Editar meta diária" }));
     fireEvent.click(screen.getByRole("button", { name: "Remover meta diária" }));
 
-    await waitFor(() => expect(mocks.updateWritingGoal).toHaveBeenCalledWith("book-1", { dailyTargetWordCount: null }));
+    await waitFor(() => expect(mocks.updateWritingGoal).toHaveBeenCalledWith("book-1", {
+      expectedRevision: dashboardWithScenes.myWriting.writingGoalRevision,
+      dailyTargetWordCount: null,
+    }));
     await waitFor(() => expect(screen.getByText("Nenhuma meta diária definida.")).toBeInTheDocument());
   });
 
@@ -691,9 +761,14 @@ describe("BookDashboard", () => {
     fireEvent.click(screen.getByRole("button", { name: "Salvar meta diária" }));
 
     await waitFor(() =>
-      expect(mocks.updateWritingGoal).toHaveBeenCalledWith("book-2", { dailyTargetWordCount: 750 })
+      expect(mocks.updateWritingGoal).toHaveBeenCalledWith("book-2", {
+        expectedRevision: dashboardWithScenes.myWriting.writingGoalRevision,
+        dailyTargetWordCount: 750,
+      })
     );
-    expect(mocks.updateWritingGoal).not.toHaveBeenCalledWith("book-2", { dailyTargetWordCount: 9999 });
+    expect(mocks.updateWritingGoal).not.toHaveBeenCalledWith("book-2", expect.objectContaining({
+      dailyTargetWordCount: 9999,
+    }));
     expect(mocks.updateWritingGoal).not.toHaveBeenCalledWith("book-1", expect.anything());
   });
 

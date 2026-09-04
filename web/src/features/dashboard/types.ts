@@ -92,9 +92,18 @@ export type WritingScheduleResponse = {
   currentScheduleEffectiveFrom: string;
 };
 
+/**
+ * The signed-in user's own writing in one book: the routine and daily target they chose, and the
+ * progress measured against them.
+ *
+ * `writingGoalRevision` is the goal state this projection was read at. Every save of the daily
+ * target or the routine quotes it back, so a choice made against superseded state is refused instead
+ * of silently replacing whatever another tab saved in the meantime.
+ */
 export type BookMyWritingResponse = {
   progress: WritingProgressDashboardResponse;
   schedule: WritingScheduleResponse;
+  writingGoalRevision: number;
 };
 
 export type WritingProgressPeriodResponse = {
@@ -166,6 +175,9 @@ export type BookContributionDashboardResponse = {
  * setting; `targetWordCount` is the shared book-wide target. `capabilities` says which controls this
  * user may attempt — the server authorizes every request again, so hiding a control is presentation,
  * never the authorization boundary.
+ *
+ * `myWriting` is `null` for a role that may not manage a personal writing goal at all: there is no
+ * personal projection to render, not even a routine or a per-day target snapshot.
  */
 export type BookDashboardResponse = {
   bookId: string;
@@ -179,7 +191,7 @@ export type BookDashboardResponse = {
   totalSections: number;
   totalChapters: number;
   totalScenes: number;
-  myWriting: BookMyWritingResponse;
+  myWriting: BookMyWritingResponse | null;
   planningProgress: PlanningProgressResponse;
   scenesByStatus: StatusCountResponse[];
   povStats: PovStatsResponse[];

@@ -201,7 +201,7 @@ class BookTenantIsolationIntegrationTest extends PostgresIntegrationTest {
         mockMvc.perform(patch("/api/books/{bookId}/writing-goal", book.id())
                         .contentType(MediaType.APPLICATION_JSON)
                         .content("""
-                                {"plannedWritingDays":["MONDAY","WEDNESDAY"]}
+                                {"expectedRevision":0,"plannedWritingDays":["MONDAY","WEDNESDAY"]}
                                 """))
                 .andExpect(status().isOk())
                 .andExpect(jsonPath("$.plannedWritingDays", contains("MONDAY", "WEDNESDAY")));
@@ -245,7 +245,7 @@ class BookTenantIsolationIntegrationTest extends PostgresIntegrationTest {
         mockMvc.perform(patch("/api/books/{bookId}/writing-goal", book.id())
                         .contentType(MediaType.APPLICATION_JSON)
                         .content("""
-                                {"plannedWritingDays":["FRIDAY"]}
+                                {"expectedRevision":0,"plannedWritingDays":["FRIDAY"]}
                                 """))
                 .andExpect(status().isOk())
                 .andExpect(jsonPath("$.plannedWritingDays", contains("FRIDAY")));

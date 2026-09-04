@@ -11,7 +11,7 @@ describe("personal writing goal API", () => {
   });
 
   test("updates the goal without touching shared book settings", async () => {
-    const request = { dailyTargetWordCount: 750 };
+    const request = { expectedRevision: 4, dailyTargetWordCount: 750 };
     await updateWritingGoal("book-1", request);
     expect(mocks.apiRequest).toHaveBeenCalledWith("/api/books/book-1/writing-goal", {
       method: "PATCH",
@@ -20,10 +20,10 @@ describe("personal writing goal API", () => {
   });
 
   test("clears the target with an explicit null instead of a zero", async () => {
-    await updateWritingGoal("book-1", { dailyTargetWordCount: null });
+    await updateWritingGoal("book-1", { expectedRevision: 4, dailyTargetWordCount: null });
     expect(mocks.apiRequest).toHaveBeenCalledWith("/api/books/book-1/writing-goal", {
       method: "PATCH",
-      body: { dailyTargetWordCount: null },
+      body: { expectedRevision: 4, dailyTargetWordCount: null },
     });
   });
 });
