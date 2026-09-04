@@ -23,6 +23,14 @@ create table book_personal_writing_goals (
         check (daily_target_word_count is null or daily_target_word_count > 0)
 );
 
+-- The unique key leads with user_id, which is the access path of every read: a goal is always looked
+-- up as "this User's goal in this Book". Deleting a Book takes the other direction, and the cascade
+-- above has to find its rows by book_id alone, so without this index every Book deletion would scan
+-- every goal in the installation. book_collaborators and book_daily_writing_progress already carry a
+-- book-leading index for the same reason.
+create index idx_book_personal_writing_goals_book
+    on book_personal_writing_goals (book_id);
+
 -- The shared target was effective for the Book Owner and for every existing collaborator alike, so
 -- each of them keeps it as their own goal and nobody's current daily target changes at the cutover.
 -- The set is deliberately limited to the relationships that already existed: inventing a goal for an

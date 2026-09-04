@@ -86,6 +86,15 @@ class V36PersonalBookWritingGoalMigrationIntegrationTest extends PostgresIntegra
                         scalar(connection, schema, "select user_id || '|' || progress_date || '|' || productive_word_count_change from book_daily_writing_progress where id = '" + OWNER_HISTORY + "'")
                 );
 
+                // The cascade from books has to find its rows by book_id alone, so that direction is
+                // indexed instead of scanning every goal in the installation per Book deletion.
+                assertEquals(
+                        "1",
+                        scalar(connection, schema, "select count(*)::text from pg_indexes "
+                                + "where schemaname = current_schema() and tablename = 'book_personal_writing_goals' "
+                                + "and indexdef like '%(book_id)'")
+                );
+
                 // One goal per User per Book, and the target must be a real target when present.
                 assertSqlFails(connection, schema, goalInsert(UUID.randomUUID(), OWNER, BOOK_WITH_TARGET, "700"));
                 assertSqlFails(connection, schema, goalInsert(UUID.randomUUID(), OWNER, BOOK_WITHOUT_TARGET, "0"));

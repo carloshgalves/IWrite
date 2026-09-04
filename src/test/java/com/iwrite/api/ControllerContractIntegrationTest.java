@@ -407,6 +407,43 @@ class ControllerContractIntegrationTest extends PostgresIntegrationTest {
     }
 
     /**
+     * Creation refuses a Personal Book Writing Goal for the same reason the update does. Silently
+     * dropping the field would be worse than the shared column this migration removed: the caller would
+     * be told the Book was created with the target it asked for, while no goal was ever stored.
+     */
+    @Test
+    void postBookRefusesPersonalWritingGoalFields() throws Exception {
+        mockMvc.perform(post("/api/books")
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content(json(Map.of("title", "Created with a personal goal", "dailyTargetWordCount", 1000))))
+                .andExpect(status().isBadRequest())
+                .andExpect(jsonPath("$.messages", hasItem(containsString("dailyTargetWordCount"))));
+
+        mockMvc.perform(post("/api/books")
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content(json(Map.of("title", "Created with a routine", "plannedWritingDays", List.of("MONDAY")))))
+                .andExpect(status().isBadRequest())
+                .andExpect(jsonPath("$.messages", hasItem(containsString("plannedWritingDays"))));
+
+        // The refusal is specific to the two fields this contract gave up. The shared settings it does
+        // own still create a Book, and an unrelated unknown field keeps being ignored rather than
+        // refused: that is the established behavior the tenant and identity isolation tests pin, where
+        // a body carrying tenantId or userId must be answered by creating the Book under the
+        // authenticated identity instead of being rejected on a path the header and query-parameter
+        // attempts do not share.
+        mockMvc.perform(post("/api/books")
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content(json(Map.of("title", "Created with shared settings", "targetWordCount", 50000))))
+                .andExpect(status().isCreated())
+                .andExpect(jsonPath("$.targetWordCount").value(50000));
+
+        mockMvc.perform(post("/api/books")
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content(json(Map.of("title", "Created with a stray field", "tenantId", UUID.randomUUID().toString()))))
+                .andExpect(status().isCreated());
+    }
+
+    /**
      * The Book contract no longer owns a Personal Book Writing Goal. A request that still carries one
      * is refused outright, so a stale client cannot appear to save a personal target through the shared
      * Book surface, and no hidden field is mass assigned into settings this contract does not own.

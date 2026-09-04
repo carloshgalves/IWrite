@@ -179,10 +179,13 @@ Fase expand da fundação de Book Roles (#205):
 Separa a meta diária pessoal dos settings compartilhados do Book (#206):
 
 - cria `book_personal_writing_goals`, único por `user_id + book_id`, com `daily_target_word_count` opcional e positivo quando presente;
+- indexa `book_id` separadamente: a chave única lidera por `user_id`, que é o caminho de leitura da meta, mas a exclusão de um Book precisa encontrar as linhas apenas por `book_id`, e sem esse índice o cascade varreria a tabela inteira a cada Book removido;
 - migra a antiga meta compartilhada para o Owner e para cada colaborador já existente do Book, sem criar meta para Users sem relação com o livro;
 - valores legados não positivos são tratados como ausência de meta, não como zero;
 - preserva o histórico de `book_daily_writing_progress`, que já carrega o snapshot da meta vigente no respectivo dia, e não reescreve `book_writing_schedules`, que já eram User + Book scoped;
 - remove `books.daily_target_word_count`, eliminando do schema o antigo estado compartilhado que o novo contrato não reconhece.
+
+A remoção da coluna é deliberadamente incompatível com versões anteriores da aplicação: uma instância pré-V36 ainda seleciona `books.daily_target_word_count` e passa a falhar em toda leitura de Book assim que a migration roda. O deploy desta versão é, portanto, parada e substituição, não rolling — o que é adequado à topologia de backend único, mas precisa ser respeitado por qualquer ambiente que execute mais de uma instância.
 
 ## Estado atual
 
