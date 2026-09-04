@@ -14,27 +14,43 @@
 -- The legacy state is frozen before it is read, not after.
 --
 -- The backfill below snapshots books.daily_target_word_count and the contract step at the end drops
--- the column. If books were still writable between the two, an application version that predates this
--- migration could update the shared target and commit inside that window: the backfill would already
--- hold the old value, the drop would wait for that writer and then remove the column, and a change the
--- user was told had succeeded would be silently discarded.
+-- the column. Two different pieces of legacy state decide its outcome, and both have to stop moving
+-- before the snapshot is taken:
 --
--- That window does not exist, because the foreign key below closes it. Declaring
--- "references books (id)" makes this CREATE TABLE request SHARE ROW EXCLUSIVE on books, and the
--- migration holds it for the rest of its transaction. SHARE ROW EXCLUSIVE conflicts with the
--- ROW EXCLUSIVE that any UPDATE takes, so from the first statement onward a legacy writer either
--- committed before the lock was granted -- in which case the backfill's snapshot, taken under READ
--- COMMITTED after the lock, contains its value -- or it is blocked until this migration commits and
--- then fails loudly against the dropped column. It can never commit a value the backfill then throws
--- away. The same lock blocks new rows in book_collaborators, whose own foreign key check needs a
--- conflicting lock on books, so the set of Users receiving a goal is snapshot-stable too.
+--   * books.daily_target_word_count, the value being migrated. If books were still writable between
+--     the snapshot and the drop, an application version that predates this migration could update the
+--     shared target and commit inside that window: the backfill would already hold the old value, the
+--     drop would wait for that writer and then remove the column, and a change the user was told had
+--     succeeded would be silently discarded.
+--   * book_collaborators, which decides who receives a goal. A collaboration committed after the
+--     snapshot would leave that User with no goal at all, even though the shared target was still the
+--     one in effect for them when the grant was acknowledged.
 --
--- This is a real guarantee but an implicit one: it is a consequence of the foreign key, not of a
--- statement that announces it. V36PersonalBookWritingGoalCutoverConcurrencyIntegrationTest pins it, and
--- fails with exactly the lost update described above if the foreign key ever stops being declared here.
--- An explicit LOCK TABLE would say it out loud, but only ACCESS EXCLUSIVE would be stronger than what
--- the foreign key already takes, and that would block concurrent readers for the whole backfill rather
--- than only for the drop -- a longer outage bought for no additional correctness.
+-- Both locks below are taken explicitly rather than left to be inferred. The books lock is the same
+-- SHARE ROW EXCLUSIVE that "references books (id)" would request anyway when the table below is
+-- created, so naming it costs nothing and stops the guarantee from depending on a foreign key
+-- declaration that a later edit could quietly drop. The book_collaborators lock is not implied by
+-- anything: inserting a collaborator takes ROW EXCLUSIVE on book_collaborators and only ROW SHARE on
+-- books for its own foreign key check, and ROW SHARE does not conflict with SHARE ROW EXCLUSIVE, so
+-- the lock on books alone leaves the collaborator set moving under the backfill.
+--
+-- SHARE ROW EXCLUSIVE conflicts with the ROW EXCLUSIVE that any INSERT or UPDATE takes, so from here
+-- on a legacy writer either committed before these locks were granted -- in which case the backfill's
+-- snapshot, taken under READ COMMITTED after them, contains its work -- or it is blocked until this
+-- migration commits and then fails loudly against the dropped column. It can never commit a change the
+-- backfill then throws away. Readers are untouched: SHARE ROW EXCLUSIVE does not conflict with the
+-- ACCESS SHARE that a SELECT takes, so only the drop at the end blocks them, and only for its own
+-- duration. ACCESS EXCLUSIVE here instead would buy no correctness and block every reader for the
+-- whole backfill.
+--
+-- books is locked before book_collaborators to match the order the application itself acquires them:
+-- a grant guards the Book first and writes the collaboration second, so a concurrent grant waits for
+-- this migration rather than deadlocking against it.
+--
+-- V36PersonalBookWritingGoalCutoverConcurrencyIntegrationTest pins both halves, and fails with exactly
+-- the lost update and the lost collaborator described above if either lock stops being taken.
+lock table books in share row exclusive mode;
+lock table book_collaborators in share row exclusive mode;
 
 create table book_personal_writing_goals (
     id uuid primary key,

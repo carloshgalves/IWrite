@@ -27,15 +27,17 @@ import static org.assertj.core.api.Assertions.assertThatThrownBy;
 /**
  * Cutover concurrency of V36 (#206).
  *
- * <p>The migration reads the shared target and then drops the column that holds it. If the exclusive
- * lock were taken only at the drop, a still-running application version that predates the migration
- * could update the shared target and commit between the two: the backfill would already hold the old
- * value, the drop would wait for that writer and then remove the column, and a change the user was
- * told had succeeded would be gone. V36 therefore locks before it reads.
+ * <p>The migration reads two pieces of legacy state and then drops the column one of them lives in.
+ * If the locks were taken only at the drop, a still-running application version that predates the
+ * migration could commit inside the window and lose work either way: an update of the shared target
+ * would be discarded by a backfill that already held the old value, and a collaboration grant would
+ * leave that User with no goal at all despite the shared target still being in effect for them when
+ * the grant was acknowledged. V36 therefore locks {@code books} and {@code book_collaborators} before
+ * it reads either of them.
  *
- * <p>Both tests are deterministic. Nothing sleeps for a duration: the migration is observed through
- * the lock it is actually waiting for in {@code pg_locks}, and the legacy writer commits only after
- * the migration is proven to be blocked.
+ * <p>One test per lock, and each one fails if its lock stops being taken. Both are deterministic.
+ * Nothing sleeps for a duration: the migration is observed through the lock it is actually waiting
+ * for in {@code pg_locks}, and the legacy writer commits only after the migration is proven blocked.
  */
 class V36PersonalBookWritingGoalCutoverConcurrencyIntegrationTest extends PostgresIntegrationTest {
 
@@ -66,7 +68,7 @@ class V36PersonalBookWritingGoalCutoverConcurrencyIntegrationTest extends Postgr
 
             // The migration cannot reach the backfill: it is waiting for the table lock it takes before
             // reading anything, so it has not snapshotted the value this writer is about to replace.
-            awaitBlockedOnBooksLock(schema);
+            awaitBlockedOnLock(schema, "books");
             assertThatThrownBy(() -> migration.get(1, TimeUnit.SECONDS)).isInstanceOf(TimeoutException.class);
 
             legacyWriter.commit();
@@ -95,24 +97,28 @@ class V36PersonalBookWritingGoalCutoverConcurrencyIntegrationTest extends Postgr
             insertMembership(schema, LATE_COLLABORATOR);
 
             // The collaborator set decides who receives a goal, so it is frozen for the same reason the
-            // target is: a collaboration that slipped in after the snapshot would leave that User
-            // without the target that was effective for them at the cutover.
+            // target is. A pre-V36 instance grants access and holds the transaction open, exactly as a
+            // request that is about to be acknowledged would.
             legacyWriter.setAutoCommit(false);
-            execute(legacyWriter, schema, "lock table books in access exclusive mode");
-
-            CompletableFuture<Void> migration = CompletableFuture.runAsync(() -> migrate(schema, null), executor);
-            awaitBlockedOnBooksLock(schema);
-            assertThatThrownBy(() -> migration.get(1, TimeUnit.SECONDS)).isInstanceOf(TimeoutException.class);
-
             execute(legacyWriter, schema, "insert into book_collaborators (id, tenant_id, book_id, user_id, created_at, created_by_user_id, role) values ('"
                     + UUID.randomUUID() + "', '" + TENANT + "', '" + BOOK + "', '" + LATE_COLLABORATOR
                     + "', current_timestamp, '" + OWNER + "', 'LEGACY_COLLABORATOR')");
-            legacyWriter.commit();
 
+            CompletableFuture<Void> migration = CompletableFuture.runAsync(() -> migrate(schema, null), executor);
+
+            // The migration cannot reach the backfill: it is waiting for the book_collaborators lock it
+            // takes before reading the set. Nothing but that explicit lock produces this wait -- the
+            // grant holds ROW EXCLUSIVE on book_collaborators and only ROW SHARE on books, and ROW SHARE
+            // does not conflict with the SHARE ROW EXCLUSIVE the foreign key to books takes.
+            awaitBlockedOnLock(schema, "book_collaborators");
+            assertThatThrownBy(() -> migration.get(1, TimeUnit.SECONDS)).isInstanceOf(TimeoutException.class);
+
+            legacyWriter.commit();
             migration.get(30, TimeUnit.SECONDS);
 
-            // Committed before the migration's locks were granted, so it is inside the snapshot and the
-            // collaborator keeps the target that was effective for them.
+            // Committed before the migration's locks were granted, so the grant is inside the snapshot
+            // and the collaborator keeps the target that was effective for them. Reading no goal here
+            // would be the lost collaborator: an acknowledged grant that the cutover left with no target.
             assertThat(goalOf(schema, LATE_COLLABORATOR)).isEqualTo(500);
             assertThat(goalOf(schema, OWNER)).isEqualTo(500);
         } finally {
@@ -122,19 +128,19 @@ class V36PersonalBookWritingGoalCutoverConcurrencyIntegrationTest extends Postgr
     }
 
     /**
-     * Waits on the state that actually matters — an ungranted lock request on {@code books} from
+     * Waits on the state that actually matters — an ungranted lock request on {@code relation} from
      * another backend — instead of on the clock. It returns as soon as the migration is provably
      * queued, and fails rather than passing silently if it never blocks.
      */
-    private void awaitBlockedOnBooksLock(String schema) throws Exception {
+    private void awaitBlockedOnLock(String schema, String relation) throws Exception {
         String waitingBackends = """
                 select count(*) from pg_locks lock
                 join pg_class table_entry on table_entry.oid = lock.relation
                 join pg_namespace namespace on namespace.oid = table_entry.relnamespace
                 where lock.granted = false
-                  and table_entry.relname = 'books'
+                  and table_entry.relname = '%s'
                   and namespace.nspname = '%s'
-                """.formatted(schema);
+                """.formatted(relation, schema);
         long deadline = System.nanoTime() + TimeUnit.SECONDS.toNanos(30);
 
         try (Connection observer = TestDatabaseInitializer.openDirectConnection();
@@ -148,7 +154,7 @@ class V36PersonalBookWritingGoalCutoverConcurrencyIntegrationTest extends Postgr
                 }
             }
         }
-        throw new AssertionError("The migration never queued on the books lock, so it did not freeze the legacy state before reading it");
+        throw new AssertionError("The migration never queued on the " + relation + " lock, so it did not freeze that legacy state before reading it");
     }
 
     private String newSchema() throws SQLException {

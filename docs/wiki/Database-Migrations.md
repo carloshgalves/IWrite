@@ -183,7 +183,8 @@ Separa a meta diária pessoal dos settings compartilhados do Book (#206):
 - migra a antiga meta compartilhada para o Owner e para cada colaborador já existente do Book, sem criar meta para Users sem relação com o livro;
 - valores legados não positivos são tratados como ausência de meta, não como zero;
 - preserva o histórico de `book_daily_writing_progress`, que já carrega o snapshot da meta vigente no respectivo dia, e não reescreve `book_writing_schedules`, que já eram User + Book scoped;
-- remove `books.daily_target_word_count`, eliminando do schema o antigo estado compartilhado que o novo contrato não reconhece.
+- remove `books.daily_target_word_count`, eliminando do schema o antigo estado compartilhado que o novo contrato não reconhece;
+- congela explicitamente `books` e `book_collaborators` em `share row exclusive` antes de ler qualquer um dos dois. Os dois decidem o resultado do backfill — o valor migrado e o conjunto de Users que o recebe — e nenhum dos dois lock é implícito o bastante para ser deixado subentendido: o lock de `books` coincide com o que a FK já pediria, mas o de `book_collaborators` não é implicado por nada, porque um grant toma `row exclusive` em `book_collaborators` e apenas `row share` em `books`, e `row share` não conflita com `share row exclusive`. `books` é travado primeiro para coincidir com a ordem que a própria aplicação usa ao conceder colaboração. Leitores não são bloqueados: só o `drop column` final os bloqueia, e apenas pela própria duração.
 
 A remoção da coluna é deliberadamente incompatível com versões anteriores da aplicação: uma instância pré-V36 ainda seleciona `books.daily_target_word_count` e passa a falhar em toda leitura de Book assim que a migration roda. O deploy desta versão é, portanto, parada e substituição, não rolling — o que é adequado à topologia de backend único, mas precisa ser respeitado por qualquer ambiente que execute mais de uma instância.
 
