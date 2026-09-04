@@ -660,8 +660,13 @@ function DailyProgressChart({
   const writingBuckets = chartEntries.filter((entry) => entry.productiveWordCountChange > 0).length;
   const averageWords = chartEntries.length === 0 ? 0 : Math.round(totalWords / chartEntries.length);
   const bestBucket = getBestWritingProgressBucket(chartEntries);
-  const goalHitDays = dailyTargetWordCount && dailyTargetWordCount > 0
-    ? recentDays.filter((day) => day.productiveWordCountChange >= dailyTargetWordCount).length
+  const daysWithHistoricalGoal = recentDays.filter(
+    (day) => day.dailyTargetWordCount != null && day.dailyTargetWordCount > 0
+  );
+  const goalHitDays = daysWithHistoricalGoal.length > 0
+    ? daysWithHistoricalGoal.filter(
+        (day) => day.productiveWordCountChange >= (day.dailyTargetWordCount ?? Number.POSITIVE_INFINITY)
+      ).length
     : null;
   const totalManuscriptAdjustments = recentDays.reduce((total, day) => total + day.manuscriptAdjustmentWordCount, 0);
   const periodLabel = getWritingProgressPeriodLabel(chartEntries, selectedPeriod.description, progressPeriod);
