@@ -38,6 +38,10 @@ type BookDashboardProps = {
 export function BookDashboard({ bookId, onOpenSceneInEditor, onOpenWorkspaceTab }: BookDashboardProps) {
   const [progressPeriod, setProgressPeriod] = useState<WritingProgressPeriod>("7d");
   const dashboardQuery = useBookDashboard(bookId, progressPeriod);
+  // keepPreviousData can hand back another Book's snapshot while this Book still loads. Never render
+  // or mutate a dashboard whose bookId does not match the Book in the route.
+  const dashboard = dashboardQuery.data?.bookId === bookId ? dashboardQuery.data : undefined;
+  const isLoading = dashboardQuery.isLoading || (!dashboard && !dashboardQuery.isError);
 
   return (
     <section className="h-full overflow-y-auto bg-zinc-50 p-4 md:p-6">
@@ -49,15 +53,15 @@ export function BookDashboard({ bookId, onOpenSceneInEditor, onOpenWorkspaceTab 
           </p>
         </header>
 
-        {dashboardQuery.isLoading ? <LoadingState label="Carregando visão geral..." /> : null}
+        {isLoading ? <LoadingState label="Carregando visão geral..." /> : null}
 
         {dashboardQuery.isError ? (
           <ErrorState message="Não foi possível carregar a visão geral. Verifique o backend e tente novamente." />
         ) : null}
 
-        {dashboardQuery.data ? (
+        {dashboard ? (
           <DashboardContent
-            dashboard={dashboardQuery.data}
+            dashboard={dashboard}
             progressPeriod={progressPeriod}
             isProgressRefetching={dashboardQuery.isFetching && !dashboardQuery.isLoading}
             onProgressPeriodChange={setProgressPeriod}
@@ -87,6 +91,11 @@ function DashboardContent({
 }) {
   const planningPercent = clampPercent(dashboard.planningProgress.plannedScenesPercent);
   const [detailTarget, setDetailTarget] = useState<DashboardDetailTarget | null>(null);
+  // Editable cards hold local draft state. Re-key them by Book and by the capability that governs
+  // them so navigating to another Book, or losing the capability, drops any open editor instead of
+  // letting a stale draft survive and later save against the wrong Book.
+  const canManageOwnGoal = dashboard.capabilities.includes("MANAGE_OWN_PERSONAL_WRITING_GOAL");
+  const canEditBookSettings = dashboard.capabilities.includes("EDIT_BOOK_SETTINGS");
 
   function handleOpenSceneInEditor(sceneId: string) {
     onOpenSceneInEditor?.(sceneId);
@@ -123,9 +132,10 @@ function DashboardContent({
       ) : null}
 
       <SectionHeader title="Progresso do manuscrito" description="Estado compartilhado do livro, independente do contribuidor." />
-      <WordTargetCard dashboard={dashboard} />
+      <WordTargetCard key={`${dashboard.bookId}:${canEditBookSettings}`} dashboard={dashboard} />
       <SectionHeader title="Meu progresso" description="Sua rotina, metas e escrita registrada para este livro." />
       <DailyWritingGoalCard
+        key={`${dashboard.bookId}:${canManageOwnGoal}`}
         dashboard={dashboard}
         progressPeriod={progressPeriod}
         isProgressRefetching={isProgressRefetching}

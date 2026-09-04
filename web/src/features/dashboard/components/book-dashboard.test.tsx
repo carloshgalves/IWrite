@@ -652,6 +652,75 @@ describe("BookDashboard", () => {
     expect(within(dialog).getByRole("button", { name: /Cena sem objetivo/ })).toBeInTheDocument();
   });
 
+  test("nao renderiza o dashboard de outro livro enquanto o livro atual carrega", () => {
+    // keepPreviousData can hand back the previous Book's snapshot while the new Book still loads.
+    mocks.useBookDashboard.mockReturnValue({
+      isLoading: false,
+      isFetching: true,
+      isError: false,
+      data: { ...dashboardWithScenes, bookId: "book-1", title: "Livro anterior" },
+    });
+
+    renderWithClient(<BookDashboard bookId="book-2" />);
+
+    expect(screen.getByText("Carregando visão geral...")).toBeInTheDocument();
+    expect(screen.queryByText("Progresso do manuscrito")).not.toBeInTheDocument();
+  });
+
+  test("troca de livro com rascunho de meta aberto descarta o editor e nunca grava no livro errado", async () => {
+    mocks.useBookDashboard.mockImplementation((bookId: string) => ({
+      isLoading: false,
+      isError: false,
+      data: { ...dashboardWithScenes, bookId },
+    }));
+
+    const { rerender } = renderWithClient(<BookDashboard bookId="book-1" />);
+
+    fireEvent.click(screen.getByRole("button", { name: "Editar meta diária" }));
+    fireEvent.change(screen.getByLabelText("Meta diária de palavras"), { target: { value: "9999" } });
+    expect(screen.getByRole("button", { name: "Salvar meta diária" })).toBeInTheDocument();
+
+    rerender(<BookDashboard bookId="book-2" />);
+
+    expect(screen.queryByRole("button", { name: "Salvar meta diária" })).not.toBeInTheDocument();
+    expect(screen.queryByDisplayValue("9999")).not.toBeInTheDocument();
+
+    fireEvent.click(screen.getByRole("button", { name: "Editar meta diária" }));
+    expect(screen.getByLabelText("Meta diária de palavras")).toHaveValue(500);
+    fireEvent.change(screen.getByLabelText("Meta diária de palavras"), { target: { value: "750" } });
+    fireEvent.click(screen.getByRole("button", { name: "Salvar meta diária" }));
+
+    await waitFor(() =>
+      expect(mocks.updateWritingGoal).toHaveBeenCalledWith("book-2", { dailyTargetWordCount: 750 })
+    );
+    expect(mocks.updateWritingGoal).not.toHaveBeenCalledWith("book-2", { dailyTargetWordCount: 9999 });
+    expect(mocks.updateWritingGoal).not.toHaveBeenCalledWith("book-1", expect.anything());
+  });
+
+  test("perda de capability fecha um editor de meta ja aberto", () => {
+    mocks.useBookDashboard.mockReturnValue({ isLoading: false, isError: false, data: dashboardWithScenes });
+
+    const { rerender } = renderWithClient(<BookDashboard bookId="book-1" />);
+
+    fireEvent.click(screen.getByRole("button", { name: "Editar meta diária" }));
+    expect(screen.getByRole("button", { name: "Salvar meta diária" })).toBeInTheDocument();
+
+    mocks.useBookDashboard.mockReturnValue({
+      isLoading: false,
+      isError: false,
+      data: {
+        ...dashboardWithScenes,
+        dailyTargetWordCount: null,
+        capabilities: ["READ_MANUSCRIPT", "VIEW_BOOK_CONTRIBUTOR_PROGRESS"],
+        contextualCapabilities: [],
+      },
+    });
+    rerender(<BookDashboard bookId="book-1" />);
+
+    expect(screen.queryByRole("button", { name: "Salvar meta diária" })).not.toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "Editar meta diária" })).not.toBeInTheDocument();
+  });
+
   test("clicar em personagem, localizacao e item abre seus detalhes", () => {
     mocks.useBookDashboard.mockReturnValue({ isLoading: false, isError: false, data: dashboardWithScenes });
 
