@@ -132,10 +132,10 @@ function DashboardContent({
       ) : null}
 
       <SectionHeader title="Progresso do manuscrito" description="Estado compartilhado do livro, independente do contribuidor." />
-      <WordTargetCard key={`${dashboard.bookId}:${canEditBookSettings}`} dashboard={dashboard} />
+      <WordTargetCard key={`book-target:${dashboard.bookId}:${canEditBookSettings}`} dashboard={dashboard} />
       <SectionHeader title="Meu progresso" description="Sua rotina, metas e escrita registrada para este livro." />
       <DailyWritingGoalCard
-        key={`${dashboard.bookId}:${canManageOwnGoal}`}
+        key={`personal-goal:${dashboard.bookId}:${canManageOwnGoal}`}
         dashboard={dashboard}
         progressPeriod={progressPeriod}
         isProgressRefetching={isProgressRefetching}
