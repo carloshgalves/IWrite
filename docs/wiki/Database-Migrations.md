@@ -1,6 +1,6 @@
 # Migrations e evolução do banco
 
-O IWrite usa Flyway e PostgreSQL. O migration head atual é **V35**.
+O IWrite usa Flyway e PostgreSQL. O migration head atual é **V36**.
 
 ## Regras
 
@@ -172,11 +172,24 @@ Fase expand da fundação de Book Roles (#205):
 - `book_collaboration_invitations.requested_role` passa a aceitar os papéis atribuíveis, mantendo convites `COLLABORATOR` já persistidos como estado legado auditável que nunca vira grant por inferência; a criação de novos convites fica fechada nesta fase, e a #213 a reabre com os papéis atribuíveis.
 - constraints de catálogo adicionadas como `NOT VALID` e validadas em statement separado: o `ACCESS EXCLUSIVE` cobre apenas a mudança de catálogo, e a varredura das linhas existentes acontece sob `SHARE UPDATE EXCLUSIVE`, sem bloquear leituras e escritas concorrentes.
 
+### V36 — Personal Book Writing Goal por User + Book
+
+`V36__extract_personal_book_writing_goal.sql`
+
+Separa a meta diária pessoal dos settings compartilhados do Book (#206):
+
+- cria `book_personal_writing_goals`, único por `user_id + book_id`, com `daily_target_word_count` opcional e positivo quando presente;
+- migra a antiga meta compartilhada para o Owner e para cada colaborador já existente do Book, sem criar meta para Users sem relação com o livro;
+- valores legados não positivos são tratados como ausência de meta, não como zero;
+- preserva o histórico de `book_daily_writing_progress`, que já carrega o snapshot da meta vigente no respectivo dia, e não reescreve `book_writing_schedules`, que já eram User + Book scoped;
+- remove `books.daily_target_word_count`, eliminando do schema o antigo estado compartilhado que o novo contrato não reconhece.
+
 ## Estado atual
 
-- migration head: **V35**;
+- migration head: **V36**;
 - tenant e ownership de livro persistidos;
 - colaboradores persistidos com Book Role explícito e revogável;
+- metas diárias pessoais persistidas por User + Book em `book_personal_writing_goals`;
 - convites seguros persistidos;
 - auditoria de domínio e LLM persistidas;
 - credenciais reais persistidas separadamente;
