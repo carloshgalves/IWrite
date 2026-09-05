@@ -35,9 +35,15 @@ import static org.assertj.core.api.Assertions.assertThatThrownBy;
  * the grant was acknowledged. V36 therefore locks {@code books} and {@code book_collaborators} before
  * it reads either of them.
  *
- * <p>One test per lock, and each one fails if its lock stops being taken. Both are deterministic.
- * Nothing sleeps for a duration: the migration is observed through the lock it is actually waiting
- * for in {@code pg_locks}, and the legacy writer commits only after the migration is proven blocked.
+ * <p>Freezing legacy state is not enough on its own: locks strong enough to stop a writer but weak
+ * enough to let one in halfway can leave the cutover deadlocked against a mutation that started after
+ * them, which kills the deploy the migration exists to perform. The last test pins that window.
+ *
+ * <p>Every test is deterministic and nothing sleeps for a duration: the migration is observed through
+ * the lock it is actually waiting for in {@code pg_locks}, and the legacy writer commits only after
+ * the migration is proven blocked. Each lock keeps a case that fails if that lock stops being taken —
+ * an update for {@code books}, and a revocation for {@code book_collaborators}, which is the only
+ * legacy write that reaches that table without reading {@code books} on the way.
  */
 class V36PersonalBookWritingGoalCutoverConcurrencyIntegrationTest extends PostgresIntegrationTest {
 
@@ -106,11 +112,12 @@ class V36PersonalBookWritingGoalCutoverConcurrencyIntegrationTest extends Postgr
 
             CompletableFuture<Void> migration = CompletableFuture.runAsync(() -> migrate(schema, null), executor);
 
-            // The migration cannot reach the backfill: it is waiting for the book_collaborators lock it
-            // takes before reading the set. Nothing but that explicit lock produces this wait -- the
-            // grant holds ROW EXCLUSIVE on book_collaborators and only ROW SHARE on books, and ROW SHARE
-            // does not conflict with the SHARE ROW EXCLUSIVE the foreign key to books takes.
-            awaitBlockedOnLock(schema, "book_collaborators");
+            // The migration cannot reach the backfill: it is waiting for the books lock it takes before
+            // reading anything. A grant is caught there rather than at the book_collaborators lock
+            // because inserting a collaboration checks its foreign key against books, and that read
+            // conflicts with ACCESS EXCLUSIVE. The revoke below is the write that reaches
+            // book_collaborators without touching books at all.
+            awaitBlockedOnLock(schema, "books");
             assertThatThrownBy(() -> migration.get(1, TimeUnit.SECONDS)).isInstanceOf(TimeoutException.class);
 
             legacyWriter.commit();
@@ -121,6 +128,90 @@ class V36PersonalBookWritingGoalCutoverConcurrencyIntegrationTest extends Postgr
             // would be the lost collaborator: an acknowledged grant that the cutover left with no target.
             assertThat(goalOf(schema, LATE_COLLABORATOR)).isEqualTo(500);
             assertThat(goalOf(schema, OWNER)).isEqualTo(500);
+        } finally {
+            executor.shutdownNow();
+            dropSchema(schema);
+        }
+    }
+
+    @Test
+    @Transactional(propagation = Propagation.NOT_SUPPORTED)
+    void aRevocationCannotBeCommittedBetweenTheSnapshotAndTheContractStep() throws Exception {
+        String schema = newSchema();
+        ExecutorService executor = Executors.newSingleThreadExecutor();
+
+        try (Connection legacyWriter = TestDatabaseInitializer.openDirectConnection()) {
+            migrate(schema, MigrationVersion.fromVersion("35"));
+            seedBookWithSharedTarget(schema, 500);
+            insertUser(schema, LATE_COLLABORATOR, "revoked-collaborator@iwrite.local");
+            insertMembership(schema, LATE_COLLABORATOR);
+            UUID collaboration = insertCollaboration(schema, LATE_COLLABORATOR);
+
+            // Removing a collaboration is the one legacy write that reaches book_collaborators without
+            // reading books: a child row needs no foreign key check against its parent. It therefore
+            // holds ROW EXCLUSIVE on book_collaborators and no lock at all on books, so nothing but the
+            // explicit book_collaborators lock can make the migration wait for it.
+            legacyWriter.setAutoCommit(false);
+            execute(legacyWriter, schema, "delete from book_collaborators where id = '" + collaboration + "'");
+
+            CompletableFuture<Void> migration = CompletableFuture.runAsync(() -> migrate(schema, null), executor);
+
+            awaitBlockedOnLock(schema, "book_collaborators");
+            assertThatThrownBy(() -> migration.get(1, TimeUnit.SECONDS)).isInstanceOf(TimeoutException.class);
+
+            legacyWriter.commit();
+            migration.get(30, TimeUnit.SECONDS);
+
+            // The revocation was acknowledged before the cutover, so the backfill reads the set it left
+            // behind. Reading a goal for the revoked User here would mean the migration handed personal
+            // state to someone the Book had already stopped sharing with.
+            assertThat(hasGoal(schema, LATE_COLLABORATOR)).isFalse();
+            assertThat(goalOf(schema, OWNER)).isEqualTo(500);
+        } finally {
+            executor.shutdownNow();
+            dropSchema(schema);
+        }
+    }
+
+    @Test
+    @Transactional(propagation = Propagation.NOT_SUPPORTED)
+    void aGrantStartedAfterTheCutoverLocksQueuesInsteadOfDeadlockingAgainstThem() throws Exception {
+        String schema = newSchema();
+        ExecutorService executor = Executors.newFixedThreadPool(2);
+
+        try (Connection lockHolder = TestDatabaseInitializer.openDirectConnection()) {
+            migrate(schema, MigrationVersion.fromVersion("35"));
+            seedBookWithSharedTarget(schema, 500);
+            insertUser(schema, LATE_COLLABORATOR, "late-grant@iwrite.local");
+            insertMembership(schema, LATE_COLLABORATOR);
+
+            // Parks the migration with both of its table locks already granted, which is the window the
+            // two tests above never reach: the goal table it creates next declares a foreign key to
+            // users, and that needs a lock this open update conflicts with. Nothing else in the
+            // migration touches users, so releasing this releases exactly the cutover.
+            lockHolder.setAutoCommit(false);
+            execute(lockHolder, schema, "update users set display_name = 'held' where id = '" + OWNER + "'");
+
+            CompletableFuture<Void> migration = CompletableFuture.runAsync(() -> migrate(schema, null), executor);
+            awaitBlockedOnLock(schema, "users");
+
+            // Only now does the grant begin, so it is provably a mutation that started after the cutover
+            // already held its locks. It takes the Book row first and writes the collaboration second,
+            // the order the application itself uses.
+            CompletableFuture<Void> grant = CompletableFuture.runAsync(() -> grantCollaboration(schema), executor);
+            awaitWaitingBackends(schema, 2);
+
+            lockHolder.commit();
+
+            // Either side aborting with "deadlock detected" fails here, and for the migration that is a
+            // deploy dying on the release it exists to perform. A cutover may make a late mutation wait;
+            // it may not make one impossible to complete.
+            migration.get(60, TimeUnit.SECONDS);
+            grant.get(60, TimeUnit.SECONDS);
+
+            assertThat(ownerGoal(schema)).isEqualTo(500);
+            assertThat(sharedColumnExists(schema)).isFalse();
+            assertThat(collaboratorCount(schema)).isEqualTo(1);
         } finally {
             executor.shutdownNow();
             dropSchema(schema);
@@ -155,6 +246,70 @@ class V36PersonalBookWritingGoalCutoverConcurrencyIntegrationTest extends Postgr
             }
         }
         throw new AssertionError("The migration never queued on the " + relation + " lock, so it did not freeze that legacy state before reading it");
+    }
+
+    /**
+     * Runs a collaboration grant the way the application does: guard the Book row first, then write the
+     * collaboration. Raw SQL rather than the service, because this has to run against the V35 schema a
+     * pre-V36 instance still sees.
+     */
+    private void grantCollaboration(String schema) {
+        try (Connection grantor = TestDatabaseInitializer.openDirectConnection()) {
+            grantor.setAutoCommit(false);
+            execute(grantor, schema, "select id from books where id = '" + BOOK + "' for update");
+            execute(grantor, schema, "insert into book_collaborators (id, tenant_id, book_id, user_id, created_at, created_by_user_id, role) values ('"
+                    + UUID.randomUUID() + "', '" + TENANT + "', '" + BOOK + "', '" + LATE_COLLABORATOR
+                    + "', current_timestamp, '" + OWNER + "', 'LEGACY_COLLABORATOR')");
+            grantor.commit();
+        } catch (SQLException exception) {
+            throw new IllegalStateException("The late grant could not complete", exception);
+        }
+    }
+
+    /**
+     * Waits until {@code expected} backends are queued on a lock somewhere in this schema, so the test
+     * proceeds on the interleaving it needs rather than on elapsed time.
+     */
+    private void awaitWaitingBackends(String schema, int expected) throws Exception {
+        String waitingBackends = """
+                select count(*) from pg_locks lock
+                join pg_class table_entry on table_entry.oid = lock.relation
+                join pg_namespace namespace on namespace.oid = table_entry.relnamespace
+                where lock.granted = false
+                  and namespace.nspname = '%s'
+                """.formatted(schema);
+        long deadline = System.nanoTime() + TimeUnit.SECONDS.toNanos(30);
+
+        try (Connection observer = TestDatabaseInitializer.openDirectConnection();
+             Statement statement = observer.createStatement()) {
+            while (System.nanoTime() < deadline) {
+                try (ResultSet resultSet = statement.executeQuery(waitingBackends)) {
+                    resultSet.next();
+                    if (resultSet.getInt(1) >= expected) {
+                        return;
+                    }
+                }
+            }
+        }
+        throw new AssertionError("Only fewer than " + expected + " backends ever queued, so the late mutation never entered the cutover window");
+    }
+
+    private UUID insertCollaboration(String schema, UUID userId) throws SQLException {
+        UUID collaboration = UUID.randomUUID();
+        try (Connection connection = TestDatabaseInitializer.openDirectConnection()) {
+            execute(connection, schema, "insert into book_collaborators (id, tenant_id, book_id, user_id, created_at, created_by_user_id, role) values ('"
+                    + collaboration + "', '" + TENANT + "', '" + BOOK + "', '" + userId
+                    + "', current_timestamp, '" + OWNER + "', 'LEGACY_COLLABORATOR')");
+        }
+        return collaboration;
+    }
+
+    private boolean hasGoal(String schema, UUID userId) throws SQLException {
+        return queryInt(schema, "select count(*) from book_personal_writing_goals where user_id = '" + userId + "'") > 0;
+    }
+
+    private int collaboratorCount(String schema) throws SQLException {
+        return queryInt(schema, "select count(*) from book_collaborators where book_id = '" + BOOK + "'");
     }
 
     private String newSchema() throws SQLException {

@@ -26,30 +26,43 @@
 --     snapshot would leave that User with no goal at all, even though the shared target was still the
 --     one in effect for them when the grant was acknowledged.
 --
--- Both locks below are taken explicitly rather than left to be inferred. The books lock is the same
--- SHARE ROW EXCLUSIVE that "references books (id)" would request anyway when the table below is
--- created, so naming it costs nothing and stops the guarantee from depending on a foreign key
--- declaration that a later edit could quietly drop. The book_collaborators lock is not implied by
--- anything: inserting a collaborator takes ROW EXCLUSIVE on book_collaborators and only ROW SHARE on
--- books for its own foreign key check, and ROW SHARE does not conflict with SHARE ROW EXCLUSIVE, so
--- the lock on books alone leaves the collaborator set moving under the backfill.
+-- Both locks below are taken explicitly rather than left to be inferred, and books is taken in ACCESS
+-- EXCLUSIVE rather than in the weaker mode the schema work would request on its own.
 --
--- SHARE ROW EXCLUSIVE conflicts with the ROW EXCLUSIVE that any INSERT or UPDATE takes, so from here
--- on a legacy writer either committed before these locks were granted -- in which case the backfill's
--- snapshot, taken under READ COMMITTED after them, contains its work -- or it is blocked until this
--- migration commits and then fails loudly against the dropped column. It can never commit a change the
--- backfill then throws away. Readers are untouched: SHARE ROW EXCLUSIVE does not conflict with the
--- ACCESS SHARE that a SELECT takes, so only the drop at the end blocks them, and only for its own
--- duration. ACCESS EXCLUSIVE here instead would buy no correctness and block every reader for the
--- whole backfill.
+-- SHARE ROW EXCLUSIVE on books would be enough to freeze the value: it conflicts with the ROW
+-- EXCLUSIVE that any INSERT or UPDATE takes. It is not enough to keep this migration alive. That mode
+-- still admits the ROW SHARE of a "select ... for update", which is the first thing every guarded
+-- mutation in the application takes, so a mutation starting after this migration already held both of
+-- its table locks would acquire the Book row, then queue for book_collaborators behind the lock
+-- below -- while this migration, needing that same Book row FOR KEY SHARE for the goal table's
+-- foreign key check during the backfill, queues behind the mutation. That is a genuine wait cycle:
+-- PostgreSQL breaks it by aborting one of the two, so the cutover could die of "deadlock detected"
+-- on the very deploy it exists to perform.
+--
+-- ACCESS EXCLUSIVE closes it by admitting nothing at all. No mutation can enter books after this
+-- statement, so none can ever hold a Book row while waiting on book_collaborators, and the cycle has
+-- no second edge. A late mutation waits for the cutover instead of racing it, which is the intended
+-- outcome: this release is stop-and-replace, not rolling, so the readers this mode also blocks belong
+-- to instances that are being replaced anyway.
+--
+-- The book_collaborators lock is not implied by anything: inserting a collaborator takes ROW EXCLUSIVE
+-- on book_collaborators and only ROW SHARE on books for its own foreign key check, and ROW SHARE does
+-- not conflict with SHARE ROW EXCLUSIVE, so a lock on books alone would leave the collaborator set
+-- moving under the backfill.
+--
+-- From here on a legacy writer either committed before these locks were granted -- in which case the
+-- backfill's snapshot, taken under READ COMMITTED after them, contains its work -- or it is blocked
+-- until this migration commits and then fails loudly against the dropped column. It can never commit
+-- a change the backfill then throws away.
 --
 -- books is locked before book_collaborators to match the order the application itself acquires them:
 -- a grant guards the Book first and writes the collaboration second, so a concurrent grant waits for
 -- this migration rather than deadlocking against it.
 --
--- V36PersonalBookWritingGoalCutoverConcurrencyIntegrationTest pins both halves, and fails with exactly
--- the lost update and the lost collaborator described above if either lock stops being taken.
-lock table books in share row exclusive mode;
+-- V36PersonalBookWritingGoalCutoverConcurrencyIntegrationTest pins all three halves, and fails with
+-- exactly the lost update, the lost collaborator and the deadlock described above if any of them
+-- stops holding.
+lock table books in access exclusive mode;
 lock table book_collaborators in share row exclusive mode;
 
 -- revision versions the whole goal -- the daily target and the planned writing days together -- so a
