@@ -155,6 +155,13 @@ public class PersonalBookWritingGoalService {
             throw new BadRequestException("expectedRevision is required");
         }
 
+        if (!request.isGoalChangeNamed()) {
+            // Refused for the same reason and in the same place. A request that names no half of the
+            // goal has nothing to apply, and applying it anyway would advance the revision and make the
+            // next real edit conflict with a save that changed nothing.
+            throw new BadRequestException("a save must change dailyTargetWordCount or plannedWritingDays");
+        }
+
         if (request.expectedRevision() != revisionOf(goal)) {
             // Deliberately says nothing about the current state: the caller reloads its own goal
             // through the guarded read rather than learning anything from the refusal.

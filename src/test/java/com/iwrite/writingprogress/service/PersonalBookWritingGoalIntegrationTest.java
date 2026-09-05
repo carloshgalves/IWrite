@@ -8,6 +8,7 @@ import com.iwrite.book.entity.BookRole;
 import com.iwrite.book.entity.BookStatus;
 import com.iwrite.book.repository.BookCollaboratorRepository;
 import com.iwrite.book.service.BookService;
+import com.iwrite.common.exception.BadRequestException;
 import com.iwrite.common.exception.ConflictException;
 import com.iwrite.common.exception.ResourceNotFoundException;
 import com.iwrite.dashboard.service.BookDashboardService;
@@ -20,6 +21,7 @@ import com.iwrite.tenant.repository.TenantRepository;
 import com.iwrite.user.entity.User;
 import com.iwrite.writingprogress.dto.PersonalBookWritingGoalUpdateRequest;
 import com.iwrite.writingprogress.repository.BookWritingScheduleRepository;
+import com.iwrite.writingprogress.repository.PersonalBookWritingGoalRepository;
 import jakarta.persistence.EntityManager;
 import jakarta.persistence.PersistenceContext;
 import org.junit.jupiter.api.AfterEach;
@@ -60,6 +62,9 @@ class PersonalBookWritingGoalIntegrationTest extends PostgresIntegrationTest {
 
     @Autowired
     private BookWritingScheduleRepository scheduleRepository;
+
+    @Autowired
+    private PersonalBookWritingGoalRepository goalRepository;
 
     @Autowired
     private TenantRepository tenantRepository;
@@ -181,6 +186,32 @@ class PersonalBookWritingGoalIntegrationTest extends PostgresIntegrationTest {
         assertThat(afterRoutine).isEqualTo(2);
         assertThat(afterClearing).isEqualTo(3);
         assertThat(personalBookWritingGoalService.getGoal(book.id()).revision()).isEqualTo(3);
+    }
+
+    @Test
+    void aSaveThatNamesNeitherHalfOfTheGoalIsRefusedInsteadOfBecomingAMutation() {
+        BookResponse book = createBook("No-op goal save");
+        // An Author rather than the Owner: the Owner's routine is created with the Book, so only a
+        // collaborator who has never touched the goal surface can show that a refused save creates none.
+        UUID authorId = grantRole(book.id(), "Author", "goal-noop@iwrite.local", BookRole.AUTHOR);
+        switchTo(authorId);
+
+        PersonalBookWritingGoalUpdateRequest namesNothing = new PersonalBookWritingGoalUpdateRequest();
+        namesNothing.setExpectedRevision(0);
+
+        // Refused at the service seam, not only by the HTTP contract, so the guarantee belongs to the
+        // operation rather than to one of its callers.
+        assertThatThrownBy(() -> personalBookWritingGoalService.updateGoal(book.id(), namesNothing))
+                .isInstanceOf(BadRequestException.class);
+
+        // A request that changes no part of the goal must leave no trace of having run: no row, no
+        // lazily created routine, and above all no advanced revision.
+        assertThat(goalRepository.findByUser_IdAndBook_Id(authorId, book.id())).isEmpty();
+        assertThat(scheduleRepository.countByUser_IdAndBookIdAndEffectiveToIsNull(authorId, book.id())).isZero();
+
+        // The proof that nothing was superseded: a real edit another tab decided against revision 0 is
+        // still accepted, instead of losing to a no-op.
+        assertThat(setPersonalDailyTarget(book.id(), 900, 0).dailyTargetWordCount()).isEqualTo(900);
     }
 
     @Test

@@ -539,6 +539,18 @@ class ControllerContractIntegrationTest extends PostgresIntegrationTest {
                         .content(json(Map.of("dailyTargetWordCount", 1000))))
                 .andExpect(status().isBadRequest())
                 .andExpect(jsonPath("$.messages", hasItem(containsString("expectedRevision"))));
+
+        // A save that names no half of the goal changes nothing, so it is not a save either. Accepting
+        // it would advance the revision and make a real edit in another tab conflict with a no-op.
+        mockMvc.perform(patch("/api/books/{bookId}/writing-goal", book.id())
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content(json(Map.of("expectedRevision", 0))))
+                .andExpect(status().isBadRequest())
+                .andExpect(jsonPath("$.messages", hasItem(containsString("dailyTargetWordCount"))));
+
+        mockMvc.perform(get("/api/books/{bookId}/writing-goal", book.id()))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.revision").value(0));
     }
 
     @Test

@@ -3,6 +3,7 @@ package com.iwrite.writingprogress.dto;
 import com.fasterxml.jackson.annotation.JsonAnySetter;
 import com.fasterxml.jackson.annotation.JsonSetter;
 import com.iwrite.common.exception.BadRequestException;
+import jakarta.validation.constraints.AssertTrue;
 import jakarta.validation.constraints.NotNull;
 import jakarta.validation.constraints.Positive;
 import jakarta.validation.constraints.PositiveOrZero;
@@ -25,6 +26,11 @@ import java.util.List;
  * two tabs that both read the same goal cannot both succeed with the later one silently discarding
  * the earlier choice. It is not optional, because a save that may omit it is a lost update the
  * contract still allows.
+ *
+ * <p>At least one of the two halves must also be named. A body carrying only {@code expectedRevision}
+ * changes nothing, so accepting it would turn a no-op into an observable mutation: it would materialize
+ * the goal row and advance the revision, and a real edit another tab decided against the previous
+ * revision would then be refused by a request that changed nothing.
  */
 public class PersonalBookWritingGoalUpdateRequest {
 
@@ -57,6 +63,15 @@ public class PersonalBookWritingGoalUpdateRequest {
 
     public boolean isPlannedWritingDaysPresent() {
         return plannedWritingDaysPresent;
+    }
+
+    /**
+     * Whether this request names anything to change. A save must move at least one half of the goal;
+     * see the type comment for why an empty one is a mutation rather than a no-op.
+     */
+    @AssertTrue(message = "a save must change dailyTargetWordCount or plannedWritingDays")
+    public boolean isGoalChangeNamed() {
+        return dailyTargetWordCountPresent || plannedWritingDaysPresent;
     }
 
     @JsonSetter("expectedRevision")
