@@ -5,6 +5,7 @@ target/
 node_modules/
 .next/
 web/coverage/
+web/*.tsbuildinfo
 .npm-cache/
 
 .idea/
