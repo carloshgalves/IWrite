@@ -561,6 +561,76 @@ describe("BookDashboard", () => {
     expect(screen.getByText("Hoje: 300 / 500 palavras")).toBeInTheDocument();
   });
 
+  test("um segundo save cita a revisao devolvida pelo primeiro, sem esperar o refetch", async () => {
+    // The dashboard query is not refetched here on purpose: after a save the card is reopened
+    // immediately, so until fresher data arrives the only revision it can honestly quote is the one
+    // the accepted save returned. Quoting the read revision again would turn a normal second edit
+    // into a 409 that no concurrent change caused.
+    mocks.useBookDashboard.mockReturnValue({ isLoading: false, isError: false, data: dashboardWithScenes });
+    mocks.updateWritingGoal.mockImplementation((_bookId: string, request: { expectedRevision: number; dailyTargetWordCount?: number | null }) =>
+      Promise.resolve({
+        dailyTargetWordCount: request.dailyTargetWordCount ?? null,
+        plannedWritingDays: dashboardWithScenes.myWriting.schedule.plannedWritingDays,
+        plannedWritingDaysEffectiveFrom: dashboardWithScenes.myWriting.schedule.currentScheduleEffectiveFrom,
+        revision: request.expectedRevision + 1,
+      })
+    );
+    const readRevision = dashboardWithScenes.myWriting.writingGoalRevision;
+
+    renderWithClient(<BookDashboard bookId="book-1" />);
+
+    fireEvent.click(screen.getByRole("button", { name: "Editar meta diária" }));
+    fireEvent.change(screen.getByLabelText("Meta diária de palavras"), { target: { value: "750" } });
+    fireEvent.click(screen.getByRole("button", { name: "Salvar meta diária" }));
+
+    await waitFor(() => expect(screen.getByText("Meta diária salva.")).toBeInTheDocument());
+    expect(mocks.updateWritingGoal).toHaveBeenLastCalledWith("book-1", {
+      expectedRevision: readRevision,
+      dailyTargetWordCount: 750,
+    });
+
+    fireEvent.click(screen.getByRole("button", { name: "Editar meta diária" }));
+    fireEvent.change(screen.getByLabelText("Meta diária de palavras"), { target: { value: "800" } });
+    fireEvent.click(screen.getByRole("button", { name: "Salvar meta diária" }));
+
+    await waitFor(() => expect(mocks.updateWritingGoal).toHaveBeenLastCalledWith("book-1", {
+      expectedRevision: readRevision + 1,
+      dailyTargetWordCount: 800,
+    }));
+    await waitFor(() => expect(screen.queryByText(/salva em outra aba/i)).not.toBeInTheDocument());
+  });
+
+  test("a revisao devolvida por um save da meta vale tambem para o save seguinte da rotina", async () => {
+    // The revision versions the whole goal, so the routine save must move to the revision the target
+    // save produced instead of quoting the one both halves were read at.
+    mocks.useBookDashboard.mockReturnValue({ isLoading: false, isError: false, data: dashboardWithScenes });
+    mocks.updateWritingGoal.mockImplementation((_bookId: string, request: { expectedRevision: number; dailyTargetWordCount?: number | null }) =>
+      Promise.resolve({
+        dailyTargetWordCount: request.dailyTargetWordCount ?? null,
+        plannedWritingDays: dashboardWithScenes.myWriting.schedule.plannedWritingDays,
+        plannedWritingDaysEffectiveFrom: dashboardWithScenes.myWriting.schedule.currentScheduleEffectiveFrom,
+        revision: request.expectedRevision + 1,
+      })
+    );
+    const readRevision = dashboardWithScenes.myWriting.writingGoalRevision;
+
+    renderWithClient(<BookDashboard bookId="book-1" />);
+
+    fireEvent.click(screen.getByRole("button", { name: "Editar meta diária" }));
+    fireEvent.change(screen.getByLabelText("Meta diária de palavras"), { target: { value: "750" } });
+    fireEvent.click(screen.getByRole("button", { name: "Salvar meta diária" }));
+    await waitFor(() => expect(screen.getByText("Meta diária salva.")).toBeInTheDocument());
+
+    fireEvent.click(screen.getByRole("button", { name: "Editar rotina" }));
+    fireEvent.click(screen.getByRole("button", { name: "Dias uteis" }));
+    fireEvent.click(screen.getByRole("button", { name: "Salvar rotina" }));
+
+    await waitFor(() => expect(mocks.updateWritingGoal).toHaveBeenLastCalledWith("book-1", {
+      expectedRevision: readRevision + 1,
+      plannedWritingDays: ["MONDAY", "TUESDAY", "WEDNESDAY", "THURSDAY", "FRIDAY"],
+    }));
+  });
+
   test("mostra resumo da rotina e salva predefinicao de dias uteis", async () => {
     mocks.useBookDashboard.mockReturnValue({ isLoading: false, isError: false, data: dashboardWithScenes });
 

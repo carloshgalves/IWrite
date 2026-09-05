@@ -12,6 +12,7 @@ import { Input } from "@/components/ui/input";
 import { updateBook } from "@/features/books/api/books-api";
 import type { DayOfWeek } from "@/features/books/types";
 import { updateWritingGoal } from "@/features/writing-goal/api/writing-goal-api";
+import type { PersonalBookWritingGoal } from "@/features/writing-goal/types";
 import type { WritingProgressPeriod } from "@/features/dashboard/api/dashboard-api";
 import { useBookContributions, useBookDashboard } from "@/features/dashboard/api/dashboard-hooks";
 import {
@@ -285,7 +286,12 @@ function DailyWritingGoalCard({
   const writingSchedule = myWriting.schedule;
   // The state every save is decided against. Quoting it back lets the server refuse a save whose
   // starting point another tab has already replaced, instead of losing that tab's choice silently.
-  const readRevision = myWriting.writingGoalRevision;
+  //
+  // An accepted save moves it forward from that save's own response rather than waiting for the
+  // dashboard to refetch: the editor reopens immediately, so until fresher data arrives the returned
+  // revision is the only state this card can honestly quote. Quoting the read one again would turn
+  // the user's own next edit into a conflict no concurrent change caused.
+  const [readRevision, setReadRevision] = useState(myWriting.writingGoalRevision);
   const currentDailyTargetWordCount = dashboard.dailyTargetWordCount;
   const [isEditing, setIsEditing] = useState(false);
   const [isEditingRoutine, setIsEditingRoutine] = useState(false);
@@ -301,20 +307,23 @@ function DailyWritingGoalCard({
   const updateTargetMutation = useMutation({
     mutationFn: (dailyTargetWordCount: number | null) =>
       updateWritingGoal(dashboard.bookId, { expectedRevision: readRevision, dailyTargetWordCount }),
-    onSuccess: () => {
-      void queryClient.invalidateQueries({ queryKey: queryKeys.bookDashboard(dashboard.bookId) });
-    },
+    onSuccess: adoptSavedGoal,
     onError: refetchOnStaleGoal,
   });
 
   const updateScheduleMutation = useMutation({
     mutationFn: (plannedWritingDays: DayOfWeek[]) =>
       updateWritingGoal(dashboard.bookId, { expectedRevision: readRevision, plannedWritingDays }),
-    onSuccess: () => {
-      void queryClient.invalidateQueries({ queryKey: queryKeys.bookDashboard(dashboard.bookId) });
-    },
+    onSuccess: adoptSavedGoal,
     onError: refetchOnStaleGoal,
   });
+
+  // The revision covers the whole goal, so both halves move to the one the accepted save returned
+  // before the card lets the user edit again.
+  function adoptSavedGoal(goal: PersonalBookWritingGoal) {
+    setReadRevision(goal.revision);
+    void queryClient.invalidateQueries({ queryKey: queryKeys.bookDashboard(dashboard.bookId) });
+  }
 
   // A refused save means this card is showing superseded state, so pull the newer goal in and let the
   // user decide again against it rather than leaving a stale editor open over it.
@@ -323,6 +332,10 @@ function DailyWritingGoalCard({
       void queryClient.invalidateQueries({ queryKey: queryKeys.bookDashboard(dashboard.bookId) });
     }
   }
+
+  useEffect(() => {
+    setReadRevision(myWriting.writingGoalRevision);
+  }, [myWriting.writingGoalRevision]);
 
   useEffect(() => {
     setSavedTargetValue(currentDailyTargetWordCount ?? null);
