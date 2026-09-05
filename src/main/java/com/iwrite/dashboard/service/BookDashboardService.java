@@ -30,6 +30,7 @@ import com.iwrite.section.repository.BookSectionRepository;
 import com.iwrite.writingprogress.entity.DailyWritingProgress;
 import com.iwrite.writingprogress.service.DailyWritingProgressService;
 import com.iwrite.writingprogress.service.PersonalBookWritingGoalService;
+import com.iwrite.writingprogress.service.PersonalBookWritingGoalSnapshot;
 import com.iwrite.writingprogress.service.WritingScheduleService;
 import com.iwrite.writingprogress.service.WritingProgressPeriod;
 import org.springframework.stereotype.Service;
@@ -96,20 +97,27 @@ public class BookDashboardService {
                 .filter(this::isPlanned)
                 .count();
         boolean managesOwnGoal = access.isGranted(BookCapability.MANAGE_OWN_PERSONAL_WRITING_GOAL);
+        // Read once and shared by both halves of the projection below. The target and the revision a
+        // save is decided against must describe the same state of the same goal: read separately, a
+        // save committing between them would leave this response quoting a revision for a target it
+        // never showed, and a save made against it would be accepted over that newer choice.
+        PersonalBookWritingGoalSnapshot personalGoal = managesOwnGoal
+                ? personalBookWritingGoalService.snapshotFor(access.bookId(), access.userId())
+                : null;
 
         return new BookDashboardResponse(
                 book.getId(),
                 book.getTitle(),
                 totalWordCount,
                 book.getTargetWordCount(),
-                managesOwnGoal ? personalDailyTargetWordCount(access) : null,
+                managesOwnGoal ? personalGoal.dailyTargetWordCount() : null,
                 remainingWordCount(totalWordCount, book.getTargetWordCount()),
                 wordCountProgressPercent(totalWordCount, book.getTargetWordCount()),
                 exceededTargetWordCount(totalWordCount, book.getTargetWordCount()),
                 sectionRepository.countByBookId(bookId),
                 chapterRepository.countByBookId(bookId),
                 totalScenes,
-                managesOwnGoal ? buildMyWriting(access, book, totalWordCount, progressPeriod) : null,
+                managesOwnGoal ? buildMyWriting(book, totalWordCount, progressPeriod, personalGoal) : null,
                 new PlanningProgressResponse(plannedScenesCount, totalScenes, plannedScenesPercent(plannedScenesCount, totalScenes)),
                 buildStatusCounts(scenes),
                 buildPovStats(scenes),
@@ -138,21 +146,16 @@ public class BookDashboardService {
      * schedule for a User the policy says keeps no personal routine.
      */
     private BookMyWritingResponse buildMyWriting(
-            BookAccessContext access,
             Book book,
             int totalWordCount,
-            WritingProgressPeriod progressPeriod
+            WritingProgressPeriod progressPeriod,
+            PersonalBookWritingGoalSnapshot personalGoal
     ) {
         return new BookMyWritingResponse(
                 buildWritingProgress(book.getId(), totalWordCount, progressPeriod),
                 buildWritingSchedule(book),
-                personalBookWritingGoalService.revisionFor(access.bookId(), access.userId())
+                personalGoal.revision()
         );
-    }
-
-    /** The caller's own daily target, resolved from the identity the guard already established. */
-    private Integer personalDailyTargetWordCount(BookAccessContext access) {
-        return personalBookWritingGoalService.dailyTargetWordCountFor(access.bookId(), access.userId());
     }
 
     private List<BookCapability> sortedCapabilities(Set<BookCapability> capabilities) {

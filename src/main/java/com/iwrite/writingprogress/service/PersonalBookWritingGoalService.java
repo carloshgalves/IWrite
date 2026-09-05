@@ -112,14 +112,23 @@ public class PersonalBookWritingGoalService {
     }
 
     /**
-     * The revision of the caller's own goal, or the unsaved revision when they never saved one.
+     * The caller's own goal read once: the target they chose, if any, together with the revision that
+     * target was read at.
+     *
+     * <p>One read on purpose. A projection that shows both must not assemble them from two statements:
+     * under {@code READ COMMITTED} each statement takes its own snapshot, so a save committing between
+     * them would pair a target read before it with the revision it produced. A later save quoting that
+     * revision would then be accepted against a state its caller never saw, which is the lost update
+     * the revision exists to refuse.
      *
      * <p>Unguarded for the same reason as {@link #dailyTargetWordCountFor}: it serves flows that have
      * already established whose goal they are projecting.
      */
     @Transactional(readOnly = true)
-    public int revisionFor(UUID bookId, UUID userId) {
-        return revisionOf(goalRepository.findByUser_IdAndBook_Id(userId, bookId).orElse(null));
+    public PersonalBookWritingGoalSnapshot snapshotFor(UUID bookId, UUID userId) {
+        return goalRepository.findByUser_IdAndBook_Id(userId, bookId)
+                .map(goal -> new PersonalBookWritingGoalSnapshot(goal.getDailyTargetWordCount(), goal.getRevision()))
+                .orElseGet(PersonalBookWritingGoalSnapshot::unsaved);
     }
 
     /**
