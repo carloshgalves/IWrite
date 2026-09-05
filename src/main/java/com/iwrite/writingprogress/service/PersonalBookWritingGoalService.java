@@ -15,7 +15,12 @@ import com.iwrite.writingprogress.repository.PersonalBookWritingGoalRepository;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
+import java.time.DayOfWeek;
+import java.util.Arrays;
+import java.util.EnumSet;
+import java.util.Set;
 import java.util.UUID;
+import java.util.stream.Collectors;
 
 /**
  * The Personal Book Writing Goal of the authenticated User in one Book (#206).
@@ -63,11 +68,13 @@ public class PersonalBookWritingGoalService {
     public PersonalBookWritingGoalResponse getGoal(UUID bookId) {
         Book book = bookAccessService.requireCapability(bookId, BookCapability.MANAGE_OWN_PERSONAL_WRITING_GOAL);
         UUID userId = currentUserMembershipService.requireCurrentUserMemberId();
-        PersonalBookWritingGoal goal = goalRepository.findByUser_IdAndBook_Id(userId, bookId).orElse(null);
-        return response(
-                writingScheduleService.getOrCreateActiveScheduleForCurrentUser(book),
-                goal == null ? null : goal.getDailyTargetWordCount(),
-                revisionOf(goal)
+
+        PersonalBookWritingGoalSnapshot goal = snapshotFor(book, userId);
+        return new PersonalBookWritingGoalResponse(
+                goal.dailyTargetWordCount(),
+                goal.plannedWritingDays(),
+                goal.plannedWritingDaysEffectiveFrom(),
+                goal.revision()
         );
     }
 
@@ -112,23 +119,50 @@ public class PersonalBookWritingGoalService {
     }
 
     /**
-     * The caller's own goal read once: the target they chose, if any, together with the revision that
-     * target was read at.
+     * The caller's own whole goal, read as one coherent snapshot: the chosen target, the revision that
+     * versions the goal, and the active routine that the same revision covers.
      *
-     * <p>One read on purpose. A projection that shows both must not assemble them from two statements:
-     * under {@code READ COMMITTED} each statement takes its own snapshot, so a save committing between
-     * them would pair a target read before it with the revision it produced. A later save quoting that
-     * revision would then be accepted against a state its caller never saw, which is the lost update
-     * the revision exists to refuse.
+     * <p>All three come from one statement, because the revision has to describe everything returned
+     * beside it. Assembled from separate reads under {@code READ COMMITTED}, a save committing between
+     * them would pair a revision with state from the other side of it — and the routine is the half
+     * most exposed to that, because a routine change advances the same revision. A response mixing them
+     * would refuse the caller's next legitimate save over a change they never made.
+     *
+     * <p>Coherence by snapshot rather than by lock on purpose. Every Book-scoped mutation takes the
+     * Book row for update, so a read that held that row in share mode would be coherent but would also
+     * stall every scene, chapter and section save for as long as the read ran. One statement costs
+     * nothing and blocks no writer.
+     *
+     * <p>The routine is materialized first when this User has none yet. That is a mutation and it is
+     * deliberately outside the coherent read: it only guarantees the row exists, and the snapshot taken
+     * afterwards still pairs whatever it finds in one statement.
      *
      * <p>Unguarded for the same reason as {@link #dailyTargetWordCountFor}: it serves flows that have
      * already established whose goal they are projecting.
      */
-    @Transactional(readOnly = true)
-    public PersonalBookWritingGoalSnapshot snapshotFor(UUID bookId, UUID userId) {
-        return goalRepository.findByUser_IdAndBook_Id(userId, bookId)
-                .map(goal -> new PersonalBookWritingGoalSnapshot(goal.getDailyTargetWordCount(), goal.getRevision()))
-                .orElseGet(PersonalBookWritingGoalSnapshot::unsaved);
+    @Transactional
+    public PersonalBookWritingGoalSnapshot snapshotFor(Book book, UUID userId) {
+        writingScheduleService.getOrCreateActiveScheduleForCurrentUser(book);
+        return snapshotOf(goalRepository.readGoalSnapshot(userId, book.getId()));
+    }
+
+    private PersonalBookWritingGoalSnapshot snapshotOf(PersonalBookWritingGoalRepository.GoalSnapshotRow row) {
+        return new PersonalBookWritingGoalSnapshot(
+                row.getDailyTargetWordCount(),
+                row.getRevision(),
+                writingScheduleService.orderedDays(plannedDays(row.getPlannedWritingDays())),
+                row.getPlannedWritingDaysEffectiveFrom()
+        );
+    }
+
+    private Set<DayOfWeek> plannedDays(String aggregatedDays) {
+        if (aggregatedDays == null || aggregatedDays.isEmpty()) {
+            return EnumSet.noneOf(DayOfWeek.class);
+        }
+
+        return Arrays.stream(aggregatedDays.split(","))
+                .map(DayOfWeek::valueOf)
+                .collect(Collectors.toCollection(() -> EnumSet.noneOf(DayOfWeek.class)));
     }
 
     /**

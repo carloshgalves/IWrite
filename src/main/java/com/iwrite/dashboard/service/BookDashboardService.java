@@ -97,12 +97,13 @@ public class BookDashboardService {
                 .filter(this::isPlanned)
                 .count();
         boolean managesOwnGoal = access.isGranted(BookCapability.MANAGE_OWN_PERSONAL_WRITING_GOAL);
-        // Read once and shared by both halves of the projection below. The target and the revision a
-        // save is decided against must describe the same state of the same goal: read separately, a
-        // save committing between them would leave this response quoting a revision for a target it
-        // never showed, and a save made against it would be accepted over that newer choice.
+        // Read once and shared by every half of the projection below. The target, the routine and the
+        // revision a save is decided against must describe the same state of the same goal: read
+        // separately, a save committing between them would leave this response quoting a revision for
+        // state it never showed, and the caller's next save would then either overwrite a newer choice
+        // or be refused over a change they never made.
         PersonalBookWritingGoalSnapshot personalGoal = managesOwnGoal
-                ? personalBookWritingGoalService.snapshotFor(access.bookId(), access.userId())
+                ? personalBookWritingGoalService.snapshotFor(book, access.userId())
                 : null;
 
         return new BookDashboardResponse(
@@ -153,7 +154,7 @@ public class BookDashboardService {
     ) {
         return new BookMyWritingResponse(
                 buildWritingProgress(book.getId(), totalWordCount, progressPeriod),
-                buildWritingSchedule(book),
+                buildWritingSchedule(book, personalGoal),
                 personalGoal.revision()
         );
     }
@@ -173,10 +174,19 @@ public class BookDashboardService {
         return new WritingProgressDashboardResponse(toDailyWritingProgressResponse(today), recentDays, consistency);
     }
 
-    private WritingScheduleResponse buildWritingSchedule(Book book) {
-        UUID bookId = book.getId();
-        var activeSchedule = writingScheduleService.getOrCreateActiveScheduleForCurrentUser(book);
-        List<java.time.DayOfWeek> plannedWritingDays = writingScheduleService.orderedDays(activeSchedule.getPlannedDays());
+    /**
+     * The active routine as the goal snapshot read it, rather than as a second read of the same rows.
+     *
+     * <p>The routine is half of the versioned goal, so it has to come from the statement the revision
+     * came from. Re-reading it here would let a routine change that commits while the rest of this
+     * dashboard is being assembled appear beside the revision it already superseded, and the caller's
+     * next save would be refused over a change they never made.
+     *
+     * <p>Whether today is a planned writing day is a separate question — it is answered by the period
+     * covering today, which is not always the active one — so it keeps its own read.
+     */
+    private WritingScheduleResponse buildWritingSchedule(Book book, PersonalBookWritingGoalSnapshot personalGoal) {
+        List<java.time.DayOfWeek> plannedWritingDays = personalGoal.plannedWritingDays();
         LocalDate today = dailyWritingProgressService.today();
         boolean todayPlannedWritingDay = writingScheduleService.getScheduleForDate(book, today)
                 .getPlannedDays()
@@ -187,7 +197,7 @@ public class BookDashboardService {
                 plannedWritingDays.size(),
                 writingScheduleService.restDays(plannedWritingDays),
                 todayPlannedWritingDay,
-                activeSchedule.getEffectiveFrom()
+                personalGoal.plannedWritingDaysEffectiveFrom()
         );
     }
 

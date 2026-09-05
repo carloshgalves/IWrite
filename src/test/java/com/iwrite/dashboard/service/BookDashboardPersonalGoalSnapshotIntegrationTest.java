@@ -14,6 +14,8 @@ import java.sql.Connection;
 import java.sql.ResultSet;
 import java.sql.SQLException;
 import java.sql.Statement;
+import java.time.DayOfWeek;
+import java.util.List;
 import java.util.UUID;
 import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.ExecutorService;
@@ -27,13 +29,14 @@ import static org.assertj.core.api.Assertions.assertThatThrownBy;
 /**
  * The dashboard projects the Personal Book Writing Goal as one coherent snapshot (#206).
  *
- * <p>The projection carries both the caller's daily target and the revision their next save is
- * decided against, so the two must describe the same state of the same goal. Reading them as two
- * statements would not: under {@code READ COMMITTED} every statement takes its own snapshot, so
- * another tab's first save committing between them lets the response pair a target read before that
- * save with the revision that save produced. A save decided from that response would quote a revision
- * the server accepts and silently replace the choice the response never showed — the lost update the
- * revision exists to refuse.
+ * <p>The projection carries the caller's daily target, their planned writing days and the revision
+ * their next save is decided against. The revision versions all of it, so all of it must describe the
+ * same state of the same goal. Read as separate statements it would not: under {@code READ COMMITTED}
+ * every statement takes its own snapshot, so a save committing between them lands on one side of the
+ * revision and not the other. Both directions are harmful and both are covered here — a target read
+ * before a save under the revision that save produced, which a later save would be allowed to
+ * overwrite; and a routine read after a save under the revision that save superseded, which would
+ * refuse the caller's next legitimate save over a change they never made.
  *
  * <p>Deterministic, and nothing sleeps for a duration. The dashboard is held open inside its own
  * transaction on a table lock it must cross between the two reads, observed as an ungranted request
@@ -43,9 +46,10 @@ import static org.assertj.core.api.Assertions.assertThatThrownBy;
 class BookDashboardPersonalGoalSnapshotIntegrationTest extends PostgresIntegrationTest {
 
     /**
-     * Read while building the caller's own writing progress — after the goal is read and before the
-     * revision was. Locking it pauses the dashboard exactly inside the window, and the competing save
-     * never touches it, so it stays free to commit while the dashboard waits.
+     * Read while building the caller's own writing progress, which the projection crosses after it has
+     * read the goal and before it has finished projecting it. Locking it pauses the dashboard exactly
+     * inside the window, and no competing goal save touches it, so one stays free to commit while the
+     * dashboard waits.
      */
     private static final String TABLE_CROSSED_INSIDE_THE_WINDOW = "book_daily_writing_progress";
 
@@ -95,6 +99,64 @@ class BookDashboardPersonalGoalSnapshotIntegrationTest extends PostgresIntegrati
                     dashboard.myWriting().writingGoalRevision()
             )).isInstanceOf(ConflictException.class);
             assertThat(persistedTarget(book.id())).isEqualTo(1000);
+        } finally {
+            executor.shutdownNow();
+        }
+    }
+
+
+    @Test
+    @Transactional(propagation = Propagation.NOT_SUPPORTED)
+    void aDashboardReadRacingARoutineChangeNeverPairsTheNewRoutineWithTheRevisionItSuperseded() throws Exception {
+        BookResponse book = createBook("Dashboard routine snapshot race");
+        // The routine the Book was created with, still untouched: every day planned, and no goal saved,
+        // so the revision below is the one a User who never saved reads. Leaving it untouched also makes
+        // the competing change below open a new schedule period rather than edit the current one in
+        // place, so a second read of the routine genuinely reaches the newer row.
+        int revisionBeforeTheChange = currentPersonalGoalRevision(book.id());
+        ExecutorService executor = Executors.newSingleThreadExecutor();
+
+        try (Connection windowHolder = TestDatabaseInitializer.openDirectConnection()) {
+            windowHolder.setAutoCommit(false);
+            try (Statement statement = windowHolder.createStatement()) {
+                statement.execute("lock table " + TABLE_CROSSED_INSIDE_THE_WINDOW + " in access exclusive mode");
+            }
+
+            CompletableFuture<BookDashboardResponse> read =
+                    CompletableFuture.supplyAsync(() -> dashboardService.getDashboard(book.id()), executor);
+
+            awaitBlockedOn(TABLE_CROSSED_INSIDE_THE_WINDOW);
+            assertThatThrownBy(() -> read.get(1, TimeUnit.SECONDS)).isInstanceOf(TimeoutException.class);
+
+            // Another tab changes the routine and commits, strictly inside the window. A routine change
+            // is a change to the whole goal, so it advances the same revision the response carries.
+            setPersonalPlannedWritingDays(book.id(), List.of(DayOfWeek.FRIDAY), revisionBeforeTheChange);
+            windowHolder.commit();
+
+            BookDashboardResponse dashboard = read.get(30, TimeUnit.SECONDS);
+
+            // The revision is the one read before that save, which pins the window.
+            assertThat(dashboard.myWriting().writingGoalRevision()).isEqualTo(revisionBeforeTheChange);
+            // So the routine beside it has to be the one that revision describes. Showing FRIDAY here
+            // would be two different goals in one response, and the harm below is what it causes.
+            assertThat(dashboard.myWriting().schedule().plannedWritingDays()).containsExactly(
+                    DayOfWeek.MONDAY,
+                    DayOfWeek.TUESDAY,
+                    DayOfWeek.WEDNESDAY,
+                    DayOfWeek.THURSDAY,
+                    DayOfWeek.FRIDAY,
+                    DayOfWeek.SATURDAY,
+                    DayOfWeek.SUNDAY
+            );
+
+            // The caller's own next save is decided from what they were shown. It is refused, because
+            // the routine really did move — and that refusal is only honest if the response did not
+            // already show them the routine they are being told they have not seen.
+            assertThatThrownBy(() -> setPersonalDailyTarget(
+                    book.id(),
+                    300,
+                    dashboard.myWriting().writingGoalRevision()
+            )).isInstanceOf(ConflictException.class);
         } finally {
             executor.shutdownNow();
         }

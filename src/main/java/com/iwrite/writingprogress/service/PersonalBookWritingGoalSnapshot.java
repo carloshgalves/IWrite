@@ -1,21 +1,28 @@
 package com.iwrite.writingprogress.service;
 
+import java.time.DayOfWeek;
+import java.time.LocalDate;
+import java.util.List;
+
 /**
- * One User's Personal Book Writing Goal in one Book, as read at a single instant (#206).
+ * One User's whole Personal Book Writing Goal in one Book, as read at a single instant (#206).
  *
- * <p>The target and the revision travel together because a projection that shows both is answering a
- * single question — what this goal is, and what state a save of it must be decided against. Carrying
- * them as one value keeps a caller from assembling them out of two reads, which is where they could
- * come from different states of the goal.
+ * <p>The target, the revision and the planned writing days travel together because they answer a
+ * single question — what this goal is, and what state a save of it must be decided against. The
+ * revision versions all of it, so a projection that shows the routine beside a revision read
+ * separately can pair a routine with a revision the routine has already superseded, and the next
+ * legitimate save is then refused over a change nobody made.
  *
  * @param dailyTargetWordCount the chosen target, or {@code null} when no target was chosen — an
  *                             intentional absence, never a target of zero
- * @param revision             the state this snapshot was read at
+ * @param revision             the state this snapshot was read at, covering both halves
+ * @param plannedWritingDays   the active routine, in week order
+ * @param plannedWritingDaysEffectiveFrom the first date the active routine period covers
  */
-public record PersonalBookWritingGoalSnapshot(Integer dailyTargetWordCount, int revision) {
-
-    /** The goal of a User who never saved one in this Book: no target, at the unsaved revision. */
-    static PersonalBookWritingGoalSnapshot unsaved() {
-        return new PersonalBookWritingGoalSnapshot(null, PersonalBookWritingGoalService.UNSAVED_GOAL_REVISION);
-    }
+public record PersonalBookWritingGoalSnapshot(
+        Integer dailyTargetWordCount,
+        int revision,
+        List<DayOfWeek> plannedWritingDays,
+        LocalDate plannedWritingDaysEffectiveFrom
+) {
 }
