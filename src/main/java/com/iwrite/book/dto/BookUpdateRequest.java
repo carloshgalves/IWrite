@@ -1,6 +1,7 @@
 package com.iwrite.book.dto;
 
 import com.fasterxml.jackson.annotation.JsonAnySetter;
+import com.fasterxml.jackson.annotation.JsonAutoDetect;
 import com.fasterxml.jackson.annotation.JsonSetter;
 import com.iwrite.book.entity.BookStatus;
 import com.iwrite.common.exception.BadRequestException;
@@ -16,7 +17,18 @@ import jakarta.validation.constraints.Positive;
  * <p>Unknown fields are rejected instead of being ignored. A request that still carries
  * {@code dailyTargetWordCount} or {@code plannedWritingDays} fails loudly rather than appearing to
  * save a personal goal it no longer owns, and no hidden field can be mass assigned here.
+ *
+ * <p>Only the settings named by a setter are deserializable. Jackson would otherwise infer a property
+ * from the public {@code isTargetWordCountPresent()} getter and pull in the private flag behind it as
+ * its mutator, so a body naming {@code targetWordCountPresent} would clear the Book-wide target
+ * without ever naming {@code targetWordCount}. Hiding the accessors sends that name to the any-setter
+ * below like any other field this contract does not own.
  */
+@JsonAutoDetect(
+        getterVisibility = JsonAutoDetect.Visibility.NONE,
+        isGetterVisibility = JsonAutoDetect.Visibility.NONE,
+        fieldVisibility = JsonAutoDetect.Visibility.NONE
+)
 public class BookUpdateRequest {
 
     private String title;

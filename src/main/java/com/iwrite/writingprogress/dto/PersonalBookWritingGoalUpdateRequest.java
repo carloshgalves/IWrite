@@ -1,6 +1,7 @@
 package com.iwrite.writingprogress.dto;
 
 import com.fasterxml.jackson.annotation.JsonAnySetter;
+import com.fasterxml.jackson.annotation.JsonAutoDetect;
 import com.fasterxml.jackson.annotation.JsonSetter;
 import com.iwrite.common.exception.BadRequestException;
 import jakarta.validation.constraints.AssertTrue;
@@ -31,7 +32,20 @@ import java.util.List;
  * changes nothing, so accepting it would turn a no-op into an observable mutation: it would materialize
  * the goal row and advance the revision, and a real edit another tab decided against the previous
  * revision would then be refused by a request that changed nothing.
+ *
+ * <p>Only the three fields named by explicit setters are deserializable. Jackson would otherwise infer
+ * a property from each public getter and pull in the matching private field as its mutator, so the
+ * internal presence flags would be known — therefore quietly accepted — fields instead of unknown
+ * ones: a body naming {@code dailyTargetWordCountPresent} would behave as if the target had been sent
+ * explicitly as {@code null}, clearing a chosen target and advancing the revision without ever naming
+ * the target. Hiding the accessors from Jackson sends those names to the any-setter below, which is
+ * the same {@code 400} any other field this contract does not own already gets.
  */
+@JsonAutoDetect(
+        getterVisibility = JsonAutoDetect.Visibility.NONE,
+        isGetterVisibility = JsonAutoDetect.Visibility.NONE,
+        fieldVisibility = JsonAutoDetect.Visibility.NONE
+)
 public class PersonalBookWritingGoalUpdateRequest {
 
     @Positive

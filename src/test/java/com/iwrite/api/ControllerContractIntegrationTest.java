@@ -553,6 +553,62 @@ class ControllerContractIntegrationTest extends PostgresIntegrationTest {
                 .andExpect(jsonPath("$.revision").value(0));
     }
 
+    /**
+     * The per-field presence flags are internal bookkeeping, not part of the contract. Jackson infers a
+     * property from every public getter and pulls in the matching private field as its mutator, so
+     * {@code dailyTargetWordCountPresent} was a known field rather than an unknown one: naming it made
+     * the request behave as if the target had been sent explicitly as {@code null}, clearing a chosen
+     * target and advancing the revision without the body ever naming the target itself.
+     */
+    @Test
+    void patchWritingGoalRefusesTheInternalPresenceFlags() throws Exception {
+        var book = createBook("HTTP hidden goal fields");
+
+        mockMvc.perform(patch("/api/books/{bookId}/writing-goal", book.id())
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content(json(Map.of(
+                                "expectedRevision", 0,
+                                "dailyTargetWordCount", 700,
+                                "plannedWritingDays", List.of("TUESDAY")
+                        ))))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.revision").value(1));
+
+        for (String hiddenField : List.of("dailyTargetWordCountPresent", "plannedWritingDaysPresent", "goalChangeNamed")) {
+            mockMvc.perform(patch("/api/books/{bookId}/writing-goal", book.id())
+                            .contentType(MediaType.APPLICATION_JSON)
+                            .content(json(Map.of("expectedRevision", 1, hiddenField, true))))
+                    .andExpect(status().isBadRequest())
+                    .andExpect(jsonPath("$.messages", hasItem(containsString(hiddenField))));
+        }
+
+        // Nothing the refused requests named reached the goal: both halves and the revision survive.
+        mockMvc.perform(get("/api/books/{bookId}/writing-goal", book.id()))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.dailyTargetWordCount").value(700))
+                .andExpect(jsonPath("$.plannedWritingDays", contains("TUESDAY")))
+                .andExpect(jsonPath("$.revision").value(1));
+    }
+
+    /**
+     * The same hidden mutator on the shared settings contract: {@code targetWordCountPresent} would
+     * clear the Book-wide target through a body that never names {@code targetWordCount}.
+     */
+    @Test
+    void patchBookRefusesTheInternalPresenceFlag() throws Exception {
+        var book = createBook("HTTP hidden book setting", 50000);
+
+        mockMvc.perform(patch("/api/books/{bookId}", book.id())
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content(json(Map.of("targetWordCountPresent", true))))
+                .andExpect(status().isBadRequest())
+                .andExpect(jsonPath("$.messages", hasItem(containsString("targetWordCountPresent"))));
+
+        mockMvc.perform(get("/api/books/{bookId}", book.id()))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.targetWordCount").value(50000));
+    }
+
     @Test
     void patchWritingGoalFromASupersededRevisionConflictsInsteadOfOverwriting() throws Exception {
         var book = createBook("HTTP stale goal");
