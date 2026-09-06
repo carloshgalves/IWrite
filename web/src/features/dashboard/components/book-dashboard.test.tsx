@@ -5,6 +5,7 @@ import { BookDashboard } from "@/features/dashboard/components/book-dashboard";
 import { characterAda, dashboardWithScenes, emptyDashboard, itemKey, locationLibrary } from "@/test/fixtures";
 import { ApiError } from "@/lib/api/client";
 import { renderWithClient } from "@/test/test-utils";
+import type { UpdatePersonalBookWritingGoalRequest } from "@/features/writing-goal/types";
 
 const mocks = vi.hoisted(() => ({
   useBookDashboard: vi.fn(),
@@ -67,7 +68,20 @@ describe("BookDashboard", () => {
       },
     });
     mocks.updateBook.mockResolvedValue({});
-    mocks.updateWritingGoal.mockResolvedValue({});
+    // An accepted save answers with the whole goal at its new revision, and the card adopts that
+    // snapshot instead of waiting for the refetch. A mock returning less would let the card look
+    // right while holding state the server never confirmed.
+    mocks.updateWritingGoal.mockImplementation((_bookId: string, request: UpdatePersonalBookWritingGoalRequest) =>
+      Promise.resolve({
+        dailyTargetWordCount:
+          request.dailyTargetWordCount !== undefined
+            ? request.dailyTargetWordCount
+            : dashboardWithScenes.dailyTargetWordCount,
+        plannedWritingDays: request.plannedWritingDays ?? dashboardWithScenes.myWriting.schedule.plannedWritingDays,
+        plannedWritingDaysEffectiveFrom: dashboardWithScenes.myWriting.schedule.currentScheduleEffectiveFrom,
+        revision: request.expectedRevision + 1,
+      })
+    );
   });
 
   test("renderiza estado de loading", () => {
@@ -557,8 +571,53 @@ describe("BookDashboard", () => {
     );
     // The refused save is not reported as one, and the card still holds the target the server has.
     expect(screen.queryByText("Meta diária salva.")).not.toBeInTheDocument();
-    fireEvent.click(screen.getByRole("button", { name: "Cancelar" }));
     expect(screen.getByText("Hoje: 300 / 500 palavras")).toBeInTheDocument();
+  });
+
+  test("depois de um conflito o card volta a salvar contra a revisao recarregada", async () => {
+    // The refusal is where reconciliation happens: the card lets the frozen draft go, shows the goal
+    // that superseded it, and the next save quotes that one. Staying frozen past the refusal would
+    // answer every retry with the same conflict, this time caused by nothing.
+    mocks.useBookDashboard.mockReturnValue({ isLoading: false, isError: false, data: dashboardWithScenes });
+    mocks.updateWritingGoal.mockRejectedValueOnce(
+      new ApiError("Personal writing goal was changed by a newer save; reload it and try again", 409)
+    );
+
+    const { rerender } = renderWithClient(<BookDashboard bookId="book-1" />);
+
+    fireEvent.click(screen.getByRole("button", { name: "Editar meta diária" }));
+    fireEvent.change(screen.getByLabelText("Meta diária de palavras"), { target: { value: "750" } });
+    fireEvent.click(screen.getByRole("button", { name: "Salvar meta diária" }));
+
+    await waitFor(() => expect(screen.getByText(/salva em outra aba/i)).toBeInTheDocument());
+    expect(screen.queryByRole("button", { name: "Salvar meta diária" })).not.toBeInTheDocument();
+
+    // The refetch that refusal asked for lands, carrying the goal that won.
+    mocks.useBookDashboard.mockReturnValue({
+      isLoading: false,
+      isError: false,
+      data: {
+        ...dashboardWithScenes,
+        dailyTargetWordCount: 900,
+        myWriting: {
+          ...dashboardWithScenes.myWriting,
+          writingGoalRevision: dashboardWithScenes.myWriting.writingGoalRevision + 1,
+        },
+      },
+    });
+    rerender(<BookDashboard bookId="book-1" />);
+
+    expect(screen.getByText("Hoje: 300 / 900 palavras")).toBeInTheDocument();
+
+    fireEvent.click(screen.getByRole("button", { name: "Editar meta diária" }));
+    expect(screen.getByLabelText("Meta diária de palavras")).toHaveValue(900);
+    fireEvent.change(screen.getByLabelText("Meta diária de palavras"), { target: { value: "1000" } });
+    fireEvent.click(screen.getByRole("button", { name: "Salvar meta diária" }));
+
+    await waitFor(() => expect(mocks.updateWritingGoal).toHaveBeenLastCalledWith("book-1", {
+      expectedRevision: dashboardWithScenes.myWriting.writingGoalRevision + 1,
+      dailyTargetWordCount: 1000,
+    }));
   });
 
   test("um segundo save cita a revisao devolvida pelo primeiro, sem esperar o refetch", async () => {
@@ -567,14 +626,6 @@ describe("BookDashboard", () => {
     // the accepted save returned. Quoting the read revision again would turn a normal second edit
     // into a 409 that no concurrent change caused.
     mocks.useBookDashboard.mockReturnValue({ isLoading: false, isError: false, data: dashboardWithScenes });
-    mocks.updateWritingGoal.mockImplementation((_bookId: string, request: { expectedRevision: number; dailyTargetWordCount?: number | null }) =>
-      Promise.resolve({
-        dailyTargetWordCount: request.dailyTargetWordCount ?? null,
-        plannedWritingDays: dashboardWithScenes.myWriting.schedule.plannedWritingDays,
-        plannedWritingDaysEffectiveFrom: dashboardWithScenes.myWriting.schedule.currentScheduleEffectiveFrom,
-        revision: request.expectedRevision + 1,
-      })
-    );
     const readRevision = dashboardWithScenes.myWriting.writingGoalRevision;
 
     renderWithClient(<BookDashboard bookId="book-1" />);
@@ -604,14 +655,6 @@ describe("BookDashboard", () => {
     // The revision versions the whole goal, so the routine save must move to the revision the target
     // save produced instead of quoting the one both halves were read at.
     mocks.useBookDashboard.mockReturnValue({ isLoading: false, isError: false, data: dashboardWithScenes });
-    mocks.updateWritingGoal.mockImplementation((_bookId: string, request: { expectedRevision: number; dailyTargetWordCount?: number | null }) =>
-      Promise.resolve({
-        dailyTargetWordCount: request.dailyTargetWordCount ?? null,
-        plannedWritingDays: dashboardWithScenes.myWriting.schedule.plannedWritingDays,
-        plannedWritingDaysEffectiveFrom: dashboardWithScenes.myWriting.schedule.currentScheduleEffectiveFrom,
-        revision: request.expectedRevision + 1,
-      })
-    );
     const readRevision = dashboardWithScenes.myWriting.writingGoalRevision;
 
     renderWithClient(<BookDashboard bookId="book-1" />);
@@ -628,6 +671,93 @@ describe("BookDashboard", () => {
     await waitFor(() => expect(mocks.updateWritingGoal).toHaveBeenLastCalledWith("book-1", {
       expectedRevision: readRevision + 1,
       plannedWritingDays: ["MONDAY", "TUESDAY", "WEDNESDAY", "THURSDAY", "FRIDAY"],
+    }));
+  });
+
+  test("um refetch durante a edicao nao troca a revisao que o rascunho foi decidido contra", async () => {
+    // The revision names the state this draft was decided against. A refetch that swaps it under an
+    // open editor makes the save quote state the user never saw, so the server accepts a decision
+    // taken against superseded state instead of refusing it. The draft keeps the revision it was
+    // opened at and reconciles through the conflict it then earns.
+    mocks.useBookDashboard.mockReturnValue({ isLoading: false, isError: false, data: dashboardWithScenes });
+
+    const { rerender } = renderWithClient(<BookDashboard bookId="book-1" />);
+
+    fireEvent.click(screen.getByRole("button", { name: "Editar meta diária" }));
+    fireEvent.change(screen.getByLabelText("Meta diária de palavras"), { target: { value: "750" } });
+
+    // Another tab changed the routine. The goal is versioned whole, so its revision moved even
+    // though the target this draft is about did not.
+    mocks.useBookDashboard.mockReturnValue({
+      isLoading: false,
+      isError: false,
+      data: {
+        ...dashboardWithScenes,
+        myWriting: {
+          ...dashboardWithScenes.myWriting,
+          schedule: {
+            ...dashboardWithScenes.myWriting.schedule,
+            plannedWritingDays: ["MONDAY", "TUESDAY", "WEDNESDAY", "THURSDAY", "FRIDAY"],
+            plannedWritingDaysPerWeek: 5,
+            restDays: ["SATURDAY", "SUNDAY"],
+          },
+          writingGoalRevision: dashboardWithScenes.myWriting.writingGoalRevision + 1,
+        },
+      },
+    });
+    rerender(<BookDashboard bookId="book-1" />);
+
+    expect(screen.getByLabelText("Meta diária de palavras")).toHaveValue(750);
+
+    fireEvent.click(screen.getByRole("button", { name: "Salvar meta diária" }));
+
+    await waitFor(() => expect(mocks.updateWritingGoal).toHaveBeenCalledWith("book-1", {
+      expectedRevision: dashboardWithScenes.myWriting.writingGoalRevision,
+      dailyTargetWordCount: 750,
+    }));
+  });
+
+  test("a rotina aceita vale imediatamente, sem esperar o refetch", async () => {
+    // The accepted save already returned the whole goal, and the card reopens before any refetch can
+    // land, so it must show the routine it just saved rather than the one it was read with.
+    mocks.useBookDashboard.mockReturnValue({ isLoading: false, isError: false, data: dashboardWithScenes });
+
+    renderWithClient(<BookDashboard bookId="book-1" />);
+
+    expect(screen.getByText("7 dias/semana")).toBeInTheDocument();
+
+    fireEvent.click(screen.getByRole("button", { name: "Editar rotina" }));
+    fireEvent.click(screen.getByRole("button", { name: "Dias uteis" }));
+    fireEvent.click(screen.getByRole("button", { name: "Salvar rotina" }));
+
+    await waitFor(() => expect(screen.getByText(/5 dias\/semana/)).toBeInTheDocument());
+  });
+
+  test("uma segunda edicao antes do refetch parte da rotina que o save aceito devolveu", async () => {
+    // Adopting only the revision and waiting for the refetch to adopt the routine pairs the newer
+    // revision with the routine the first save replaced: reopening seeds the editor with the old
+    // seven days, and saving again silently undoes the choice just accepted.
+    mocks.useBookDashboard.mockReturnValue({ isLoading: false, isError: false, data: dashboardWithScenes });
+    const readRevision = dashboardWithScenes.myWriting.writingGoalRevision;
+
+    renderWithClient(<BookDashboard bookId="book-1" />);
+
+    fireEvent.click(screen.getByRole("button", { name: "Editar rotina" }));
+    fireEvent.click(screen.getByRole("button", { name: "Dias uteis" }));
+    fireEvent.click(screen.getByRole("button", { name: "Salvar rotina" }));
+
+    await waitFor(() => expect(mocks.updateWritingGoal).toHaveBeenLastCalledWith("book-1", {
+      expectedRevision: readRevision,
+      plannedWritingDays: ["MONDAY", "TUESDAY", "WEDNESDAY", "THURSDAY", "FRIDAY"],
+    }));
+
+    fireEvent.click(screen.getByRole("button", { name: "Editar rotina" }));
+    fireEvent.click(screen.getByRole("button", { name: "Sab" }));
+    fireEvent.click(screen.getByRole("button", { name: "Salvar rotina" }));
+
+    await waitFor(() => expect(mocks.updateWritingGoal).toHaveBeenLastCalledWith("book-1", {
+      expectedRevision: readRevision + 1,
+      plannedWritingDays: ["MONDAY", "TUESDAY", "WEDNESDAY", "THURSDAY", "FRIDAY", "SATURDAY"],
     }));
   });
 

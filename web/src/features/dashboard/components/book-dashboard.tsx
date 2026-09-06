@@ -284,20 +284,31 @@ function DailyWritingGoalCard({
   const queryClient = useQueryClient();
   const today = myWriting.progress.today;
   const writingSchedule = myWriting.schedule;
-  // The state every save is decided against. Quoting it back lets the server refuse a save whose
+  // The goal as the dashboard read it. The backend projects all three from one coherent snapshot, so
+  // they are only ever adopted together.
+  const serverTargetWordCount = dashboard.dailyTargetWordCount ?? null;
+  const serverPlannedWritingDays = writingSchedule.plannedWritingDays;
+  const serverRevision = myWriting.writingGoalRevision;
+  // The goal this card edits against, held as one snapshot: both halves and the revision that
+  // versions them together. They move together or not at all, because the revision has to name the
+  // exact state a save was decided against. Quoting it back lets the server refuse a save whose
   // starting point another tab has already replaced, instead of losing that tab's choice silently.
   //
-  // An accepted save moves it forward from that save's own response rather than waiting for the
-  // dashboard to refetch: the editor reopens immediately, so until fresher data arrives the returned
-  // revision is the only state this card can honestly quote. Quoting the read one again would turn
-  // the user's own next edit into a conflict no concurrent change caused.
-  const [readRevision, setReadRevision] = useState(myWriting.writingGoalRevision);
-  const currentDailyTargetWordCount = dashboard.dailyTargetWordCount;
+  // An accepted save adopts the whole goal that save returned rather than waiting for the dashboard
+  // to refetch: the editor reopens immediately, so until fresher data arrives the returned snapshot
+  // is the only state this card can honestly show and quote. Adopting the revision alone would pair
+  // it with the routine that same save replaced, and the next edit would silently undo the choice
+  // just accepted; keeping the read revision would turn that edit into a conflict no concurrent
+  // change caused.
+  const [goal, setGoal] = useState<PersonalGoalSnapshot>(() => ({
+    dailyTargetWordCount: serverTargetWordCount,
+    plannedWritingDays: serverPlannedWritingDays,
+    revision: serverRevision,
+  }));
   const [isEditing, setIsEditing] = useState(false);
   const [isEditingRoutine, setIsEditingRoutine] = useState(false);
-  const [savedTargetValue, setSavedTargetValue] = useState<number | null>(currentDailyTargetWordCount ?? null);
-  const [targetValue, setTargetValue] = useState(currentDailyTargetWordCount?.toString() ?? "");
-  const [selectedRoutineDays, setSelectedRoutineDays] = useState<DayOfWeek[]>(writingSchedule.plannedWritingDays);
+  const [targetValue, setTargetValue] = useState(goal.dailyTargetWordCount?.toString() ?? "");
+  const [selectedRoutineDays, setSelectedRoutineDays] = useState<DayOfWeek[]>(goal.plannedWritingDays);
   const [validationMessage, setValidationMessage] = useState<string | null>(null);
   const [successMessage, setSuccessMessage] = useState<string | null>(null);
 
@@ -306,68 +317,83 @@ function DailyWritingGoalCard({
   // place that reads it, so there is no second cache of the same value to invalidate here.
   const updateTargetMutation = useMutation({
     mutationFn: (dailyTargetWordCount: number | null) =>
-      updateWritingGoal(dashboard.bookId, { expectedRevision: readRevision, dailyTargetWordCount }),
+      updateWritingGoal(dashboard.bookId, { expectedRevision: goal.revision, dailyTargetWordCount }),
     onSuccess: adoptSavedGoal,
     onError: refetchOnStaleGoal,
   });
 
   const updateScheduleMutation = useMutation({
     mutationFn: (plannedWritingDays: DayOfWeek[]) =>
-      updateWritingGoal(dashboard.bookId, { expectedRevision: readRevision, plannedWritingDays }),
+      updateWritingGoal(dashboard.bookId, { expectedRevision: goal.revision, plannedWritingDays }),
     onSuccess: adoptSavedGoal,
     onError: refetchOnStaleGoal,
   });
 
-  // The revision covers the whole goal, so both halves move to the one the accepted save returned
-  // before the card lets the user edit again.
-  function adoptSavedGoal(goal: PersonalBookWritingGoal) {
-    setReadRevision(goal.revision);
+  // The revision covers the whole goal, so the whole goal moves to what the accepted save returned
+  // before the card lets the user edit again. The refetch that follows is reconciliation, not the
+  // source of this state.
+  function adoptSavedGoal(savedGoal: PersonalBookWritingGoal) {
+    setGoal({
+      dailyTargetWordCount: savedGoal.dailyTargetWordCount,
+      plannedWritingDays: savedGoal.plannedWritingDays,
+      revision: savedGoal.revision,
+    });
     void queryClient.invalidateQueries({ queryKey: queryKeys.bookDashboard(dashboard.bookId) });
   }
 
   // A refused save means this card is showing superseded state, so pull the newer goal in and let the
   // user decide again against it rather than leaving a stale editor open over it.
+  //
+  // Closing the editors is what makes that reconciliation happen: an open draft holds the snapshot it
+  // was decided against, so a draft left open over a refusal would keep quoting the revision the
+  // server just rejected and earn the same conflict on every retry.
   function refetchOnStaleGoal(error: unknown) {
     if (error instanceof ApiError && error.status === STALE_GOAL_STATUS) {
+      setIsEditing(false);
+      setIsEditingRoutine(false);
       void queryClient.invalidateQueries({ queryKey: queryKeys.bookDashboard(dashboard.bookId) });
     }
   }
 
+  // Fresher server state is adopted only while no draft is open, and only when it is actually newer
+  // than what this card holds. An open draft was decided against the snapshot it was opened at, so
+  // swapping that snapshot underneath it would let the save quote a revision the user never saw and
+  // the server accept a decision taken against superseded state; the draft keeps its own revision
+  // and reconciles through the conflict the server then answers with. A read older than the goal an
+  // accepted save returned is stale in the other direction and is ignored for the same reason.
   useEffect(() => {
-    setReadRevision(myWriting.writingGoalRevision);
-  }, [myWriting.writingGoalRevision]);
+    if (isEditing || isEditingRoutine) {
+      return;
+    }
 
-  useEffect(() => {
-    setSavedTargetValue(currentDailyTargetWordCount ?? null);
-    setTargetValue(currentDailyTargetWordCount?.toString() ?? "");
-  }, [currentDailyTargetWordCount]);
-
-  useEffect(() => {
-    setSelectedRoutineDays(writingSchedule.plannedWritingDays);
-  }, [writingSchedule.plannedWritingDays]);
+    setGoal((currentGoal) => (serverRevision > currentGoal.revision
+      ? { dailyTargetWordCount: serverTargetWordCount, plannedWritingDays: serverPlannedWritingDays, revision: serverRevision }
+      : currentGoal));
+  }, [isEditing, isEditingRoutine, serverRevision, serverTargetWordCount, serverPlannedWritingDays]);
 
   function startEditing() {
     setValidationMessage(null);
     setSuccessMessage(null);
+    setTargetValue(goal.dailyTargetWordCount?.toString() ?? "");
     setIsEditing(true);
   }
 
   function startEditingRoutine() {
     setValidationMessage(null);
     setSuccessMessage(null);
-    setSelectedRoutineDays(writingSchedule.plannedWritingDays);
+    setSelectedRoutineDays(goal.plannedWritingDays);
     setIsEditingRoutine(true);
   }
 
   function cancelEditing() {
     setValidationMessage(null);
-    setTargetValue(currentDailyTargetWordCount?.toString() ?? "");
+    setTargetValue(goal.dailyTargetWordCount?.toString() ?? "");
     setIsEditing(false);
   }
 
   function cancelRoutineEditing() {
     setValidationMessage(null);
-    setSelectedRoutineDays(writingSchedule.plannedWritingDays);
+    setSelectedRoutineDays(goal.plannedWritingDays);
     setIsEditingRoutine(false);
   }
 
@@ -384,7 +410,6 @@ function DailyWritingGoalCard({
 
     updateTargetMutation.mutate(parsedValue, {
       onSuccess: () => {
-        setSavedTargetValue(parsedValue);
         setSuccessMessage("Meta diária salva.");
         setIsEditing(false);
       },
@@ -396,7 +421,6 @@ function DailyWritingGoalCard({
     setSuccessMessage(null);
     updateTargetMutation.mutate(null, {
       onSuccess: () => {
-        setSavedTargetValue(null);
         setSuccessMessage("Meta diária removida.");
         setIsEditing(false);
       },
@@ -441,12 +465,12 @@ function DailyWritingGoalCard({
   // Presentation only: the backend authorizes every save again, so a hidden control never stands in
   // for the authorization boundary.
   const canManageOwnGoal = dashboard.capabilities.includes("MANAGE_OWN_PERSONAL_WRITING_GOAL");
-  const effectiveDailyTargetWordCount = savedTargetValue;
+  const effectiveDailyTargetWordCount = goal.dailyTargetWordCount;
   const hasTarget = effectiveDailyTargetWordCount != null;
   const isTodayPlannedWritingDay = writingSchedule.todayPlannedWritingDay;
   const progressPercent = hasTarget ? (today.productiveWordCountChange * 100.0) / effectiveDailyTargetWordCount : (today.progressPercent ?? 0);
   const visualProgressPercent = clampPercent(progressPercent);
-  const routineSummary = formatRoutineSummary(writingSchedule.plannedWritingDays, writingSchedule.restDays);
+  const routineSummary = formatRoutineSummary(goal.plannedWritingDays, restDaysOf(goal.plannedWritingDays));
   const activeRoutinePreset = getRoutinePreset(selectedRoutineDays);
 
   return (
@@ -994,6 +1018,18 @@ function isMonthlyWritingProgressPeriod(progressPeriod: WritingProgressPeriod) {
   return progressPeriod === "3m" || progressPeriod === "6m" || progressPeriod === "12m";
 }
 
+/**
+ * The client-side view of the goal: the target, the routine and the revision that versions both.
+ *
+ * It is a snapshot on purpose. The revision only means something paired with the exact state it was
+ * read or accepted with, so the three fields are replaced together and never one at a time.
+ */
+type PersonalGoalSnapshot = {
+  dailyTargetWordCount: number | null;
+  plannedWritingDays: DayOfWeek[];
+  revision: number;
+};
+
 const WRITING_PROGRESS_PERIODS: Array<{ value: WritingProgressPeriod; label: string; description: string }> = [
   { value: "7d", label: "7 dias", description: "Últimos 7 dias" },
   { value: "15d", label: "15 dias", description: "Últimos 15 dias" },
@@ -1405,6 +1441,12 @@ function getRoutinePreset(days: DayOfWeek[]) {
 
 function sameWeekdays(first: DayOfWeek[], second: DayOfWeek[]) {
   return first.length === second.length && ORDERED_WEEKDAYS.every((day) => first.includes(day) === second.includes(day));
+}
+
+// Derived from the same snapshot the routine came from, so the summary never pairs the days this
+// card holds with the rest days of the read it has already superseded.
+function restDaysOf(plannedWritingDays: DayOfWeek[]) {
+  return ORDERED_WEEKDAYS.filter((day) => !plannedWritingDays.includes(day));
 }
 
 function formatRoutineSummary(plannedWritingDays: DayOfWeek[], restDays: DayOfWeek[]) {
