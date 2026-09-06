@@ -1,5 +1,7 @@
 package com.iwrite.dashboard.service;
 
+import com.iwrite.book.authorization.BookAccessContext;
+import com.iwrite.book.authorization.BookCapability;
 import com.iwrite.book.entity.Book;
 import com.iwrite.book.service.BookAccessService;
 import com.iwrite.chapter.entity.Chapter;
@@ -27,6 +29,8 @@ import com.iwrite.section.entity.BookSection;
 import com.iwrite.section.repository.BookSectionRepository;
 import com.iwrite.writingprogress.entity.DailyWritingProgress;
 import com.iwrite.writingprogress.service.DailyWritingProgressService;
+import com.iwrite.writingprogress.service.PersonalBookWritingGoalService;
+import com.iwrite.writingprogress.service.PersonalBookWritingGoalSnapshot;
 import com.iwrite.writingprogress.service.WritingScheduleService;
 import com.iwrite.writingprogress.service.WritingProgressPeriod;
 import org.springframework.stereotype.Service;
@@ -38,6 +42,7 @@ import java.util.EnumMap;
 import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
+import java.util.Set;
 import java.util.UUID;
 
 @Service
@@ -49,6 +54,7 @@ public class BookDashboardService {
     private final SceneRepository sceneRepository;
     private final DailyWritingProgressService dailyWritingProgressService;
     private final WritingScheduleService writingScheduleService;
+    private final PersonalBookWritingGoalService personalBookWritingGoalService;
     private final ScenePlanningCompletenessService planningCompletenessService;
 
     public BookDashboardService(
@@ -58,6 +64,7 @@ public class BookDashboardService {
             SceneRepository sceneRepository,
             DailyWritingProgressService dailyWritingProgressService,
             WritingScheduleService writingScheduleService,
+            PersonalBookWritingGoalService personalBookWritingGoalService,
             ScenePlanningCompletenessService planningCompletenessService
     ) {
         this.bookAccessService = bookAccessService;
@@ -66,6 +73,7 @@ public class BookDashboardService {
         this.sceneRepository = sceneRepository;
         this.dailyWritingProgressService = dailyWritingProgressService;
         this.writingScheduleService = writingScheduleService;
+        this.personalBookWritingGoalService = personalBookWritingGoalService;
         this.planningCompletenessService = planningCompletenessService;
     }
 
@@ -76,7 +84,9 @@ public class BookDashboardService {
 
     @Transactional
     public BookDashboardResponse getDashboard(UUID bookId, WritingProgressPeriod progressPeriod) {
-        Book book = bookAccessService.requireBookReadAccess(bookId);
+        BookAccessService.AccessibleBook accessible = bookAccessService.resolveAccessibleBook(bookId);
+        Book book = accessible.book();
+        BookAccessContext access = accessible.access();
         List<Scene> scenes = sceneRepository.findByBookIdOrderBySortOrderAsc(bookId);
 
         int totalScenes = scenes.size();
@@ -86,31 +96,71 @@ public class BookDashboardService {
         int plannedScenesCount = (int) scenes.stream()
                 .filter(this::isPlanned)
                 .count();
+        boolean managesOwnGoal = access.isGranted(BookCapability.MANAGE_OWN_PERSONAL_WRITING_GOAL);
+        // Read once and shared by every half of the projection below. The target, the routine and the
+        // revision a save is decided against must describe the same state of the same goal: read
+        // separately, a save committing between them would leave this response quoting a revision for
+        // state it never showed, and the caller's next save would then either overwrite a newer choice
+        // or be refused over a change they never made.
+        PersonalBookWritingGoalSnapshot personalGoal = managesOwnGoal
+                ? personalBookWritingGoalService.snapshotFor(book, access.userId())
+                : null;
 
         return new BookDashboardResponse(
                 book.getId(),
                 book.getTitle(),
                 totalWordCount,
                 book.getTargetWordCount(),
-                book.getDailyTargetWordCount(),
+                managesOwnGoal ? personalGoal.dailyTargetWordCount() : null,
                 remainingWordCount(totalWordCount, book.getTargetWordCount()),
                 wordCountProgressPercent(totalWordCount, book.getTargetWordCount()),
                 exceededTargetWordCount(totalWordCount, book.getTargetWordCount()),
                 sectionRepository.countByBookId(bookId),
                 chapterRepository.countByBookId(bookId),
                 totalScenes,
-                new BookMyWritingResponse(
-                        buildWritingProgress(bookId, totalWordCount, progressPeriod),
-                        buildWritingSchedule(book)
-                ),
+                managesOwnGoal ? buildMyWriting(book, totalWordCount, progressPeriod, personalGoal) : null,
                 new PlanningProgressResponse(plannedScenesCount, totalScenes, plannedScenesPercent(plannedScenesCount, totalScenes)),
                 buildStatusCounts(scenes),
                 buildPovStats(scenes),
                 buildNarrativeGaps(scenes),
                 buildCharacterUsage(scenes),
                 buildLocationUsage(scenes),
-                buildItemUsage(scenes)
+                buildItemUsage(scenes),
+                sortedCapabilities(access.capabilities()),
+                sortedCapabilities(access.contextualCapabilities())
         );
+    }
+
+    /**
+     * The caller's own Personal Book Writing Goal projection, built only for a role the policy lets
+     * have one at all.
+     *
+     * <p>The whole block is the goal, not just the daily target beside it: the per-day
+     * {@code dailyTargetWordCount} snapshots, the planned writing days and the consistency measured
+     * against them are all state {@code /writing-goal} is non-enumerable for without
+     * {@link BookCapability#MANAGE_OWN_PERSONAL_WRITING_GOAL}. Projecting it here would hand a
+     * demoted collaborator, whose goal row survived the role change, the same state through a
+     * different door.
+     *
+     * <p>Not building it also keeps a denied read a read: the routine is created lazily by the first
+     * call that needs it, so a dashboard that always built this block would persist a default
+     * schedule for a User the policy says keeps no personal routine.
+     */
+    private BookMyWritingResponse buildMyWriting(
+            Book book,
+            int totalWordCount,
+            WritingProgressPeriod progressPeriod,
+            PersonalBookWritingGoalSnapshot personalGoal
+    ) {
+        return new BookMyWritingResponse(
+                buildWritingProgress(book.getId(), totalWordCount, progressPeriod),
+                buildWritingSchedule(book, personalGoal),
+                personalGoal.revision()
+        );
+    }
+
+    private List<BookCapability> sortedCapabilities(Set<BookCapability> capabilities) {
+        return capabilities.stream().sorted(Comparator.comparing(Enum::name)).toList();
     }
 
     private WritingProgressDashboardResponse buildWritingProgress(UUID bookId, int totalWordCount, WritingProgressPeriod progressPeriod) {
@@ -124,10 +174,19 @@ public class BookDashboardService {
         return new WritingProgressDashboardResponse(toDailyWritingProgressResponse(today), recentDays, consistency);
     }
 
-    private WritingScheduleResponse buildWritingSchedule(Book book) {
-        UUID bookId = book.getId();
-        var activeSchedule = writingScheduleService.getOrCreateActiveScheduleForCurrentUser(book);
-        List<java.time.DayOfWeek> plannedWritingDays = writingScheduleService.orderedDays(activeSchedule.getPlannedDays());
+    /**
+     * The active routine as the goal snapshot read it, rather than as a second read of the same rows.
+     *
+     * <p>The routine is half of the versioned goal, so it has to come from the statement the revision
+     * came from. Re-reading it here would let a routine change that commits while the rest of this
+     * dashboard is being assembled appear beside the revision it already superseded, and the caller's
+     * next save would be refused over a change they never made.
+     *
+     * <p>Whether today is a planned writing day is a separate question — it is answered by the period
+     * covering today, which is not always the active one — so it keeps its own read.
+     */
+    private WritingScheduleResponse buildWritingSchedule(Book book, PersonalBookWritingGoalSnapshot personalGoal) {
+        List<java.time.DayOfWeek> plannedWritingDays = personalGoal.plannedWritingDays();
         LocalDate today = dailyWritingProgressService.today();
         boolean todayPlannedWritingDay = writingScheduleService.getScheduleForDate(book, today)
                 .getPlannedDays()
@@ -138,7 +197,7 @@ public class BookDashboardService {
                 plannedWritingDays.size(),
                 writingScheduleService.restDays(plannedWritingDays),
                 todayPlannedWritingDay,
-                activeSchedule.getEffectiveFrom()
+                personalGoal.plannedWritingDaysEffectiveFrom()
         );
     }
 

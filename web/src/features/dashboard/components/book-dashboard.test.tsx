@@ -3,7 +3,9 @@ import React from "react";
 import { beforeEach, describe, expect, test, vi } from "vitest";
 import { BookDashboard } from "@/features/dashboard/components/book-dashboard";
 import { characterAda, dashboardWithScenes, emptyDashboard, itemKey, locationLibrary } from "@/test/fixtures";
+import { ApiError } from "@/lib/api/client";
 import { renderWithClient } from "@/test/test-utils";
+import type { UpdatePersonalBookWritingGoalRequest } from "@/features/writing-goal/types";
 
 const mocks = vi.hoisted(() => ({
   useBookDashboard: vi.fn(),
@@ -12,6 +14,7 @@ const mocks = vi.hoisted(() => ({
   useLocation: vi.fn(),
   useItem: vi.fn(),
   updateBook: vi.fn(),
+  updateWritingGoal: vi.fn(),
 }));
 
 vi.mock("@/features/dashboard/api/dashboard-hooks", () => ({
@@ -33,6 +36,10 @@ vi.mock("@/features/items/api/items-hooks", () => ({
 
 vi.mock("@/features/books/api/books-api", () => ({
   updateBook: mocks.updateBook,
+}));
+
+vi.mock("@/features/writing-goal/api/writing-goal-api", () => ({
+  updateWritingGoal: mocks.updateWritingGoal,
 }));
 
 describe("BookDashboard", () => {
@@ -61,6 +68,20 @@ describe("BookDashboard", () => {
       },
     });
     mocks.updateBook.mockResolvedValue({});
+    // An accepted save answers with the whole goal at its new revision, and the card adopts that
+    // snapshot instead of waiting for the refetch. A mock returning less would let the card look
+    // right while holding state the server never confirmed.
+    mocks.updateWritingGoal.mockImplementation((_bookId: string, request: UpdatePersonalBookWritingGoalRequest) =>
+      Promise.resolve({
+        dailyTargetWordCount:
+          request.dailyTargetWordCount !== undefined
+            ? request.dailyTargetWordCount
+            : dashboardWithScenes.dailyTargetWordCount,
+        plannedWritingDays: request.plannedWritingDays ?? dashboardWithScenes.myWriting.schedule.plannedWritingDays,
+        plannedWritingDaysEffectiveFrom: dashboardWithScenes.myWriting.schedule.currentScheduleEffectiveFrom,
+        revision: request.expectedRevision + 1,
+      })
+    );
   });
 
   test("renderiza estado de loading", () => {
@@ -483,9 +504,261 @@ describe("BookDashboard", () => {
     fireEvent.change(screen.getByLabelText("Meta diária de palavras"), { target: { value: "750" } });
     fireEvent.click(screen.getByRole("button", { name: "Salvar meta diária" }));
 
-    await waitFor(() => expect(mocks.updateBook).toHaveBeenCalledWith("book-1", { dailyTargetWordCount: 750 }));
+    await waitFor(() => expect(mocks.updateWritingGoal).toHaveBeenCalledWith("book-1", {
+      expectedRevision: emptyDashboard.myWriting.writingGoalRevision,
+      dailyTargetWordCount: 750,
+    }));
+    expect(mocks.updateBook).not.toHaveBeenCalled();
     await waitFor(() => expect(screen.queryByText("Nenhuma meta diária definida.")).not.toBeInTheDocument());
     expect(screen.getByText("Hoje: 0 / 750 palavras")).toBeInTheDocument();
+  });
+
+  test("nao projeta rotina nem meta pessoal quando o backend nao autoriza um objetivo pessoal", () => {
+    // An Editor or Reader has no Personal Book Writing Goal at all, so the backend sends no personal
+    // projection. Nothing about it may be rendered — not the routine, not a per-day target.
+    mocks.useBookDashboard.mockReturnValue({
+      isLoading: false,
+      isError: false,
+      data: {
+        ...dashboardWithScenes,
+        dailyTargetWordCount: null,
+        myWriting: null,
+        capabilities: dashboardWithScenes.capabilities.filter(
+          (capability) => capability !== "MANAGE_OWN_PERSONAL_WRITING_GOAL"
+        ),
+      },
+    });
+
+    renderWithClient(<BookDashboard bookId="book-1" />);
+
+    expect(screen.queryByText("Rotina e meta diaria")).not.toBeInTheDocument();
+    expect(screen.queryByText("Meu progresso")).not.toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "Definir meta diária" })).not.toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "Editar rotina" })).not.toBeInTheDocument();
+    // The shared book-wide target is not personal state and keeps rendering.
+    expect(screen.getByText("Progresso do manuscrito")).toBeInTheDocument();
+  });
+
+  test("cada save do objetivo pessoal cita a revisao lida", async () => {
+    mocks.useBookDashboard.mockReturnValue({ isLoading: false, isError: false, data: dashboardWithScenes });
+
+    renderWithClient(<BookDashboard bookId="book-1" />);
+
+    fireEvent.click(screen.getByRole("button", { name: "Editar meta diária" }));
+    fireEvent.change(screen.getByLabelText("Meta diária de palavras"), { target: { value: "750" } });
+    fireEvent.click(screen.getByRole("button", { name: "Salvar meta diária" }));
+
+    await waitFor(() => expect(mocks.updateWritingGoal).toHaveBeenCalledWith("book-1", {
+      expectedRevision: dashboardWithScenes.myWriting.writingGoalRevision,
+      dailyTargetWordCount: 750,
+    }));
+  });
+
+  test("informa conflito quando outra aba ja salvou o objetivo pessoal", async () => {
+    mocks.useBookDashboard.mockReturnValue({ isLoading: false, isError: false, data: dashboardWithScenes });
+    mocks.updateWritingGoal.mockRejectedValue(
+      new ApiError("Personal writing goal was changed by a newer save; reload it and try again", 409)
+    );
+
+    renderWithClient(<BookDashboard bookId="book-1" />);
+
+    fireEvent.click(screen.getByRole("button", { name: "Editar meta diária" }));
+    fireEvent.change(screen.getByLabelText("Meta diária de palavras"), { target: { value: "750" } });
+    fireEvent.click(screen.getByRole("button", { name: "Salvar meta diária" }));
+
+    await waitFor(() =>
+      expect(screen.getByText(/salva em outra aba/i)).toBeInTheDocument()
+    );
+    // The refused save is not reported as one, and the card still holds the target the server has.
+    expect(screen.queryByText("Meta diária salva.")).not.toBeInTheDocument();
+    expect(screen.getByText("Hoje: 300 / 500 palavras")).toBeInTheDocument();
+  });
+
+  test("depois de um conflito o card volta a salvar contra a revisao recarregada", async () => {
+    // The refusal is where reconciliation happens: the card lets the frozen draft go, shows the goal
+    // that superseded it, and the next save quotes that one. Staying frozen past the refusal would
+    // answer every retry with the same conflict, this time caused by nothing.
+    mocks.useBookDashboard.mockReturnValue({ isLoading: false, isError: false, data: dashboardWithScenes });
+    mocks.updateWritingGoal.mockRejectedValueOnce(
+      new ApiError("Personal writing goal was changed by a newer save; reload it and try again", 409)
+    );
+
+    const { rerender } = renderWithClient(<BookDashboard bookId="book-1" />);
+
+    fireEvent.click(screen.getByRole("button", { name: "Editar meta diária" }));
+    fireEvent.change(screen.getByLabelText("Meta diária de palavras"), { target: { value: "750" } });
+    fireEvent.click(screen.getByRole("button", { name: "Salvar meta diária" }));
+
+    await waitFor(() => expect(screen.getByText(/salva em outra aba/i)).toBeInTheDocument());
+    expect(screen.queryByRole("button", { name: "Salvar meta diária" })).not.toBeInTheDocument();
+
+    // The refetch that refusal asked for lands, carrying the goal that won.
+    mocks.useBookDashboard.mockReturnValue({
+      isLoading: false,
+      isError: false,
+      data: {
+        ...dashboardWithScenes,
+        dailyTargetWordCount: 900,
+        myWriting: {
+          ...dashboardWithScenes.myWriting,
+          writingGoalRevision: dashboardWithScenes.myWriting.writingGoalRevision + 1,
+        },
+      },
+    });
+    rerender(<BookDashboard bookId="book-1" />);
+
+    expect(screen.getByText("Hoje: 300 / 900 palavras")).toBeInTheDocument();
+
+    fireEvent.click(screen.getByRole("button", { name: "Editar meta diária" }));
+    expect(screen.getByLabelText("Meta diária de palavras")).toHaveValue(900);
+    fireEvent.change(screen.getByLabelText("Meta diária de palavras"), { target: { value: "1000" } });
+    fireEvent.click(screen.getByRole("button", { name: "Salvar meta diária" }));
+
+    await waitFor(() => expect(mocks.updateWritingGoal).toHaveBeenLastCalledWith("book-1", {
+      expectedRevision: dashboardWithScenes.myWriting.writingGoalRevision + 1,
+      dailyTargetWordCount: 1000,
+    }));
+  });
+
+  test("um segundo save cita a revisao devolvida pelo primeiro, sem esperar o refetch", async () => {
+    // The dashboard query is not refetched here on purpose: after a save the card is reopened
+    // immediately, so until fresher data arrives the only revision it can honestly quote is the one
+    // the accepted save returned. Quoting the read revision again would turn a normal second edit
+    // into a 409 that no concurrent change caused.
+    mocks.useBookDashboard.mockReturnValue({ isLoading: false, isError: false, data: dashboardWithScenes });
+    const readRevision = dashboardWithScenes.myWriting.writingGoalRevision;
+
+    renderWithClient(<BookDashboard bookId="book-1" />);
+
+    fireEvent.click(screen.getByRole("button", { name: "Editar meta diária" }));
+    fireEvent.change(screen.getByLabelText("Meta diária de palavras"), { target: { value: "750" } });
+    fireEvent.click(screen.getByRole("button", { name: "Salvar meta diária" }));
+
+    await waitFor(() => expect(screen.getByText("Meta diária salva.")).toBeInTheDocument());
+    expect(mocks.updateWritingGoal).toHaveBeenLastCalledWith("book-1", {
+      expectedRevision: readRevision,
+      dailyTargetWordCount: 750,
+    });
+
+    fireEvent.click(screen.getByRole("button", { name: "Editar meta diária" }));
+    fireEvent.change(screen.getByLabelText("Meta diária de palavras"), { target: { value: "800" } });
+    fireEvent.click(screen.getByRole("button", { name: "Salvar meta diária" }));
+
+    await waitFor(() => expect(mocks.updateWritingGoal).toHaveBeenLastCalledWith("book-1", {
+      expectedRevision: readRevision + 1,
+      dailyTargetWordCount: 800,
+    }));
+    await waitFor(() => expect(screen.queryByText(/salva em outra aba/i)).not.toBeInTheDocument());
+  });
+
+  test("a revisao devolvida por um save da meta vale tambem para o save seguinte da rotina", async () => {
+    // The revision versions the whole goal, so the routine save must move to the revision the target
+    // save produced instead of quoting the one both halves were read at.
+    mocks.useBookDashboard.mockReturnValue({ isLoading: false, isError: false, data: dashboardWithScenes });
+    const readRevision = dashboardWithScenes.myWriting.writingGoalRevision;
+
+    renderWithClient(<BookDashboard bookId="book-1" />);
+
+    fireEvent.click(screen.getByRole("button", { name: "Editar meta diária" }));
+    fireEvent.change(screen.getByLabelText("Meta diária de palavras"), { target: { value: "750" } });
+    fireEvent.click(screen.getByRole("button", { name: "Salvar meta diária" }));
+    await waitFor(() => expect(screen.getByText("Meta diária salva.")).toBeInTheDocument());
+
+    fireEvent.click(screen.getByRole("button", { name: "Editar rotina" }));
+    fireEvent.click(screen.getByRole("button", { name: "Dias uteis" }));
+    fireEvent.click(screen.getByRole("button", { name: "Salvar rotina" }));
+
+    await waitFor(() => expect(mocks.updateWritingGoal).toHaveBeenLastCalledWith("book-1", {
+      expectedRevision: readRevision + 1,
+      plannedWritingDays: ["MONDAY", "TUESDAY", "WEDNESDAY", "THURSDAY", "FRIDAY"],
+    }));
+  });
+
+  test("um refetch durante a edicao nao troca a revisao que o rascunho foi decidido contra", async () => {
+    // The revision names the state this draft was decided against. A refetch that swaps it under an
+    // open editor makes the save quote state the user never saw, so the server accepts a decision
+    // taken against superseded state instead of refusing it. The draft keeps the revision it was
+    // opened at and reconciles through the conflict it then earns.
+    mocks.useBookDashboard.mockReturnValue({ isLoading: false, isError: false, data: dashboardWithScenes });
+
+    const { rerender } = renderWithClient(<BookDashboard bookId="book-1" />);
+
+    fireEvent.click(screen.getByRole("button", { name: "Editar meta diária" }));
+    fireEvent.change(screen.getByLabelText("Meta diária de palavras"), { target: { value: "750" } });
+
+    // Another tab changed the routine. The goal is versioned whole, so its revision moved even
+    // though the target this draft is about did not.
+    mocks.useBookDashboard.mockReturnValue({
+      isLoading: false,
+      isError: false,
+      data: {
+        ...dashboardWithScenes,
+        myWriting: {
+          ...dashboardWithScenes.myWriting,
+          schedule: {
+            ...dashboardWithScenes.myWriting.schedule,
+            plannedWritingDays: ["MONDAY", "TUESDAY", "WEDNESDAY", "THURSDAY", "FRIDAY"],
+            plannedWritingDaysPerWeek: 5,
+            restDays: ["SATURDAY", "SUNDAY"],
+          },
+          writingGoalRevision: dashboardWithScenes.myWriting.writingGoalRevision + 1,
+        },
+      },
+    });
+    rerender(<BookDashboard bookId="book-1" />);
+
+    expect(screen.getByLabelText("Meta diária de palavras")).toHaveValue(750);
+
+    fireEvent.click(screen.getByRole("button", { name: "Salvar meta diária" }));
+
+    await waitFor(() => expect(mocks.updateWritingGoal).toHaveBeenCalledWith("book-1", {
+      expectedRevision: dashboardWithScenes.myWriting.writingGoalRevision,
+      dailyTargetWordCount: 750,
+    }));
+  });
+
+  test("a rotina aceita vale imediatamente, sem esperar o refetch", async () => {
+    // The accepted save already returned the whole goal, and the card reopens before any refetch can
+    // land, so it must show the routine it just saved rather than the one it was read with.
+    mocks.useBookDashboard.mockReturnValue({ isLoading: false, isError: false, data: dashboardWithScenes });
+
+    renderWithClient(<BookDashboard bookId="book-1" />);
+
+    expect(screen.getByText("7 dias/semana")).toBeInTheDocument();
+
+    fireEvent.click(screen.getByRole("button", { name: "Editar rotina" }));
+    fireEvent.click(screen.getByRole("button", { name: "Dias uteis" }));
+    fireEvent.click(screen.getByRole("button", { name: "Salvar rotina" }));
+
+    await waitFor(() => expect(screen.getByText(/5 dias\/semana/)).toBeInTheDocument());
+  });
+
+  test("uma segunda edicao antes do refetch parte da rotina que o save aceito devolveu", async () => {
+    // Adopting only the revision and waiting for the refetch to adopt the routine pairs the newer
+    // revision with the routine the first save replaced: reopening seeds the editor with the old
+    // seven days, and saving again silently undoes the choice just accepted.
+    mocks.useBookDashboard.mockReturnValue({ isLoading: false, isError: false, data: dashboardWithScenes });
+    const readRevision = dashboardWithScenes.myWriting.writingGoalRevision;
+
+    renderWithClient(<BookDashboard bookId="book-1" />);
+
+    fireEvent.click(screen.getByRole("button", { name: "Editar rotina" }));
+    fireEvent.click(screen.getByRole("button", { name: "Dias uteis" }));
+    fireEvent.click(screen.getByRole("button", { name: "Salvar rotina" }));
+
+    await waitFor(() => expect(mocks.updateWritingGoal).toHaveBeenLastCalledWith("book-1", {
+      expectedRevision: readRevision,
+      plannedWritingDays: ["MONDAY", "TUESDAY", "WEDNESDAY", "THURSDAY", "FRIDAY"],
+    }));
+
+    fireEvent.click(screen.getByRole("button", { name: "Editar rotina" }));
+    fireEvent.click(screen.getByRole("button", { name: "Sab" }));
+    fireEvent.click(screen.getByRole("button", { name: "Salvar rotina" }));
+
+    await waitFor(() => expect(mocks.updateWritingGoal).toHaveBeenLastCalledWith("book-1", {
+      expectedRevision: readRevision + 1,
+      plannedWritingDays: ["MONDAY", "TUESDAY", "WEDNESDAY", "THURSDAY", "FRIDAY", "SATURDAY"],
+    }));
   });
 
   test("mostra resumo da rotina e salva predefinicao de dias uteis", async () => {
@@ -499,9 +772,11 @@ describe("BookDashboard", () => {
     fireEvent.click(screen.getByRole("button", { name: "Dias uteis" }));
     fireEvent.click(screen.getByRole("button", { name: "Salvar rotina" }));
 
-    await waitFor(() => expect(mocks.updateBook).toHaveBeenCalledWith("book-1", {
+    await waitFor(() => expect(mocks.updateWritingGoal).toHaveBeenCalledWith("book-1", {
+      expectedRevision: dashboardWithScenes.myWriting.writingGoalRevision,
       plannedWritingDays: ["MONDAY", "TUESDAY", "WEDNESDAY", "THURSDAY", "FRIDAY"],
     }));
+    expect(mocks.updateBook).not.toHaveBeenCalled();
     expect(screen.getByText(/mudanca passa a valer amanha/i)).toBeInTheDocument();
   });
 
@@ -517,7 +792,7 @@ describe("BookDashboard", () => {
     fireEvent.click(screen.getByRole("button", { name: "Salvar rotina" }));
 
     expect(screen.getByText("Selecione pelo menos um dia de escrita.")).toBeInTheDocument();
-    expect(mocks.updateBook).not.toHaveBeenCalled();
+    expect(mocks.updateWritingGoal).not.toHaveBeenCalled();
   });
 
   test("mostra dia de descanso com progresso extra", () => {
@@ -559,8 +834,35 @@ describe("BookDashboard", () => {
     fireEvent.click(screen.getByRole("button", { name: "Editar meta diária" }));
     fireEvent.click(screen.getByRole("button", { name: "Remover meta diária" }));
 
-    await waitFor(() => expect(mocks.updateBook).toHaveBeenCalledWith("book-1", { dailyTargetWordCount: null }));
+    await waitFor(() => expect(mocks.updateWritingGoal).toHaveBeenCalledWith("book-1", {
+      expectedRevision: dashboardWithScenes.myWriting.writingGoalRevision,
+      dailyTargetWordCount: null,
+    }));
     await waitFor(() => expect(screen.getByText("Nenhuma meta diária definida.")).toBeInTheDocument());
+  });
+
+  test("nao oferece controles de meta quando as capabilities nao autorizam", () => {
+    // An Editor sees the book dashboard but manages no personal goal and no shared book setting.
+    const editorDashboard = {
+      ...dashboardWithScenes,
+      dailyTargetWordCount: null,
+      capabilities: ["READ_MANUSCRIPT", "VIEW_BOOK_CONTRIBUTOR_PROGRESS"] as const,
+      contextualCapabilities: [],
+    };
+    mocks.useBookDashboard.mockReturnValue({ isLoading: false, isError: false, data: editorDashboard });
+
+    renderWithClient(<BookDashboard bookId="book-1" />);
+
+    expect(screen.queryByRole("button", { name: "Editar rotina" })).not.toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "Definir meta diária" })).not.toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "Editar meta diária" })).not.toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "Editar meta" })).not.toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "Definir meta" })).not.toBeInTheDocument();
+    // Absence of a target is stated as an absence, never as failure or zero performance.
+    expect(screen.getByText("Nenhuma meta diária definida.")).toBeInTheDocument();
+    expect(
+      screen.getByText("Sem meta diária não significa progresso zero: ela é opcional e pessoal.")
+    ).toBeInTheDocument();
   });
 
   test("meta diária removida não reaparece a partir do snapshot histórico de hoje", () => {
@@ -618,6 +920,80 @@ describe("BookDashboard", () => {
     expect(within(dialog).getByText("Cenas sem objetivo")).toBeInTheDocument();
     expect(within(dialog).getByText("1 cenas afetadas.")).toBeInTheDocument();
     expect(within(dialog).getByRole("button", { name: /Cena sem objetivo/ })).toBeInTheDocument();
+  });
+
+  test("nao renderiza o dashboard de outro livro enquanto o livro atual carrega", () => {
+    // keepPreviousData can hand back the previous Book's snapshot while the new Book still loads.
+    mocks.useBookDashboard.mockReturnValue({
+      isLoading: false,
+      isFetching: true,
+      isError: false,
+      data: { ...dashboardWithScenes, bookId: "book-1", title: "Livro anterior" },
+    });
+
+    renderWithClient(<BookDashboard bookId="book-2" />);
+
+    expect(screen.getByText("Carregando visão geral...")).toBeInTheDocument();
+    expect(screen.queryByText("Progresso do manuscrito")).not.toBeInTheDocument();
+  });
+
+  test("troca de livro com rascunho de meta aberto descarta o editor e nunca grava no livro errado", async () => {
+    mocks.useBookDashboard.mockImplementation((bookId: string) => ({
+      isLoading: false,
+      isError: false,
+      data: { ...dashboardWithScenes, bookId },
+    }));
+
+    const { rerender } = renderWithClient(<BookDashboard bookId="book-1" />);
+
+    fireEvent.click(screen.getByRole("button", { name: "Editar meta diária" }));
+    fireEvent.change(screen.getByLabelText("Meta diária de palavras"), { target: { value: "9999" } });
+    expect(screen.getByRole("button", { name: "Salvar meta diária" })).toBeInTheDocument();
+
+    rerender(<BookDashboard bookId="book-2" />);
+
+    expect(screen.queryByRole("button", { name: "Salvar meta diária" })).not.toBeInTheDocument();
+    expect(screen.queryByDisplayValue("9999")).not.toBeInTheDocument();
+
+    fireEvent.click(screen.getByRole("button", { name: "Editar meta diária" }));
+    expect(screen.getByLabelText("Meta diária de palavras")).toHaveValue(500);
+    fireEvent.change(screen.getByLabelText("Meta diária de palavras"), { target: { value: "750" } });
+    fireEvent.click(screen.getByRole("button", { name: "Salvar meta diária" }));
+
+    await waitFor(() =>
+      expect(mocks.updateWritingGoal).toHaveBeenCalledWith("book-2", {
+        expectedRevision: dashboardWithScenes.myWriting.writingGoalRevision,
+        dailyTargetWordCount: 750,
+      })
+    );
+    expect(mocks.updateWritingGoal).not.toHaveBeenCalledWith("book-2", expect.objectContaining({
+      dailyTargetWordCount: 9999,
+    }));
+    expect(mocks.updateWritingGoal).not.toHaveBeenCalledWith("book-1", expect.anything());
+  });
+
+  test("perda de capability fecha um editor de meta ja aberto", () => {
+    mocks.useBookDashboard.mockReturnValue({ isLoading: false, isError: false, data: dashboardWithScenes });
+
+    const { rerender } = renderWithClient(<BookDashboard bookId="book-1" />);
+
+    fireEvent.click(screen.getByRole("button", { name: "Editar meta diária" }));
+    expect(screen.getByRole("button", { name: "Salvar meta diária" })).toBeInTheDocument();
+
+    mocks.useBookDashboard.mockReturnValue({
+      isLoading: false,
+      isError: false,
+      data: {
+        ...dashboardWithScenes,
+        dailyTargetWordCount: null,
+        capabilities: ["READ_MANUSCRIPT", "VIEW_BOOK_CONTRIBUTOR_PROGRESS"],
+        contextualCapabilities: [],
+      },
+    });
+    rerender(<BookDashboard bookId="book-1" />);
+
+    expect(screen.queryByRole("button", { name: "Salvar meta diária" })).not.toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "Editar meta diária" })).not.toBeInTheDocument();
   });
 
   test("clicar em personagem, localizacao e item abre seus detalhes", () => {

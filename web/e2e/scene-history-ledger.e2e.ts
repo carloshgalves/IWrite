@@ -1,5 +1,6 @@
 import { expect, test, type APIRequestContext, type Page } from "@playwright/test";
 import { randomUUID } from "node:crypto";
+import type { UpdatePersonalBookWritingGoalRequest } from "@/features/writing-goal/types";
 
 // Relative, so calls go through the frontend proxy on baseURL and carry the session cookie.
 // Hitting the backend port directly would be cross-site: no cookie, and CORS in the way.
@@ -272,6 +273,13 @@ async function createSeededBook(
     description: null,
     status: "WRITING",
     targetWordCount: 1000,
+  });
+  // The daily target is the creator's own Personal Book Writing Goal, not a book setting, so it is
+  // set through its own contract.
+  await patchWritingGoal(request, book.id, {
+    // The book was created moments ago and nobody has saved its goal, so this save is decided
+    // against the revision a goal that was never saved reads.
+    expectedRevision: 0,
     dailyTargetWordCount: options.dailyTargetWordCount ?? null,
     plannedWritingDays: ["MONDAY", "TUESDAY", "WEDNESDAY", "THURSDAY", "FRIDAY", "SATURDAY", "SUNDAY"],
   });
@@ -351,6 +359,21 @@ async function postJson<T>(request: APIRequestContext, path: string, data: unkno
   const response = await request.post(`${API_URL}${path}`, { data, headers: await csrfHeaders(request) });
   expect(response.ok(), `${response.status()} ${path}: ${await response.text()}`).toBeTruthy();
   return response.json() as Promise<T>;
+}
+
+/**
+ * Saves the signed-in user's own writing goal.
+ *
+ * <p>Typed against the real request contract on purpose: `expectedRevision` is required, and a
+ * fixture that forgot it would otherwise only fail at runtime, in a suite that does not gate this
+ * PR — a setup step failing with 400 long before the scenario it exists to prepare.
+ */
+async function patchWritingGoal(
+  request: APIRequestContext,
+  bookId: string,
+  goal: UpdatePersonalBookWritingGoalRequest
+): Promise<void> {
+  await patchJson(request, `/api/books/${bookId}/writing-goal`, goal);
 }
 
 async function patchJson<T>(request: APIRequestContext, path: string, data: unknown): Promise<T> {

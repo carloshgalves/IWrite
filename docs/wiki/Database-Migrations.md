@@ -1,6 +1,6 @@
 # Migrations e evolução do banco
 
-O IWrite usa Flyway e PostgreSQL. O migration head atual é **V35**.
+O IWrite usa Flyway e PostgreSQL. O migration head atual é **V36**.
 
 ## Regras
 
@@ -172,11 +172,29 @@ Fase expand da fundação de Book Roles (#205):
 - `book_collaboration_invitations.requested_role` passa a aceitar os papéis atribuíveis, mantendo convites `COLLABORATOR` já persistidos como estado legado auditável que nunca vira grant por inferência; a criação de novos convites fica fechada nesta fase, e a #213 a reabre com os papéis atribuíveis.
 - constraints de catálogo adicionadas como `NOT VALID` e validadas em statement separado: o `ACCESS EXCLUSIVE` cobre apenas a mudança de catálogo, e a varredura das linhas existentes acontece sob `SHARE UPDATE EXCLUSIVE`, sem bloquear leituras e escritas concorrentes.
 
+### V36 — Personal Book Writing Goal por User + Book
+
+`V36__extract_personal_book_writing_goal.sql`
+
+Separa a meta diária pessoal dos settings compartilhados do Book (#206):
+
+- cria `book_personal_writing_goals`, único por `user_id + book_id`, com `daily_target_word_count` opcional e positivo quando presente;
+- versiona o goal inteiro — meta diária e dias planejados juntos — em `revision`, obrigatório e com default `0`. Cada save do contrato `/writing-goal` cita a revision que leu e é comparado com ela sob o lock de linha do Book, então duas abas que partiram do mesmo estado produzem exatamente um sucesso e um `409`, nunca um lost update silencioso. Linhas criadas pelo backfill começam em `0`, a mesma revision que um User sem linha lê: nenhuma das duas foi escolhida através do novo contrato;
+- indexa `book_id` separadamente: a chave única lidera por `user_id`, que é o caminho de leitura da meta, mas a exclusão de um Book precisa encontrar as linhas apenas por `book_id`, e sem esse índice o cascade varreria a tabela inteira a cada Book removido;
+- migra a antiga meta compartilhada para o Owner e para cada colaborador já existente do Book, sem criar meta para Users sem relação com o livro;
+- valores legados não positivos são tratados como ausência de meta, não como zero;
+- preserva o histórico de `book_daily_writing_progress`, que já carrega o snapshot da meta vigente no respectivo dia, e não reescreve `book_writing_schedules`, que já eram User + Book scoped;
+- remove `books.daily_target_word_count`, eliminando do schema o antigo estado compartilhado que o novo contrato não reconhece;
+- congela explicitamente `books` em `access exclusive` e `book_collaborators` em `share row exclusive` antes de ler qualquer um dos dois. Os dois decidem o resultado do backfill — o valor migrado e o conjunto de Users que o recebe — e nenhum dos dois lock é implícito o bastante para ser deixado subentendido: o de `book_collaborators` não é implicado por nada, porque um grant toma `row exclusive` em `book_collaborators` e apenas `row share` em `books`, e `row share` não conflita com `share row exclusive`. `books` precisa do modo mais forte por um motivo separado do congelamento: `share row exclusive` ainda admitiria o `row share` de um `select ... for update`, então uma mutation iniciada **depois** dos dois locks pegaria a linha do Book, ficaria esperando `book_collaborators`, e a própria migration ficaria esperando essa linha do Book na checagem de FK do backfill — um ciclo real, que o PostgreSQL resolve abortando um dos dois e que poderia matar o cutover no deploy em que ele deve rodar. Em `access exclusive` nenhuma mutation entra em `books` depois do lock, então o ciclo não tem segunda aresta. `books` é travado primeiro para coincidir com a ordem que a própria aplicação usa ao conceder colaboração. O custo é que leitores também esperam pelo backfill inteiro, e não apenas pelo `drop column` final — aceitável porque este release já é parada e substituição.
+
+A remoção da coluna é deliberadamente incompatível com versões anteriores da aplicação: uma instância pré-V36 ainda seleciona `books.daily_target_word_count` e passa a falhar em toda leitura de Book assim que a migration roda. O deploy desta versão é, portanto, parada e substituição, não rolling — o que é adequado à topologia de backend único, mas precisa ser respeitado por qualquer ambiente que execute mais de uma instância.
+
 ## Estado atual
 
-- migration head: **V35**;
+- migration head: **V36**;
 - tenant e ownership de livro persistidos;
 - colaboradores persistidos com Book Role explícito e revogável;
+- metas diárias pessoais persistidas por User + Book em `book_personal_writing_goals`;
 - convites seguros persistidos;
 - auditoria de domínio e LLM persistidas;
 - credenciais reais persistidas separadamente;

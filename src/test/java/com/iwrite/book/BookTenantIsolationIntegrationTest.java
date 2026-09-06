@@ -26,7 +26,6 @@ import org.springframework.http.MediaType;
 import org.springframework.test.web.servlet.MockMvc;
 
 import java.time.ZoneId;
-import java.util.List;
 import java.util.Map;
 import java.util.UUID;
 
@@ -36,6 +35,7 @@ import static com.iwrite.support.SwitchableCurrentUserProvider.DEFAULT_USER_ID;
 import static org.hamcrest.Matchers.contains;
 import static org.hamcrest.Matchers.containsString;
 import static org.hamcrest.Matchers.hasItem;
+import static org.hamcrest.Matchers.nullValue;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.delete;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.get;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.patch;
@@ -196,12 +196,12 @@ class BookTenantIsolationIntegrationTest extends PostgresIntegrationTest {
     }
 
     @Test
-    void sameTenantMemberLazilyReceivesIndependentDefaultScheduleForBookListReadAndPatch() throws Exception {
+    void sameTenantMemberLazilyReceivesIndependentDefaultScheduleThroughTheirOwnWritingGoal() throws Exception {
         var book = createBook("Shared same-tenant book");
-        mockMvc.perform(patch("/api/books/{bookId}", book.id())
+        mockMvc.perform(patch("/api/books/{bookId}/writing-goal", book.id())
                         .contentType(MediaType.APPLICATION_JSON)
                         .content("""
-                                {"plannedWritingDays":["MONDAY","WEDNESDAY"]}
+                                {"expectedRevision":0,"plannedWritingDays":["MONDAY","WEDNESDAY"]}
                                 """))
                 .andExpect(status().isOk())
                 .andExpect(jsonPath("$.plannedWritingDays", contains("MONDAY", "WEDNESDAY")));
@@ -210,17 +210,24 @@ class BookTenantIsolationIntegrationTest extends PostgresIntegrationTest {
         addCollaborator(book.id(), sameTenantUserId);
         currentUserProvider.switchTo(sameTenantUserId, DEFAULT_TENANT_ID, ZoneId.of("UTC"));
 
+        // Reading the shared Book no longer fabricates a personal routine, because the routine left the
+        // Book contract with the Personal Book Writing Goal: only the goal surface creates one lazily.
         mockMvc.perform(get("/api/books"))
-                .andExpect(status().isOk())
-                .andExpect(jsonPath("$[?(@.id == '%s')].plannedWritingDays".formatted(book.id()), hasItem(List.of(
-                        "MONDAY", "TUESDAY", "WEDNESDAY", "THURSDAY", "FRIDAY", "SATURDAY", "SUNDAY"
-                ))));
+                .andExpect(status().isOk());
         mockMvc.perform(get("/api/books/{bookId}", book.id()))
+                .andExpect(status().isOk());
+        assertThat(scheduleRepository.countByUser_IdAndBookIdAndEffectiveToIsNull(sameTenantUserId, book.id()))
+                .isZero();
+
+        // Their own goal, not the owner's: the default routine and no target at all, never the
+        // Monday/Wednesday routine the owner chose for themselves.
+        mockMvc.perform(get("/api/books/{bookId}/writing-goal", book.id()))
                 .andExpect(status().isOk())
+                .andExpect(jsonPath("$.dailyTargetWordCount").value(nullValue()))
                 .andExpect(jsonPath("$.plannedWritingDays", contains(
                         "MONDAY", "TUESDAY", "WEDNESDAY", "THURSDAY", "FRIDAY", "SATURDAY", "SUNDAY"
                 )));
-        mockMvc.perform(get("/api/books/{bookId}", book.id()))
+        mockMvc.perform(get("/api/books/{bookId}/writing-goal", book.id()))
                 .andExpect(status().isOk());
 
         assertThat(scheduleRepository.countByUser_IdAndBookIdAndEffectiveToIsNull(sameTenantUserId, book.id()))
@@ -235,10 +242,10 @@ class BookTenantIsolationIntegrationTest extends PostgresIntegrationTest {
         currentUserProvider.reset();
         addCollaborator(book.id(), sameTenantPatchUserId);
         currentUserProvider.switchTo(sameTenantPatchUserId, DEFAULT_TENANT_ID, ZoneId.of("UTC"));
-        mockMvc.perform(patch("/api/books/{bookId}", book.id())
+        mockMvc.perform(patch("/api/books/{bookId}/writing-goal", book.id())
                         .contentType(MediaType.APPLICATION_JSON)
                         .content("""
-                                {"plannedWritingDays":["FRIDAY"]}
+                                {"expectedRevision":0,"plannedWritingDays":["FRIDAY"]}
                                 """))
                 .andExpect(status().isOk())
                 .andExpect(jsonPath("$.plannedWritingDays", contains("FRIDAY")));

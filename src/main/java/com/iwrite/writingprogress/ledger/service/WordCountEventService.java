@@ -8,6 +8,7 @@ import com.iwrite.user.context.CurrentUserMembershipService;
 import com.iwrite.writingprogress.ledger.entity.BookWordCountEvent;
 import com.iwrite.writingprogress.ledger.repository.BookWordCountEventRepository;
 import com.iwrite.writingprogress.repository.DailyWritingProgressRepository;
+import com.iwrite.writingprogress.service.PersonalBookWritingGoalService;
 import com.iwrite.writingprogress.service.WritingDayResolver;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
@@ -27,6 +28,7 @@ public class WordCountEventService {
     private final BookWordCountEventRepository eventRepository;
     private final DailyWritingProgressRepository progressRepository;
     private final CurrentUserMembershipService currentUserMembershipService;
+    private final PersonalBookWritingGoalService personalBookWritingGoalService;
     private final WritingDayResolver writingDayResolver;
     private final Clock clock;
 
@@ -35,6 +37,7 @@ public class WordCountEventService {
             BookWordCountEventRepository eventRepository,
             DailyWritingProgressRepository progressRepository,
             CurrentUserMembershipService currentUserMembershipService,
+            PersonalBookWritingGoalService personalBookWritingGoalService,
             WritingDayResolver writingDayResolver,
             Clock clock
     ) {
@@ -42,6 +45,7 @@ public class WordCountEventService {
         this.eventRepository = eventRepository;
         this.progressRepository = progressRepository;
         this.currentUserMembershipService = currentUserMembershipService;
+        this.personalBookWritingGoalService = personalBookWritingGoalService;
         this.writingDayResolver = writingDayResolver;
         this.clock = clock;
     }
@@ -98,7 +102,9 @@ public class WordCountEventService {
                     actorUserId,
                     command.bookId(),
                     progressDate,
-                    book.getDailyTargetWordCount(),
+                    // The daily rollup snapshots the actor's own target for that date, so each
+                    // collaborator's history keeps the goal they had chosen and never another's.
+                    personalBookWritingGoalService.dailyTargetWordCountFor(command.bookId(), actorUserId),
                     command.knownManuscriptTotalAfterOperation(),
                     command.productiveWordDelta(),
                     command.manuscriptWordDelta(),

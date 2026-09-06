@@ -11,6 +11,8 @@ import { FeedbackMessage } from "@/components/ui/feedback-message";
 import { Input } from "@/components/ui/input";
 import { updateBook } from "@/features/books/api/books-api";
 import type { DayOfWeek } from "@/features/books/types";
+import { updateWritingGoal } from "@/features/writing-goal/api/writing-goal-api";
+import type { PersonalBookWritingGoal } from "@/features/writing-goal/types";
 import type { WritingProgressPeriod } from "@/features/dashboard/api/dashboard-api";
 import { useBookContributions, useBookDashboard } from "@/features/dashboard/api/dashboard-hooks";
 import {
@@ -22,11 +24,15 @@ import { DashboardMetricCard } from "@/features/dashboard/components/dashboard-m
 import { DashboardStatusCard } from "@/features/dashboard/components/dashboard-status-card";
 import type {
   BookDashboardResponse,
+  BookMyWritingResponse,
   EntityUsageResponse,
   PovStatsResponse,
 } from "@/features/dashboard/types";
 import { ApiError } from "@/lib/api/client";
 import { queryKeys } from "@/lib/query/keys";
+
+/** The server's answer when the goal this save was decided against has already been replaced. */
+const STALE_GOAL_STATUS = 409;
 
 type BookDashboardProps = {
   bookId: string;
@@ -37,6 +43,10 @@ type BookDashboardProps = {
 export function BookDashboard({ bookId, onOpenSceneInEditor, onOpenWorkspaceTab }: BookDashboardProps) {
   const [progressPeriod, setProgressPeriod] = useState<WritingProgressPeriod>("7d");
   const dashboardQuery = useBookDashboard(bookId, progressPeriod);
+  // keepPreviousData can hand back another Book's snapshot while this Book still loads. Never render
+  // or mutate a dashboard whose bookId does not match the Book in the route.
+  const dashboard = dashboardQuery.data?.bookId === bookId ? dashboardQuery.data : undefined;
+  const isLoading = dashboardQuery.isLoading || (!dashboard && !dashboardQuery.isError);
 
   return (
     <section className="h-full overflow-y-auto bg-zinc-50 p-4 md:p-6">
@@ -48,15 +58,15 @@ export function BookDashboard({ bookId, onOpenSceneInEditor, onOpenWorkspaceTab 
           </p>
         </header>
 
-        {dashboardQuery.isLoading ? <LoadingState label="Carregando visão geral..." /> : null}
+        {isLoading ? <LoadingState label="Carregando visão geral..." /> : null}
 
         {dashboardQuery.isError ? (
           <ErrorState message="Não foi possível carregar a visão geral. Verifique o backend e tente novamente." />
         ) : null}
 
-        {dashboardQuery.data ? (
+        {dashboard ? (
           <DashboardContent
-            dashboard={dashboardQuery.data}
+            dashboard={dashboard}
             progressPeriod={progressPeriod}
             isProgressRefetching={dashboardQuery.isFetching && !dashboardQuery.isLoading}
             onProgressPeriodChange={setProgressPeriod}
@@ -86,6 +96,14 @@ function DashboardContent({
 }) {
   const planningPercent = clampPercent(dashboard.planningProgress.plannedScenesPercent);
   const [detailTarget, setDetailTarget] = useState<DashboardDetailTarget | null>(null);
+  // Editable cards hold local draft state. Re-key them by Book and by the capability that governs
+  // them so navigating to another Book, or losing the capability, drops any open editor instead of
+  // letting a stale draft survive and later save against the wrong Book.
+  const canManageOwnGoal = dashboard.capabilities.includes("MANAGE_OWN_PERSONAL_WRITING_GOAL");
+  const canEditBookSettings = dashboard.capabilities.includes("EDIT_BOOK_SETTINGS");
+  // The backend omits the whole personal projection for a role that may not keep a writing goal, so
+  // there is nothing personal to render — not a routine, not a per-day target snapshot.
+  const myWriting = dashboard.myWriting;
 
   function handleOpenSceneInEditor(sceneId: string) {
     onOpenSceneInEditor?.(sceneId);
@@ -122,14 +140,20 @@ function DashboardContent({
       ) : null}
 
       <SectionHeader title="Progresso do manuscrito" description="Estado compartilhado do livro, independente do contribuidor." />
-      <WordTargetCard dashboard={dashboard} />
-      <SectionHeader title="Meu progresso" description="Sua rotina, metas e escrita registrada para este livro." />
-      <DailyWritingGoalCard
-        dashboard={dashboard}
-        progressPeriod={progressPeriod}
-        isProgressRefetching={isProgressRefetching}
-        onProgressPeriodChange={onProgressPeriodChange}
-      />
+      <WordTargetCard key={`book-target:${dashboard.bookId}:${canEditBookSettings}`} dashboard={dashboard} />
+      {myWriting ? (
+        <>
+          <SectionHeader title="Meu progresso" description="Sua rotina, metas e escrita registrada para este livro." />
+          <DailyWritingGoalCard
+            key={`personal-goal:${dashboard.bookId}:${canManageOwnGoal}`}
+            dashboard={dashboard}
+            myWriting={myWriting}
+            progressPeriod={progressPeriod}
+            isProgressRefetching={isProgressRefetching}
+            onProgressPeriodChange={onProgressPeriodChange}
+          />
+        </>
+      ) : null}
       <BookContributionCard key={dashboard.bookId} bookId={dashboard.bookId} progressPeriod={progressPeriod} />
 
       <Card className="p-4 transition-[transform,background-color,box-shadow] duration-150 ease-out hover:scale-[1.01] hover:bg-white hover:shadow-sm hover:shadow-zinc-200/70">
@@ -246,76 +270,130 @@ function DashboardContent({
 
 function DailyWritingGoalCard({
   dashboard,
+  myWriting,
   progressPeriod,
   isProgressRefetching,
   onProgressPeriodChange,
 }: {
   dashboard: BookDashboardResponse;
+  myWriting: BookMyWritingResponse;
   progressPeriod: WritingProgressPeriod;
   isProgressRefetching: boolean;
   onProgressPeriodChange: (period: WritingProgressPeriod) => void;
 }) {
   const queryClient = useQueryClient();
-  const today = dashboard.myWriting.progress.today;
-  const writingSchedule = dashboard.myWriting.schedule;
-  const currentDailyTargetWordCount = dashboard.dailyTargetWordCount;
+  const today = myWriting.progress.today;
+  const writingSchedule = myWriting.schedule;
+  // The goal as the dashboard read it. The backend projects all three from one coherent snapshot, so
+  // they are only ever adopted together.
+  const serverTargetWordCount = dashboard.dailyTargetWordCount ?? null;
+  const serverPlannedWritingDays = writingSchedule.plannedWritingDays;
+  const serverRevision = myWriting.writingGoalRevision;
+  // The goal this card edits against, held as one snapshot: both halves and the revision that
+  // versions them together. They move together or not at all, because the revision has to name the
+  // exact state a save was decided against. Quoting it back lets the server refuse a save whose
+  // starting point another tab has already replaced, instead of losing that tab's choice silently.
+  //
+  // An accepted save adopts the whole goal that save returned rather than waiting for the dashboard
+  // to refetch: the editor reopens immediately, so until fresher data arrives the returned snapshot
+  // is the only state this card can honestly show and quote. Adopting the revision alone would pair
+  // it with the routine that same save replaced, and the next edit would silently undo the choice
+  // just accepted; keeping the read revision would turn that edit into a conflict no concurrent
+  // change caused.
+  const [goal, setGoal] = useState<PersonalGoalSnapshot>(() => ({
+    dailyTargetWordCount: serverTargetWordCount,
+    plannedWritingDays: serverPlannedWritingDays,
+    revision: serverRevision,
+  }));
   const [isEditing, setIsEditing] = useState(false);
   const [isEditingRoutine, setIsEditingRoutine] = useState(false);
-  const [savedTargetValue, setSavedTargetValue] = useState<number | null>(currentDailyTargetWordCount ?? null);
-  const [targetValue, setTargetValue] = useState(currentDailyTargetWordCount?.toString() ?? "");
-  const [selectedRoutineDays, setSelectedRoutineDays] = useState<DayOfWeek[]>(writingSchedule.plannedWritingDays);
+  const [targetValue, setTargetValue] = useState(goal.dailyTargetWordCount?.toString() ?? "");
+  const [selectedRoutineDays, setSelectedRoutineDays] = useState<DayOfWeek[]>(goal.plannedWritingDays);
   const [validationMessage, setValidationMessage] = useState<string | null>(null);
   const [successMessage, setSuccessMessage] = useState<string | null>(null);
 
+  // The goal is the signed-in user's own, so nothing shared is refreshed: the book list keeps its
+  // cache. The dashboard already projects this user's own target, and it is deliberately the only
+  // place that reads it, so there is no second cache of the same value to invalidate here.
   const updateTargetMutation = useMutation({
-    mutationFn: (dailyTargetWordCount: number | null) => updateBook(dashboard.bookId, { dailyTargetWordCount }),
-    onSuccess: () => {
-      void queryClient.invalidateQueries({ queryKey: queryKeys.bookDashboard(dashboard.bookId) });
-      void queryClient.invalidateQueries({ queryKey: queryKeys.book(dashboard.bookId) });
-      void queryClient.invalidateQueries({ queryKey: queryKeys.books });
-    },
+    mutationFn: (dailyTargetWordCount: number | null) =>
+      updateWritingGoal(dashboard.bookId, { expectedRevision: goal.revision, dailyTargetWordCount }),
+    onSuccess: adoptSavedGoal,
+    onError: refetchOnStaleGoal,
   });
 
   const updateScheduleMutation = useMutation({
-    mutationFn: (plannedWritingDays: DayOfWeek[]) => updateBook(dashboard.bookId, { plannedWritingDays }),
-    onSuccess: () => {
-      void queryClient.invalidateQueries({ queryKey: queryKeys.bookDashboard(dashboard.bookId) });
-      void queryClient.invalidateQueries({ queryKey: queryKeys.book(dashboard.bookId) });
-      void queryClient.invalidateQueries({ queryKey: queryKeys.books });
-    },
+    mutationFn: (plannedWritingDays: DayOfWeek[]) =>
+      updateWritingGoal(dashboard.bookId, { expectedRevision: goal.revision, plannedWritingDays }),
+    onSuccess: adoptSavedGoal,
+    onError: refetchOnStaleGoal,
   });
 
-  useEffect(() => {
-    setSavedTargetValue(currentDailyTargetWordCount ?? null);
-    setTargetValue(currentDailyTargetWordCount?.toString() ?? "");
-  }, [currentDailyTargetWordCount]);
+  // The revision covers the whole goal, so the whole goal moves to what the accepted save returned
+  // before the card lets the user edit again. The refetch that follows is reconciliation, not the
+  // source of this state.
+  function adoptSavedGoal(savedGoal: PersonalBookWritingGoal) {
+    setGoal({
+      dailyTargetWordCount: savedGoal.dailyTargetWordCount,
+      plannedWritingDays: savedGoal.plannedWritingDays,
+      revision: savedGoal.revision,
+    });
+    void queryClient.invalidateQueries({ queryKey: queryKeys.bookDashboard(dashboard.bookId) });
+  }
 
+  // A refused save means this card is showing superseded state, so pull the newer goal in and let the
+  // user decide again against it rather than leaving a stale editor open over it.
+  //
+  // Closing the editors is what makes that reconciliation happen: an open draft holds the snapshot it
+  // was decided against, so a draft left open over a refusal would keep quoting the revision the
+  // server just rejected and earn the same conflict on every retry.
+  function refetchOnStaleGoal(error: unknown) {
+    if (error instanceof ApiError && error.status === STALE_GOAL_STATUS) {
+      setIsEditing(false);
+      setIsEditingRoutine(false);
+      void queryClient.invalidateQueries({ queryKey: queryKeys.bookDashboard(dashboard.bookId) });
+    }
+  }
+
+  // Fresher server state is adopted only while no draft is open, and only when it is actually newer
+  // than what this card holds. An open draft was decided against the snapshot it was opened at, so
+  // swapping that snapshot underneath it would let the save quote a revision the user never saw and
+  // the server accept a decision taken against superseded state; the draft keeps its own revision
+  // and reconciles through the conflict the server then answers with. A read older than the goal an
+  // accepted save returned is stale in the other direction and is ignored for the same reason.
   useEffect(() => {
-    setSelectedRoutineDays(writingSchedule.plannedWritingDays);
-  }, [writingSchedule.plannedWritingDays]);
+    if (isEditing || isEditingRoutine) {
+      return;
+    }
+
+    setGoal((currentGoal) => (serverRevision > currentGoal.revision
+      ? { dailyTargetWordCount: serverTargetWordCount, plannedWritingDays: serverPlannedWritingDays, revision: serverRevision }
+      : currentGoal));
+  }, [isEditing, isEditingRoutine, serverRevision, serverTargetWordCount, serverPlannedWritingDays]);
 
   function startEditing() {
     setValidationMessage(null);
     setSuccessMessage(null);
+    setTargetValue(goal.dailyTargetWordCount?.toString() ?? "");
     setIsEditing(true);
   }
 
   function startEditingRoutine() {
     setValidationMessage(null);
     setSuccessMessage(null);
-    setSelectedRoutineDays(writingSchedule.plannedWritingDays);
+    setSelectedRoutineDays(goal.plannedWritingDays);
     setIsEditingRoutine(true);
   }
 
   function cancelEditing() {
     setValidationMessage(null);
-    setTargetValue(currentDailyTargetWordCount?.toString() ?? "");
+    setTargetValue(goal.dailyTargetWordCount?.toString() ?? "");
     setIsEditing(false);
   }
 
   function cancelRoutineEditing() {
     setValidationMessage(null);
-    setSelectedRoutineDays(writingSchedule.plannedWritingDays);
+    setSelectedRoutineDays(goal.plannedWritingDays);
     setIsEditingRoutine(false);
   }
 
@@ -332,7 +410,6 @@ function DailyWritingGoalCard({
 
     updateTargetMutation.mutate(parsedValue, {
       onSuccess: () => {
-        setSavedTargetValue(parsedValue);
         setSuccessMessage("Meta diária salva.");
         setIsEditing(false);
       },
@@ -344,7 +421,6 @@ function DailyWritingGoalCard({
     setSuccessMessage(null);
     updateTargetMutation.mutate(null, {
       onSuccess: () => {
-        setSavedTargetValue(null);
         setSuccessMessage("Meta diária removida.");
         setIsEditing(false);
       },
@@ -386,12 +462,15 @@ function DailyWritingGoalCard({
 
   const errorMessage = getBookTargetErrorMessage(updateTargetMutation.error);
   const scheduleErrorMessage = getBookTargetErrorMessage(updateScheduleMutation.error);
-  const effectiveDailyTargetWordCount = savedTargetValue;
+  // Presentation only: the backend authorizes every save again, so a hidden control never stands in
+  // for the authorization boundary.
+  const canManageOwnGoal = dashboard.capabilities.includes("MANAGE_OWN_PERSONAL_WRITING_GOAL");
+  const effectiveDailyTargetWordCount = goal.dailyTargetWordCount;
   const hasTarget = effectiveDailyTargetWordCount != null;
   const isTodayPlannedWritingDay = writingSchedule.todayPlannedWritingDay;
   const progressPercent = hasTarget ? (today.productiveWordCountChange * 100.0) / effectiveDailyTargetWordCount : (today.progressPercent ?? 0);
   const visualProgressPercent = clampPercent(progressPercent);
-  const routineSummary = formatRoutineSummary(writingSchedule.plannedWritingDays, writingSchedule.restDays);
+  const routineSummary = formatRoutineSummary(goal.plannedWritingDays, restDaysOf(goal.plannedWritingDays));
   const activeRoutinePreset = getRoutinePreset(selectedRoutineDays);
 
   return (
@@ -402,7 +481,7 @@ function DailyWritingGoalCard({
           <p className="mt-1 text-sm text-zinc-500">Acompanhe os dias planejados e o avanco de escrita registrado hoje.</p>
           <p className="mt-2 text-sm font-medium text-zinc-900">{routineSummary}</p>
         </div>
-        {!isEditing && !isEditingRoutine ? (
+        {canManageOwnGoal && !isEditing && !isEditingRoutine ? (
           <div className="flex flex-wrap gap-2">
             <Button type="button" variant="secondary" size="sm" onClick={startEditingRoutine}>
               Editar rotina
@@ -467,7 +546,9 @@ function DailyWritingGoalCard({
         <div className="mt-4 rounded-md border border-dashed border-zinc-300 bg-zinc-50 p-4">
           <p className="text-sm font-medium text-zinc-900">Nenhuma meta diária definida.</p>
           <p className="mt-1 text-sm text-zinc-500">
-            Defina uma meta opcional para acompanhar o progresso de hoje e dos últimos dias.
+            {canManageOwnGoal
+              ? "Defina uma meta opcional para acompanhar o progresso de hoje e dos últimos dias."
+              : "Sem meta diária não significa progresso zero: ela é opcional e pessoal."}
           </p>
           {!isTodayPlannedWritingDay ? (
             <p className="mt-3 text-sm font-medium text-zinc-900">Hoje e um dia de descanso planejado.</p>
@@ -535,7 +616,7 @@ function DailyWritingGoalCard({
 
       <DailyProgressChart
         todayDate={today.date}
-        recentDays={dashboard.myWriting.progress.recentDays}
+        recentDays={myWriting.progress.recentDays}
         dailyTargetWordCount={effectiveDailyTargetWordCount}
         progressPeriod={progressPeriod}
         isRefetching={isProgressRefetching}
@@ -625,7 +706,7 @@ function DailyProgressChart({
   onProgressPeriodChange,
 }: {
   todayDate: string;
-  recentDays: BookDashboardResponse["myWriting"]["progress"]["recentDays"];
+  recentDays: BookMyWritingResponse["progress"]["recentDays"];
   dailyTargetWordCount: number | null;
   progressPeriod: WritingProgressPeriod;
   isRefetching: boolean;
@@ -645,8 +726,13 @@ function DailyProgressChart({
   const writingBuckets = chartEntries.filter((entry) => entry.productiveWordCountChange > 0).length;
   const averageWords = chartEntries.length === 0 ? 0 : Math.round(totalWords / chartEntries.length);
   const bestBucket = getBestWritingProgressBucket(chartEntries);
-  const goalHitDays = dailyTargetWordCount && dailyTargetWordCount > 0
-    ? recentDays.filter((day) => day.productiveWordCountChange >= dailyTargetWordCount).length
+  const daysWithHistoricalGoal = recentDays.filter(
+    (day) => day.dailyTargetWordCount != null && day.dailyTargetWordCount > 0
+  );
+  const goalHitDays = daysWithHistoricalGoal.length > 0
+    ? daysWithHistoricalGoal.filter(
+        (day) => day.productiveWordCountChange >= (day.dailyTargetWordCount ?? Number.POSITIVE_INFINITY)
+      ).length
     : null;
   const totalManuscriptAdjustments = recentDays.reduce((total, day) => total + day.manuscriptAdjustmentWordCount, 0);
   const periodLabel = getWritingProgressPeriodLabel(chartEntries, selectedPeriod.description, progressPeriod);
@@ -796,7 +882,7 @@ const CHART_BASELINE_Y = 98;
 
 function buildWritingProgressChartEntries(
   todayDate: string,
-  recentDays: BookDashboardResponse["myWriting"]["progress"]["recentDays"],
+  recentDays: BookMyWritingResponse["progress"]["recentDays"],
   progressPeriod: WritingProgressPeriod
 ): WritingProgressChartEntry[] {
   const endDate = getChartEndDate(todayDate);
@@ -845,7 +931,7 @@ function getWritingProgressPeriodLabel(
 }
 
 function buildDailyProgressBuckets(
-  recentDays: BookDashboardResponse["myWriting"]["progress"]["recentDays"],
+  recentDays: BookMyWritingResponse["progress"]["recentDays"],
   progressPeriod: WritingProgressPeriod,
   endDate: Date
 ) {
@@ -867,7 +953,7 @@ function buildDailyProgressBuckets(
 }
 
 function buildMonthlyProgressBuckets(
-  recentDays: BookDashboardResponse["myWriting"]["progress"]["recentDays"],
+  recentDays: BookMyWritingResponse["progress"]["recentDays"],
   progressPeriod: WritingProgressPeriod,
   endDate: Date
 ) {
@@ -931,6 +1017,18 @@ function getWritingProgressBucketCount(progressPeriod: WritingProgressPeriod) {
 function isMonthlyWritingProgressPeriod(progressPeriod: WritingProgressPeriod) {
   return progressPeriod === "3m" || progressPeriod === "6m" || progressPeriod === "12m";
 }
+
+/**
+ * The client-side view of the goal: the target, the routine and the revision that versions both.
+ *
+ * It is a snapshot on purpose. The revision only means something paired with the exact state it was
+ * read or accepted with, so the three fields are replaced together and never one at a time.
+ */
+type PersonalGoalSnapshot = {
+  dailyTargetWordCount: number | null;
+  plannedWritingDays: DayOfWeek[];
+  revision: number;
+};
 
 const WRITING_PROGRESS_PERIODS: Array<{ value: WritingProgressPeriod; label: string; description: string }> = [
   { value: "7d", label: "7 dias", description: "Últimos 7 dias" },
@@ -1033,6 +1131,9 @@ function WordTargetCard({ dashboard }: { dashboard: BookDashboardResponse }) {
   }
 
   const errorMessage = getBookTargetErrorMessage(updateTargetMutation.error);
+  // The book-wide target is shared book data, so only a user who may edit book settings sees the
+  // control. The server enforces the same rule on the request itself.
+  const canEditBookSettings = dashboard.capabilities.includes("EDIT_BOOK_SETTINGS");
   const hasTarget = dashboard.targetWordCount != null;
   const progressPercent = dashboard.wordCountProgressPercent ?? 0;
   const visualProgressPercent = clampPercent(progressPercent);
@@ -1044,7 +1145,7 @@ function WordTargetCard({ dashboard }: { dashboard: BookDashboardResponse }) {
           <h2 className="text-base font-semibold text-zinc-950">Meta de palavras</h2>
           <p className="mt-1 text-sm text-zinc-500">Referência editorial opcional para acompanhar o tamanho do livro.</p>
         </div>
-        {!isEditing ? (
+        {canEditBookSettings && !isEditing ? (
           <Button type="button" variant="secondary" size="sm" onClick={startEditing}>
             {hasTarget ? "Editar meta" : "Definir meta"}
           </Button>
@@ -1342,6 +1443,12 @@ function sameWeekdays(first: DayOfWeek[], second: DayOfWeek[]) {
   return first.length === second.length && ORDERED_WEEKDAYS.every((day) => first.includes(day) === second.includes(day));
 }
 
+// Derived from the same snapshot the routine came from, so the summary never pairs the days this
+// card holds with the rest days of the read it has already superseded.
+function restDaysOf(plannedWritingDays: DayOfWeek[]) {
+  return ORDERED_WEEKDAYS.filter((day) => !plannedWritingDays.includes(day));
+}
+
 function formatRoutineSummary(plannedWritingDays: DayOfWeek[], restDays: DayOfWeek[]) {
   const daysPerWeek = plannedWritingDays.length;
   if (restDays.length === 0) {
@@ -1366,6 +1473,10 @@ function getBookTargetErrorMessage(error: unknown) {
   }
 
   if (error instanceof ApiError) {
+    if (error.status === STALE_GOAL_STATUS) {
+      return "Esta meta foi salva em outra aba enquanto você editava. Recarregamos a versão atual; revise e salve de novo.";
+    }
+
     return error.message || "Não foi possível salvar a meta agora.";
   }
 

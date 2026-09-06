@@ -187,6 +187,8 @@ class BookCollaborationAccessIntegrationTest extends PostgresIntegrationTest {
                 .andExpect(jsonPath("$.role").value("LEGACY_COLLABORATOR"));
 
         currentUserProvider.switchTo(collaboratorId, DEFAULT_TENANT_ID, ZoneId.of("UTC"));
+        // The Book settings contract owns none of these fields, so a request that tries to assert its
+        // own access is refused outright rather than quietly ignored.
         mockMvc.perform(patch("/api/books/{bookId}", book.id())
                         .contentType(MediaType.APPLICATION_JSON)
                         .content("""
@@ -194,7 +196,16 @@ class BookCollaborationAccessIntegrationTest extends PostgresIntegrationTest {
                                  "capabilities":["MANAGE_COLLABORATORS","DELETE_BOOK"],
                                  "contextualCapabilities":["MANAGE_COLLABORATORS"]}
                                 """))
+                .andExpect(status().isBadRequest());
+
+        // A legitimate settings change still projects only the access the backend derived.
+        mockMvc.perform(patch("/api/books/{bookId}", book.id())
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content("""
+                                {"title":"Still a collaborator"}
+                                """))
                 .andExpect(status().isOk())
+                .andExpect(jsonPath("$.title").value("Still a collaborator"))
                 .andExpect(jsonPath("$.relationship").value("COLLABORATOR"))
                 .andExpect(jsonPath("$.role").value("LEGACY_COLLABORATOR"))
                 .andExpect(jsonPath("$.capabilities", not(hasItem("MANAGE_COLLABORATORS"))))
