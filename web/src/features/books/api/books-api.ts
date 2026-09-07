@@ -5,6 +5,14 @@ export function listBooks() {
   return apiRequest<Book[]>("/api/books");
 }
 
+/**
+ * Reads one book with the effective access the backend derived for the current user. Surfaces that
+ * present book-scoped actions read the capabilities from here instead of inferring them from a role.
+ */
+export function getBook(bookId: string) {
+  return apiRequest<Book>(`/api/books/${bookId}`);
+}
+
 export function createBook(request: CreateBookRequest) {
   return apiRequest<Book>("/api/books", {
     method: "POST",

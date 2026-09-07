@@ -61,6 +61,17 @@ describe("TiptapEditor toolbar", () => {
     expect(screen.getByRole("button", { name: "Refazer" })).toBeInTheDocument();
   });
 
+  test("em somente leitura esconde a barra e desliga a edicao", () => {
+    const editor = createEditor();
+    mocks.useEditor.mockReturnValue(editor);
+
+    renderEditor({ readOnly: true });
+
+    expect(screen.queryByRole("button", { name: "B" })).not.toBeInTheDocument();
+    expect(mocks.useEditor).toHaveBeenCalledWith(expect.objectContaining({ editable: false }));
+    expect(editor.setEditable).toHaveBeenCalledWith(false);
+  });
+
   test("aciona comando de alinhamento ao clicar em um botao", () => {
     renderEditor();
 
@@ -70,9 +81,9 @@ describe("TiptapEditor toolbar", () => {
   });
 });
 
-function renderEditor() {
+function renderEditor(props?: Partial<React.ComponentProps<typeof TiptapEditor>>) {
   renderWithClient(
-    <TiptapEditor contentKey="scene-1" initialContentText="Texto" onChange={vi.fn()} />
+    <TiptapEditor contentKey="scene-1" initialContentText="Texto" onChange={vi.fn()} {...props} />
   );
 }
 
@@ -94,6 +105,7 @@ function createEditor() {
 
   return {
     isActive: vi.fn(() => false),
+    setEditable: vi.fn(),
     can: vi.fn(() => ({
       undo: vi.fn(() => true),
       redo: vi.fn(() => true),

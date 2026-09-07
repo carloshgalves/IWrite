@@ -11,6 +11,8 @@ type TiptapEditorProps = {
   contentKey: string;
   initialContentJson?: JSONContent | string | null;
   initialContentText?: string | null;
+  /** Read-only mode: the document renders, the toolbar is inert and no edit reaches onChange. */
+  readOnly?: boolean;
   onChange: (contentJson: JSONContent, contentText: string) => void;
   className?: string;
 };
@@ -172,6 +174,7 @@ export function TiptapEditor({
   contentKey,
   initialContentJson,
   initialContentText,
+  readOnly = false,
   onChange,
   className = "",
 }: TiptapEditorProps) {
@@ -183,6 +186,7 @@ export function TiptapEditor({
   const editor = useEditor({
     extensions: [StarterKit, TextAlign.configure({ types: ["paragraph", "heading"] })],
     content: initialContent,
+    editable: !readOnly,
     immediatelyRender: false,
     editorProps: {
       attributes: {
@@ -205,9 +209,15 @@ export function TiptapEditor({
     editor.commands.setContent(initialContent, { emitUpdate: false });
   }, [contentKey, editor, initialContent]);
 
+  // The effective access arrives from the backend after the editor is created, so the editable flag
+  // has to follow it rather than being fixed at construction time.
+  useEffect(() => {
+    editor?.setEditable(!readOnly);
+  }, [editor, readOnly]);
+
   return (
     <div>
-      <TiptapToolbar editor={editor} />
+      {readOnly ? null : <TiptapToolbar editor={editor} />}
       <EditorContent editor={editor} />
     </div>
   );

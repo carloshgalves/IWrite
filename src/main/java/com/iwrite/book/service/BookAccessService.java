@@ -121,15 +121,35 @@ public class BookAccessService {
     @Transactional(readOnly = true)
     public BookAccessContext requireCapabilityEligibility(UUID bookId, BookCapability capability) {
         BookAccessContext context = resolveAccessContext(bookId);
-        if (!context.isEligible(capability)) {
-            throw bookNotFound(bookId);
-        }
+        requireEligible(context, capability, bookId);
         return context;
     }
 
     /**
+     * Mutation variant of {@link #requireCapabilityEligibility(UUID, BookCapability)}: proves the
+     * eligibility, takes the Book row lock, and proves it again under the lock, exactly as
+     * {@link #requireCapabilityForUpdate(UUID, BookCapability)} does for a granted capability.
+     *
+     * <p>Eligibility still authorizes nothing on its own. The caller receives the reproven access so it
+     * can evaluate its own resource-scoped predicate while holding the lock, which is what keeps the
+     * predicate and the mutation from straddling a concurrent revocation.
+     */
+    @Transactional
+    public AccessibleBook requireCapabilityEligibilityForUpdate(UUID bookId, BookCapability capability) {
+        UUID userId = currentUserMembershipService.requireCurrentUserMemberId();
+        UUID tenantId = currentUserProvider.tenantId();
+        requireEligible(accessibleBook(bookId, tenantId, userId).access(), capability, bookId);
+
+        Book lockedBook = bookRepository.findByIdAndTenantIdForUpdate(bookId, tenantId)
+                .orElseThrow(() -> bookNotFound(bookId));
+        AccessibleBook reproven = accessibleBook(bookId, tenantId, userId);
+        requireEligible(reproven.access(), capability, bookId);
+        return new AccessibleBook(lockedBook, reproven.access());
+    }
+
+    /**
      * Legacy generic read guard. It still answers "is this Book accessible at all" and remains in place
-     * only while the surfaces it protects are migrated to their minimum capability (#206 to #212).
+     * only while the surfaces it protects are migrated to their minimum capability (#208 to #212).
      */
     @Transactional(readOnly = true)
     public Book requireBookReadAccess(UUID bookId) {
@@ -189,6 +209,12 @@ public class BookAccessService {
 
     private void requireGranted(BookAccessContext context, BookCapability capability, UUID bookId) {
         if (!context.isGranted(capability)) {
+            throw bookNotFound(bookId);
+        }
+    }
+
+    private void requireEligible(BookAccessContext context, BookCapability capability, UUID bookId) {
+        if (!context.isEligible(capability)) {
             throw bookNotFound(bookId);
         }
     }

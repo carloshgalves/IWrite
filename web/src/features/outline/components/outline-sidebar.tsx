@@ -44,12 +44,18 @@ import { queryKeys } from "@/lib/query/keys";
 type OutlineSidebarProps = {
   bookId: string;
   selectedSceneId: string | null;
+  /**
+   * Whether the backend granted MUTATE_MANUSCRIPT_STRUCTURE for this book. Without it the outline is
+   * a reading surface: creating, renaming, reordering and deleting are not offered at all. Hiding
+   * them is presentation only — every one of those requests is authorized again on the server.
+   */
+  canMutateStructure: boolean;
   onSelectScene: (sceneId: string | null) => void;
 };
 
 const sectionTypes: SectionType[] = ["PART", "PROLOGUE", "INTERLUDE", "EPILOGUE", "OTHER"];
 
-export function OutlineSidebar({ bookId, selectedSceneId, onSelectScene }: OutlineSidebarProps) {
+export function OutlineSidebar({ bookId, selectedSceneId, canMutateStructure, onSelectScene }: OutlineSidebarProps) {
   const queryClient = useQueryClient();
   const [successMessage, setSuccessMessage] = useState("");
   const [editingSectionId, setEditingSectionId] = useState<string | null>(null);
@@ -374,13 +380,17 @@ export function OutlineSidebar({ bookId, selectedSceneId, onSelectScene }: Outli
       </div>
 
       <div className="grid gap-2 border-b border-zinc-200 bg-white px-4 py-3">
-        <InlineCreateForm
-          ariaLabel="Nova seção"
-          placeholder="Nova seção"
-          buttonLabel="Criar"
-          disabled={sectionMutation.isPending}
-          onCreate={(title) => sectionMutation.mutate(title)}
-        />
+        {canMutateStructure ? (
+          <InlineCreateForm
+            ariaLabel="Nova seção"
+            placeholder="Nova seção"
+            buttonLabel="Criar"
+            disabled={sectionMutation.isPending}
+            onCreate={(title) => sectionMutation.mutate(title)}
+          />
+        ) : (
+          <p className="text-xs text-zinc-500">Somente leitura: você não altera a estrutura deste livro.</p>
+        )}
         {successMessage ? <FeedbackMessage variant="success">{successMessage}</FeedbackMessage> : null}
       </div>
 
@@ -389,7 +399,11 @@ export function OutlineSidebar({ bookId, selectedSceneId, onSelectScene }: Outli
           <EmptyState
             size="sm"
             title="Nenhuma seção ainda"
-            description="Crie uma seção para começar a organizar o esboço do livro."
+            description={
+              canMutateStructure
+                ? "Crie uma seção para começar a organizar o esboço do livro."
+                : "Este livro ainda não tem seções para ler."
+            }
           />
         ) : (
           <DndContext
@@ -405,6 +419,7 @@ export function OutlineSidebar({ bookId, selectedSceneId, onSelectScene }: Outli
                   <SectionItem
                     key={section.id}
                     section={section}
+                    canMutateStructure={canMutateStructure}
                     isCollapsed={collapsedSectionIds.has(section.id)}
                     collapsedChapterIds={collapsedChapterIds}
                     sectionTypes={sectionTypes}

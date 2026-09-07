@@ -18,6 +18,7 @@ const chapter: OutlineChapter = {
 function renderChapterItem(props?: Partial<React.ComponentProps<typeof ChapterItem>>) {
   const defaultProps: React.ComponentProps<typeof ChapterItem> = {
     chapter,
+    canMutateStructure: true,
     isCollapsed: false,
     isEditing: false,
     chapterTitle: "",

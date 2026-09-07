@@ -5,6 +5,8 @@ import type { SceneStatus } from "@/features/scenes/types";
 
 type SceneMetadataFormProps = {
   formId: string;
+  /** Scene metadata is a manuscript structure mutation: without the capability the fields only show. */
+  readOnly: boolean;
   title: string;
   summary: string;
   status: SceneStatus;
@@ -19,6 +21,7 @@ type SceneMetadataFormProps = {
 
 export function SceneMetadataForm({
   formId,
+  readOnly,
   title,
   summary,
   status,
@@ -40,8 +43,11 @@ export function SceneMetadataForm({
         <span className="font-medium text-zinc-600">Título</span>
         <input
           value={title}
+          readOnly={readOnly}
           onChange={(event) => onTitleChange(event.target.value)}
-          className="min-h-9 rounded-md border border-zinc-300 bg-white px-3 py-1.5 text-sm outline-none transition focus:border-zinc-800 focus:ring-2 focus:ring-zinc-200"
+          className={`min-h-9 rounded-md border border-zinc-300 px-3 py-1.5 text-sm outline-none transition focus:border-zinc-800 focus:ring-2 focus:ring-zinc-200 ${
+            readOnly ? "bg-zinc-50 text-zinc-600" : "bg-white"
+          }`}
         />
       </label>
 
@@ -49,6 +55,7 @@ export function SceneMetadataForm({
         <span className="font-medium text-zinc-600">Status</span>
         <select
           value={status}
+          disabled={readOnly}
           onChange={(event) => onStatusChange(event.target.value as SceneStatus)}
           className="min-h-9 rounded-md border border-zinc-300 bg-white px-3 py-1.5 text-sm outline-none transition focus:border-zinc-800 focus:ring-2 focus:ring-zinc-200"
         >
@@ -65,8 +72,9 @@ export function SceneMetadataForm({
         <Textarea
           value={summary}
           rows={2}
+          readOnly={readOnly}
           onChange={(event) => onSummaryChange(event.target.value)}
-          className="resize-y bg-white text-sm focus:ring-2 focus:ring-zinc-200"
+          className={`resize-y text-sm focus:ring-2 focus:ring-zinc-200 ${readOnly ? "bg-zinc-50 text-zinc-600" : "bg-white"}`}
           placeholder="Resumo breve da função dramática desta cena."
         />
       </label>

@@ -27,6 +27,7 @@ describe("SceneKanbanPanel", () => {
     const { rerender } = renderWithClient(
       <SceneKanbanPanel
         bookId="book-1"
+        canMutateStructure
         outline={null}
         isLoading
         isError={false}
@@ -40,6 +41,7 @@ describe("SceneKanbanPanel", () => {
     rerender(
       <SceneKanbanPanel
         bookId="book-1"
+        canMutateStructure
         outline={null}
         isLoading={false}
         isError
@@ -52,6 +54,7 @@ describe("SceneKanbanPanel", () => {
     rerender(
       <SceneKanbanPanel
         bookId="book-1"
+        canMutateStructure
         outline={emptyOutline}
         isLoading={false}
         isError={false}
@@ -215,6 +218,7 @@ describe("SceneKanbanPanel", () => {
     rerender(
       <SceneKanbanPanel
         bookId="book-1"
+        canMutateStructure
         outline={outlineWithSceneStatus("scene-complete", "REVISED")}
         isLoading={false}
         isError={false}
@@ -225,12 +229,34 @@ describe("SceneKanbanPanel", () => {
 
     expect(screen.getByLabelText("Status de Cena completa")).toHaveValue("REVISED");
   });
+
+  test("sem a capability de estrutura o quadro so le o fluxo", async () => {
+    renderWithClient(
+      <SceneKanbanPanel
+        bookId="book-1"
+        canMutateStructure={false}
+        outline={outlineWithScenes}
+        isLoading={false}
+        isError={false}
+        onOpenSceneInEditor={vi.fn()}
+        onOpenScenePlanning={vi.fn()}
+      />
+    );
+
+    expect(screen.getByLabelText("Status de Cena completa")).toBeDisabled();
+    expect(screen.queryByRole("button", { name: "Mover cena Cena completa" })).not.toBeInTheDocument();
+
+    fireEvent.change(screen.getByLabelText("Status de Cena completa"), { target: { value: "PLANNED" } });
+
+    expect(updateSceneMock).not.toHaveBeenCalled();
+  });
 });
 
 function renderKanban(onOpenSceneInEditor = vi.fn(), onOpenScenePlanning = vi.fn()) {
   return renderWithClient(
     <SceneKanbanPanel
       bookId="book-1"
+      canMutateStructure
       outline={outlineWithScenes}
       isLoading={false}
       isError={false}

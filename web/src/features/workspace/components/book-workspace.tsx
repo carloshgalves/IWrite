@@ -6,6 +6,7 @@ import { useRouter, useSearchParams } from "next/navigation";
 import { useQuery } from "@tanstack/react-query";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
+import { getBook } from "@/features/books/api/books-api";
 import { CharactersPanel } from "@/features/characters/components/characters-panel";
 import type { DashboardWorkspaceTab } from "@/features/dashboard/components/dashboard-detail-modal";
 import { BookDashboard } from "@/features/dashboard/components/book-dashboard";
@@ -95,8 +96,24 @@ export function BookWorkspace({ bookId, initialSceneId }: BookWorkspaceProps) {
     queryKey: queryKeys.outline(bookId),
     queryFn: () => getOutline(bookId),
   });
+  const bookQuery = useQuery({
+    queryKey: queryKeys.book(bookId),
+    queryFn: () => getBook(bookId),
+  });
 
   const outline = outlineQuery.data;
+  // Effective access as the backend derived it. Until it arrives, the workspace presents the
+  // read-only surface: a control that turns out to be unauthorized is worse than one that appears a
+  // moment late, and the server authorizes every request again either way.
+  const capabilities = bookQuery.data?.capabilities;
+  const contextualCapabilities = bookQuery.data?.contextualCapabilities;
+  const canMutateStructure = Boolean(capabilities?.includes("MUTATE_MANUSCRIPT_STRUCTURE"));
+  // EDIT_AUTHORED_CONTRIBUTION is contextual for the roles that hold it at all: book scope makes a
+  // user eligible to attempt a content save, and the backend still decides it per scene. Offering the
+  // editor to an eligible user is the contract; hiding it would make the browser guess the predicate.
+  const canEditSceneContent = Boolean(
+    capabilities?.includes("EDIT_AUTHORED_CONTRIBUTION") || contextualCapabilities?.includes("EDIT_AUTHORED_CONTRIBUTION")
+  );
   const isScenesFocusMode = mode === "scenes" && isFocusMode;
 
   const exitNativeFullscreen = useCallback(() => {
@@ -382,7 +399,12 @@ export function BookWorkspace({ bookId, initialSceneId }: BookWorkspaceProps) {
       <div className={`grid min-h-0 grid-cols-1 overflow-hidden ${isScenesFocusMode ? "" : "md:grid-cols-[340px_minmax(0,1fr)]"}`}>
         {mode === "scenes" && !isScenesFocusMode ? (
           <div className="min-h-0 overflow-hidden border-r border-zinc-200 bg-white">
-            <OutlineSidebar bookId={bookId} selectedSceneId={selectedSceneId} onSelectScene={handleSelectScene} />
+            <OutlineSidebar
+              bookId={bookId}
+              selectedSceneId={selectedSceneId}
+              canMutateStructure={canMutateStructure}
+              onSelectScene={handleSelectScene}
+            />
           </div>
         ) : null}
 
@@ -404,6 +426,7 @@ export function BookWorkspace({ bookId, initialSceneId }: BookWorkspaceProps) {
             <SceneKanbanPanel
               bookId={bookId}
               outline={outline}
+              canMutateStructure={canMutateStructure}
               isLoading={outlineQuery.isLoading}
               isError={outlineQuery.isError}
               onOpenSceneInEditor={handleOpenSceneInEditor}
@@ -413,6 +436,8 @@ export function BookWorkspace({ bookId, initialSceneId }: BookWorkspaceProps) {
             <SceneEditor
               bookId={bookId}
               sceneId={selectedSceneId}
+              canMutateStructure={canMutateStructure}
+              canEditContent={canEditSceneContent}
               isFocusMode={isScenesFocusMode}
               isFullscreenAvailable={isFullscreenAvailable}
               isFullscreenActive={isFullscreenActive}

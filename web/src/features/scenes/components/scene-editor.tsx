@@ -29,6 +29,17 @@ const PLANNING_PANEL_STORAGE_KEY = "iwrite.scenePlanningPanelOpen";
 type SceneEditorProps = {
   bookId: string;
   sceneId: string | null;
+  /**
+   * MUTATE_MANUSCRIPT_STRUCTURE for this book. Scene metadata and deletion are structure mutations,
+   * so without it the header and the metadata form are read-only.
+   */
+  canMutateStructure: boolean;
+  /**
+   * Eligibility for EDIT_AUTHORED_CONTRIBUTION. Book scope alone never authorizes a content save: the
+   * backend evaluates authority over the scene itself, so this only decides whether the editor is
+   * offered as writable at all.
+   */
+  canEditContent: boolean;
   isFocusMode?: boolean;
   isFullscreenAvailable?: boolean;
   isFullscreenActive?: boolean;
@@ -73,6 +84,8 @@ export type PlanningPanelOpenIntent = {
 export function SceneEditor({
   bookId,
   sceneId,
+  canMutateStructure,
+  canEditContent,
   isFocusMode = false,
   isFullscreenAvailable = false,
   isFullscreenActive = false,
@@ -387,7 +400,7 @@ export function SceneEditor({
 
   function handleMetadataSubmit(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
-    if (!sceneId || !title.trim()) {
+    if (!sceneId || !canMutateStructure || !title.trim()) {
       return;
     }
 
@@ -456,12 +469,17 @@ export function SceneEditor({
   }
 
   function handleSaveContent(targetSceneId: string) {
+    if (!canEditContent) {
+      return;
+    }
+
     cancelQueuedAutosaves();
     void saveSceneContent(targetSceneId, currentContentJsonRef.current, currentContentTextRef.current, "MANUAL_SAVE");
   }
 
   function scheduleAutosave(targetSceneId: string, nextContentJson: string, nextContentText: string) {
     if (
+      !canEditContent ||
       !targetSceneId ||
       targetSceneId !== activeSceneIdRef.current ||
       loadedSceneIdRef.current !== targetSceneId ||
@@ -596,7 +614,7 @@ export function SceneEditor({
   }
 
   function handleDeleteScene(sceneTitle: string) {
-    if (!sceneId) {
+    if (!sceneId || !canMutateStructure) {
       return;
     }
 
@@ -692,6 +710,8 @@ export function SceneEditor({
           scene={scene}
           metadataFormId={METADATA_FORM_ID}
           title={title}
+          canMutateStructure={canMutateStructure}
+          canEditContent={canEditContent}
           contentSaveStatus={contentSaveStatus}
           metadataPending={metadataMutation.isPending}
           contentPending={contentMutation.isPending}
@@ -713,6 +733,7 @@ export function SceneEditor({
 
         <SceneMetadataForm
           formId={METADATA_FORM_ID}
+          readOnly={!canMutateStructure}
           title={title}
           summary={summary}
           status={status}
@@ -787,6 +808,7 @@ export function SceneEditor({
             sourceSceneId={scene.id}
             contentJson={contentJson}
             contentText={contentText}
+            readOnly={!canEditContent}
             wordCount={scene.wordCount}
             isSuccess={contentMutation.isSuccess}
             isError={contentMutation.isError}

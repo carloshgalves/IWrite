@@ -1,5 +1,6 @@
 package com.iwrite.section.service;
 
+import com.iwrite.book.authorization.BookCapability;
 import com.iwrite.book.entity.Book;
 import com.iwrite.book.service.BookAccessService;
 import com.iwrite.common.dto.ReorderRequest;
@@ -25,6 +26,14 @@ import java.util.UUID;
 import java.util.function.Function;
 import java.util.stream.Collectors;
 
+/**
+ * Book Section surfaces of the manuscript hierarchy.
+ *
+ * <p>Reading a Section is part of reading the Manuscript; creating, renaming, reordering, moving or
+ * deleting one is a Manuscript Structure Mutation, which the Book Capability Policy authorizes for the
+ * Book Owner alone in this partition (#207). The two lookups below exist so a caller has to name which
+ * of the two it is doing instead of inheriting a generic "can edit this Book" answer.
+ */
 @Service
 public class BookSectionService {
 
@@ -50,7 +59,7 @@ public class BookSectionService {
 
     @Transactional
     public BookSectionResponse create(UUID bookId, BookSectionRequest request) {
-        Book book = bookAccessService.requireBookEditAccess(bookId);
+        Book book = bookAccessService.requireCapability(bookId, BookCapability.MUTATE_MANUSCRIPT_STRUCTURE);
 
         BookSection section = new BookSection();
         section.setBook(book);
@@ -63,7 +72,7 @@ public class BookSectionService {
 
     @Transactional
     public BookSectionResponse update(UUID sectionId, BookSectionUpdateRequest request) {
-        BookSection section = getSection(sectionId);
+        BookSection section = getSectionForStructureMutation(sectionId);
         RequestValidation.rejectBlankWhenPresent("title", request.title());
 
         if (request.title() != null) {
@@ -81,34 +90,51 @@ public class BookSectionService {
 
     @Transactional
     public void delete(UUID sectionId) {
-        BookSection section = getSection(sectionId);
+        BookSection section = getSectionForStructureMutation(sectionId);
         var scenes = sceneRepository.findBySectionIdForUpdate(sectionId);
-        Book lockedBook = bookAccessService.requireBookEditAccessForUpdate(section.getBook().getId());
+        Book lockedBook = bookAccessService.requireCapabilityForUpdate(
+                section.getBook().getId(),
+                BookCapability.MUTATE_MANUSCRIPT_STRUCTURE
+        );
         sceneDeletionLedgerService.prepareSceneDeletes(scenes, lockedBook, UUID.randomUUID());
         sectionRepository.deleteById(sectionId);
     }
 
     @Transactional
     public void reorder(UUID bookId, ReorderRequest request) {
-        bookAccessService.requireBookEditAccess(bookId);
+        bookAccessService.requireCapability(bookId, BookCapability.MUTATE_MANUSCRIPT_STRUCTURE);
         List<BookSection> sections = sectionRepository.findByBookIdOrderBySortOrderAsc(bookId);
         applyReorder(sections, request.orderedIds(), BookSection::getId, BookSection::setSortOrder, "sections");
     }
 
+    /** Reads a Section the current User may read the Manuscript of. */
     @Transactional(readOnly = true)
     public BookSection getSection(UUID sectionId) {
-        BookSection section = sectionRepository.findByIdAndBook_Tenant_Id(sectionId, currentUserProvider.tenantId())
-                .orElseThrow(() -> sectionNotFound(sectionId));
-        requireSectionBookEditAccess(section, sectionId);
-        return section;
+        return requireSection(sectionId, BookCapability.READ_MANUSCRIPT);
     }
 
-    private void requireSectionBookEditAccess(BookSection section, UUID sectionId) {
+    /** Reads a Section the current User may restructure, for a Manuscript Structure Mutation. */
+    @Transactional(readOnly = true)
+    public BookSection getSectionForStructureMutation(UUID sectionId) {
+        return requireSection(sectionId, BookCapability.MUTATE_MANUSCRIPT_STRUCTURE);
+    }
+
+    /**
+     * Resolves a Section by tenant and then proves the capability on its Book.
+     *
+     * <p>A Section of another Workspace, of a Book this User has no relationship with, and one whose
+     * Book denies the capability all raise the same {@code Section not found}: reaching a Book
+     * indirectly through a Section identifier must not reveal that the Section exists.
+     */
+    private BookSection requireSection(UUID sectionId, BookCapability capability) {
+        BookSection section = sectionRepository.findByIdAndBook_Tenant_Id(sectionId, currentUserProvider.tenantId())
+                .orElseThrow(() -> sectionNotFound(sectionId));
         try {
-            bookAccessService.requireBookEditAccess(section.getBook().getId());
+            bookAccessService.requireCapability(section.getBook().getId(), capability);
         } catch (ResourceNotFoundException exception) {
             throw sectionNotFound(sectionId);
         }
+        return section;
     }
 
     private ResourceNotFoundException sectionNotFound(UUID sectionId) {

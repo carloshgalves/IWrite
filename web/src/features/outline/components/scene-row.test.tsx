@@ -20,6 +20,7 @@ const scene: OutlineScene = {
 function renderSceneRow(props?: Partial<React.ComponentProps<typeof SceneRow>>) {
   const defaultProps: React.ComponentProps<typeof SceneRow> = {
     scene,
+    canMutateStructure: true,
     isSelected: false,
     deletePending: false,
     reorderPending: false,

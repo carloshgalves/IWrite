@@ -1,5 +1,6 @@
 package com.iwrite.outline.service;
 
+import com.iwrite.book.authorization.BookCapability;
 import com.iwrite.book.entity.Book;
 import com.iwrite.book.service.BookAccessService;
 import com.iwrite.chapter.entity.Chapter;
@@ -21,6 +22,14 @@ import java.util.Map;
 import java.util.UUID;
 import java.util.stream.Collectors;
 
+/**
+ * The Book outline: the whole manuscript hierarchy of a Book in one read.
+ *
+ * <p>The outline is a projection of the current Manuscript, so it requires the same
+ * {@code READ_MANUSCRIPT} capability as the Scenes it lists (#207). A Reader holds no capability over
+ * the living Manuscript and gets the same non-enumerable answer as someone with no relationship to the
+ * Book at all; a Reader's access to released material is a separate surface (#148).
+ */
 @Service
 public class OutlineService {
 
@@ -46,7 +55,7 @@ public class OutlineService {
 
     @Transactional(readOnly = true)
     public BookOutlineResponse getOutline(UUID bookId) {
-        Book book = bookAccessService.requireBookReadAccess(bookId);
+        Book book = bookAccessService.requireCapability(bookId, BookCapability.READ_MANUSCRIPT);
         List<BookSection> sections = sectionRepository.findByBookIdOrderBySortOrderAsc(bookId);
         List<Chapter> chapters = chapterRepository.findByBookIdOrderBySortOrderAsc(bookId);
         List<Scene> scenes = sceneRepository.findOutlineScenesByBookId(bookId);

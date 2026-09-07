@@ -1,5 +1,6 @@
 package com.iwrite.scene.service;
 
+import com.iwrite.book.authorization.BookCapability;
 import com.iwrite.book.entity.Book;
 import com.iwrite.book.service.BookAccessService;
 import com.iwrite.chapter.entity.Chapter;
@@ -17,6 +18,7 @@ import com.iwrite.item.service.ItemService;
 import com.iwrite.location.entity.Location;
 import com.iwrite.location.service.LocationService;
 import com.iwrite.observability.BusinessTelemetry;
+import com.iwrite.scene.authorization.SceneContentAuthority;
 import com.iwrite.scene.dto.SceneContentRequest;
 import com.iwrite.scene.dto.ScenePlanningRequest;
 import com.iwrite.scene.dto.SceneRequest;
@@ -50,6 +52,20 @@ import java.util.UUID;
 import java.util.function.Function;
 import java.util.stream.Collectors;
 
+/**
+ * Scene surfaces: the Manuscript read, the canonical content save, the Scene metadata and the Scene
+ * half of Manuscript Structure Mutation.
+ *
+ * <p>Each of them names its own minimum capability (#207). Reading a Scene needs
+ * {@code READ_MANUSCRIPT}. Creating, renaming, reordering, restating the status of or deleting one is a
+ * Manuscript Structure Mutation, Owner-only in this partition. Saving canonical content is the
+ * contextual {@code EDIT_AUTHORED_CONTRIBUTION}: Book scope only makes a User eligible, and
+ * {@link SceneContentAuthority} still has to answer for the Scene itself.
+ *
+ * <p>Scene planning ({@code updatePlanning}) and Scene Version restore keep the pre-migration generic
+ * guard on purpose: they belong to the Canonical Planning partition (#209) and the Scene Versions
+ * partition (#210), and narrowing them here would decide those tickets by accident.
+ */
 @Service
 public class SceneService {
 
@@ -107,9 +123,12 @@ public class SceneService {
 
     @Transactional
     public SceneResponse create(UUID chapterId, SceneRequest request) {
-        Chapter chapter = chapterService.getChapter(chapterId);
+        Chapter chapter = chapterService.getChapterForStructureMutation(chapterId);
         UUID bookId = chapter.getBook().getId();
-        Book lockedBook = bookAccessService.requireBookEditAccessForUpdate(bookId);
+        Book lockedBook = bookAccessService.requireCapabilityForUpdate(
+                bookId,
+                BookCapability.MUTATE_MANUSCRIPT_STRUCTURE
+        );
         UUID operationId = request.operationId() == null ? UUID.randomUUID() : request.operationId();
         String requestFingerprint = WordCountRequestFingerprint.sceneCreate(
                 currentUserProvider.userId(),
@@ -169,7 +188,7 @@ public class SceneService {
 
     @Transactional
     public SceneResponse update(UUID sceneId, SceneUpdateRequest request) {
-        Scene scene = getSceneForEdit(sceneId);
+        Scene scene = requireScene(sceneId, BookCapability.MUTATE_MANUSCRIPT_STRUCTURE);
         RequestValidation.rejectBlankWhenPresent("title", request.title());
 
         if (request.title() != null) {
@@ -237,9 +256,9 @@ public class SceneService {
             SceneContentRequest request,
             BusinessTelemetry.Operation telemetry
     ) {
-        Scene scene = getSceneForUpdate(sceneId);
+        Scene scene = requireSceneForContentUpdate(sceneId);
         rejectMissingOperationId(request.operationId());
-        Book lockedBook = bookAccessService.requireBookEditAccessForUpdate(scene.getBook().getId());
+        Book lockedBook = requireSceneContentAuthority(scene);
         SceneVersionSource source = contentSource(request.source());
         telemetry.attribute(BusinessTelemetry.SCENE_SOURCE, telemetrySource(source));
         telemetry.attribute(
@@ -321,7 +340,7 @@ public class SceneService {
 
     @Transactional
     public SceneResponse restoreVersion(UUID sceneId, UUID versionId, SceneVersionRestoreRequest request) {
-        Scene scene = getSceneForUpdate(sceneId);
+        Scene scene = getSceneForLegacyUpdate(sceneId);
         rejectMissingOperationId(request.operationId());
         Book lockedBook = bookAccessService.requireBookEditAccessForUpdate(scene.getBook().getId());
         SceneVersion version = sceneVersionService.getCurrentSceneVersion(sceneId, versionId);
@@ -375,7 +394,7 @@ public class SceneService {
 
     @Transactional
     public SceneResponse updatePlanning(UUID sceneId, ScenePlanningRequest request) {
-        Scene scene = getSceneForEdit(sceneId);
+        Scene scene = getSceneForLegacyEdit(sceneId);
         UUID bookId = scene.getBook().getId();
         List<String> gapsBefore = scene.getStatus() == SceneStatus.PLANNED
                 ? planningCompletenessService.planningGaps(scene)
@@ -402,48 +421,114 @@ public class SceneService {
 
     @Transactional
     public void delete(UUID sceneId) {
-        Scene scene = getSceneForUpdate(sceneId);
-        Book lockedBook = bookAccessService.requireBookEditAccessForUpdate(scene.getBook().getId());
+        Scene scene = requireSceneForUpdate(sceneId, BookCapability.MUTATE_MANUSCRIPT_STRUCTURE);
+        Book lockedBook = bookAccessService.requireCapabilityForUpdate(
+                scene.getBook().getId(),
+                BookCapability.MUTATE_MANUSCRIPT_STRUCTURE
+        );
         sceneDeletionLedgerService.prepareSceneDelete(scene, lockedBook);
         sceneRepository.delete(scene);
     }
 
     @Transactional
     public void reorder(UUID chapterId, ReorderRequest request) {
-        chapterService.getChapter(chapterId);
+        chapterService.getChapterForStructureMutation(chapterId);
         List<Scene> scenes = sceneRepository.findByChapterIdOrderBySortOrderAsc(chapterId);
         applyReorder(scenes, request.orderedIds(), Scene::getId, Scene::setSortOrder, "scenes");
     }
 
+    /** Reads a Scene the current User may read the Manuscript of. */
     @Transactional(readOnly = true)
     public Scene getScene(UUID sceneId) {
+        return requireScene(sceneId, BookCapability.READ_MANUSCRIPT);
+    }
+
+    /**
+     * Resolves a Scene by tenant and then proves the capability on its Book.
+     *
+     * <p>A Scene of another Workspace, of a Book with no relationship, and one whose Book denies the
+     * capability all raise the same {@code Scene not found}: a Scene identifier must not become a way
+     * to learn that a Scene, a Chapter or a Book exists.
+     */
+    private Scene requireScene(UUID sceneId, BookCapability capability) {
         Scene scene = sceneRepository.findByIdAndTenantId(sceneId, currentUserProvider.tenantId())
                 .orElseThrow(() -> sceneNotFound(sceneId));
-        requireSceneBookAccess(scene, sceneId, false);
+        requireSceneBookCapability(scene, sceneId, capability);
         return scene;
     }
 
-    private Scene getSceneForUpdate(UUID sceneId) {
+    /** Same proof as {@link #requireScene(UUID, BookCapability)}, taking the Scene row lock first. */
+    private Scene requireSceneForUpdate(UUID sceneId, BookCapability capability) {
         Scene scene = sceneRepository.findByIdAndTenantIdForUpdate(sceneId, currentUserProvider.tenantId())
                 .orElseThrow(() -> sceneNotFound(sceneId));
-        requireSceneBookAccess(scene, sceneId, true);
+        requireSceneBookCapability(scene, sceneId, capability);
         return scene;
     }
 
-    private Scene getSceneForEdit(UUID sceneId) {
+    /**
+     * Locks the Scene for a canonical content save and proves Book-scoped eligibility for
+     * {@code EDIT_AUTHORED_CONTRIBUTION}. Eligibility alone authorizes nothing: the caller must still
+     * pass {@link #requireSceneContentAuthority(Scene)} before the content is touched.
+     */
+    private Scene requireSceneForContentUpdate(UUID sceneId) {
+        Scene scene = sceneRepository.findByIdAndTenantIdForUpdate(sceneId, currentUserProvider.tenantId())
+                .orElseThrow(() -> sceneNotFound(sceneId));
+        try {
+            bookAccessService.requireCapabilityEligibility(
+                    scene.getBook().getId(),
+                    BookCapability.EDIT_AUTHORED_CONTRIBUTION
+            );
+        } catch (ResourceNotFoundException exception) {
+            throw sceneNotFound(sceneId);
+        }
+        return scene;
+    }
+
+    /**
+     * Takes the Book lock for the content save, re-proves eligibility under it, and then evaluates the
+     * resource-scoped predicate that {@code EDIT_AUTHORED_CONTRIBUTION} still requires.
+     *
+     * <p>A User who is merely eligible is refused with the same {@code Scene not found} as one who
+     * cannot see the Scene at all, so the refusal never reports which half of the rule failed.
+     */
+    private Book requireSceneContentAuthority(Scene scene) {
+        BookAccessService.AccessibleBook accessible = bookAccessService.requireCapabilityEligibilityForUpdate(
+                scene.getBook().getId(),
+                BookCapability.EDIT_AUTHORED_CONTRIBUTION
+        );
+        if (!SceneContentAuthority.canEditSceneContent(accessible.access())) {
+            throw sceneNotFound(scene.getId());
+        }
+        return accessible.book();
+    }
+
+    private void requireSceneBookCapability(Scene scene, UUID sceneId, BookCapability capability) {
+        try {
+            bookAccessService.requireCapability(scene.getBook().getId(), capability);
+        } catch (ResourceNotFoundException exception) {
+            throw sceneNotFound(sceneId);
+        }
+    }
+
+    /** Pre-migration guard kept for the Scene Version restore surface of #210. */
+    private Scene getSceneForLegacyUpdate(UUID sceneId) {
+        Scene scene = sceneRepository.findByIdAndTenantIdForUpdate(sceneId, currentUserProvider.tenantId())
+                .orElseThrow(() -> sceneNotFound(sceneId));
+        requireSceneBookLegacyEditAccess(scene, sceneId);
+        return scene;
+    }
+
+    /** Pre-migration guard kept for the Scene planning surface of #209. */
+    private Scene getSceneForLegacyEdit(UUID sceneId) {
         Scene scene = sceneRepository.findByIdAndTenantId(sceneId, currentUserProvider.tenantId())
                 .orElseThrow(() -> sceneNotFound(sceneId));
-        requireSceneBookAccess(scene, sceneId, true);
+        requireSceneBookLegacyEditAccess(scene, sceneId);
         return scene;
     }
 
-    private void requireSceneBookAccess(Scene scene, UUID sceneId, boolean edit) {
+    private void requireSceneBookLegacyEditAccess(Scene scene, UUID sceneId) {
         try {
-            if (edit) {
-                bookAccessService.requireBookEditAccess(scene.getBook().getId());
-            } else {
-                bookAccessService.requireBookReadAccess(scene.getBook().getId());
-            }
+            bookAccessService.requireBookEditAccess(scene.getBook().getId());
         } catch (ResourceNotFoundException exception) {
             throw sceneNotFound(sceneId);
         }
