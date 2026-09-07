@@ -138,7 +138,7 @@ class BookDashboardWritingProgressPeriodIntegrationTest extends PostgresIntegrat
         progress.setBook(book);
         progress.setUser(entityManager.getReference(User.class, DEFAULT_USER_ID));
         progress.setProgressDate(progressDate);
-        progress.setDailyTargetWordCount(book.getDailyTargetWordCount());
+        progress.setDailyTargetWordCount(personalBookWritingGoalService.dailyTargetWordCountFor(book.getId(), DEFAULT_USER_ID));
         progress.setStartingManuscriptWordCount(0);
         progress.setEndingManuscriptWordCount(wordCount);
         progress.setProductiveWordCountChange(wordCount);

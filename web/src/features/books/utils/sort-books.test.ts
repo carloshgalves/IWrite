@@ -10,8 +10,6 @@ function book(overrides: Partial<Book> & Pick<Book, "id" | "status">): Book {
     description: null,
     status: overrides.status,
     targetWordCount: null,
-    dailyTargetWordCount: null,
-    plannedWritingDays: ["MONDAY", "TUESDAY", "WEDNESDAY", "THURSDAY", "FRIDAY", "SATURDAY", "SUNDAY"],
     relationship: "OWNER",
     role: null,
     capabilities: [],

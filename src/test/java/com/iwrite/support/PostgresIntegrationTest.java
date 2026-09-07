@@ -23,12 +23,21 @@ import com.iwrite.section.dto.BookSectionRequest;
 import com.iwrite.section.dto.BookSectionResponse;
 import com.iwrite.section.entity.SectionType;
 import com.iwrite.section.service.BookSectionService;
+import com.iwrite.user.context.CurrentUserMembershipService;
+import com.iwrite.writingprogress.dto.PersonalBookWritingGoalResponse;
+import com.iwrite.writingprogress.dto.PersonalBookWritingGoalUpdateRequest;
+import com.iwrite.writingprogress.repository.PersonalBookWritingGoalRepository;
+import com.iwrite.writingprogress.entity.PersonalBookWritingGoal;
+import com.iwrite.writingprogress.service.PersonalBookWritingGoalService;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.test.context.SpringBootTest;
 import org.springframework.test.context.DynamicPropertyRegistry;
 import org.springframework.test.context.DynamicPropertySource;
 import org.springframework.transaction.annotation.Transactional;
 
+import java.time.DayOfWeek;
+import java.util.List;
+import java.util.UUID;
 import java.util.stream.Collectors;
 import java.util.stream.IntStream;
 
@@ -67,12 +76,68 @@ public abstract class PostgresIntegrationTest {
     @Autowired
     protected SceneService sceneService;
 
+    @Autowired
+    protected PersonalBookWritingGoalService personalBookWritingGoalService;
+
+    @Autowired
+    private PersonalBookWritingGoalRepository personalBookWritingGoalRepository;
+
+    @Autowired
+    private CurrentUserMembershipService currentUserMembershipService;
+
     protected BookResponse createBook(String title) {
         return bookService.create(new BookRequest(title, null, null, null, null));
     }
 
     protected BookResponse createBook(String title, Integer targetWordCount) {
         return bookService.create(new BookRequest(title, null, null, null, targetWordCount));
+    }
+
+    /** Sets the current User's own daily target; {@code null} clears it back to no chosen target. */
+    protected PersonalBookWritingGoalResponse setPersonalDailyTarget(UUID bookId, Integer dailyTargetWordCount) {
+        return setPersonalDailyTarget(bookId, dailyTargetWordCount, currentPersonalGoalRevision(bookId));
+    }
+
+    /** Saves the daily target against a caller-chosen revision, the way a stale tab would. */
+    protected PersonalBookWritingGoalResponse setPersonalDailyTarget(
+            UUID bookId,
+            Integer dailyTargetWordCount,
+            int expectedRevision
+    ) {
+        PersonalBookWritingGoalUpdateRequest request = new PersonalBookWritingGoalUpdateRequest();
+        request.setExpectedRevision(expectedRevision);
+        request.setDailyTargetWordCount(dailyTargetWordCount);
+        return personalBookWritingGoalService.updateGoal(bookId, request);
+    }
+
+    /** Changes the current User's own planned writing days. */
+    protected PersonalBookWritingGoalResponse setPersonalPlannedWritingDays(UUID bookId, List<DayOfWeek> plannedWritingDays) {
+        return setPersonalPlannedWritingDays(bookId, plannedWritingDays, currentPersonalGoalRevision(bookId));
+    }
+
+    /** Saves the routine against a caller-chosen revision, the way a stale tab would. */
+    protected PersonalBookWritingGoalResponse setPersonalPlannedWritingDays(
+            UUID bookId,
+            List<DayOfWeek> plannedWritingDays,
+            int expectedRevision
+    ) {
+        PersonalBookWritingGoalUpdateRequest request = new PersonalBookWritingGoalUpdateRequest();
+        request.setExpectedRevision(expectedRevision);
+        request.setPlannedWritingDays(plannedWritingDays);
+        return personalBookWritingGoalService.updateGoal(bookId, request);
+    }
+
+    /**
+     * The current User's own goal revision, read straight from the repository.
+     *
+     * <p>Deliberately not read through {@code getGoal}: a helper that first called the guarded read
+     * would make every denial assertion pass on the read instead of on the write being tested.
+     */
+    protected int currentPersonalGoalRevision(UUID bookId) {
+        return personalBookWritingGoalRepository
+                .findByUser_IdAndBook_Id(currentUserMembershipService.requireCurrentUserMemberId(), bookId)
+                .map(PersonalBookWritingGoal::getRevision)
+                .orElse(0);
     }
 
     protected BookSectionResponse createSection(BookResponse book, String title) {

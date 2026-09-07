@@ -23,6 +23,7 @@ import org.springframework.web.servlet.resource.NoResourceFoundException;
 
 import java.time.OffsetDateTime;
 import java.util.List;
+import java.util.Optional;
 
 @RestControllerAdvice
 public class GlobalExceptionHandler {
@@ -133,9 +134,27 @@ public class GlobalExceptionHandler {
         return buildResponse(HttpStatus.BAD_REQUEST, messages);
     }
 
+    /**
+     * A body that could not be bound. A request rejected by the contract itself — an unknown field a
+     * strict request refuses to mass assign, for instance — carries its own explanation, so the reason
+     * reaches the caller instead of being flattened into the generic message. Anything else stays
+     * generic: a parser failure must not leak the shape of what it was parsing.
+     */
     @ExceptionHandler(HttpMessageNotReadableException.class)
     public ResponseEntity<ApiErrorResponse> handleUnreadableMessage(HttpMessageNotReadableException exception) {
-        return buildResponse(HttpStatus.BAD_REQUEST, List.of("Invalid request body"));
+        return buildResponse(HttpStatus.BAD_REQUEST, List.of(rejectionReason(exception).orElse("Invalid request body")));
+    }
+
+    private Optional<String> rejectionReason(Throwable exception) {
+        for (Throwable cause = exception; cause != null; cause = cause.getCause()) {
+            if (cause instanceof BadRequestException badRequest) {
+                return Optional.ofNullable(badRequest.getMessage());
+            }
+            if (cause.getCause() == cause) {
+                break;
+            }
+        }
+        return Optional.empty();
     }
 
     @ExceptionHandler(MethodArgumentTypeMismatchException.class)

@@ -64,7 +64,12 @@ class ControllerContractIntegrationTest extends PostgresIntegrationTest {
                 .andExpect(jsonPath("$.remainingWordCount").value(6))
                 .andExpect(jsonPath("$.totalSections").value(1))
                 .andExpect(jsonPath("$.totalChapters").value(1))
-                .andExpect(jsonPath("$.totalScenes").value(1));
+                .andExpect(jsonPath("$.totalScenes").value(1))
+                // The dashboard projects the derived capabilities so the UI can present only the
+                // controls this User may attempt; the server still authorizes every request again.
+                .andExpect(jsonPath("$.capabilities", hasItem("EDIT_BOOK_SETTINGS")))
+                .andExpect(jsonPath("$.capabilities", hasItem("MANAGE_OWN_PERSONAL_WRITING_GOAL")))
+                .andExpect(jsonPath("$.contextualCapabilities", hasItem("EDIT_AUTHORED_CONTRIBUTION")));
     }
 
     @Test
@@ -390,43 +395,240 @@ class ControllerContractIntegrationTest extends PostgresIntegrationTest {
 
         mockMvc.perform(patch("/api/books/{bookId}", book.id())
                         .contentType(MediaType.APPLICATION_JSON)
-                        .content(json(Map.of(
-                                "targetWordCount", 120000,
-                                "dailyTargetWordCount", 1000
-                        ))))
+                        .content(json(Map.of("targetWordCount", 120000))))
                 .andExpect(status().isOk())
-                .andExpect(jsonPath("$.targetWordCount").value(120000))
-                .andExpect(jsonPath("$.dailyTargetWordCount").value(1000));
+                .andExpect(jsonPath("$.targetWordCount").value(120000));
 
         mockMvc.perform(patch("/api/books/{bookId}", book.id())
                         .contentType(MediaType.APPLICATION_JSON)
-                        .content("{\"targetWordCount\":null,\"dailyTargetWordCount\":null}"))
+                        .content("{\"targetWordCount\":null}"))
                 .andExpect(status().isOk())
-                .andExpect(jsonPath("$.targetWordCount").value(nullValue()))
-                .andExpect(jsonPath("$.dailyTargetWordCount").value(nullValue()));
+                .andExpect(jsonPath("$.targetWordCount").value(nullValue()));
     }
 
+    /**
+     * Creation refuses a Personal Book Writing Goal for the same reason the update does. Silently
+     * dropping the field would be worse than the shared column this migration removed: the caller would
+     * be told the Book was created with the target it asked for, while no goal was ever stored.
+     */
     @Test
-    void patchBookPlannedWritingDaysUpdatesRoutine() throws Exception {
-        var book = createBook("HTTP schedule");
-
-        mockMvc.perform(patch("/api/books/{bookId}", book.id())
+    void postBookRefusesPersonalWritingGoalFields() throws Exception {
+        mockMvc.perform(post("/api/books")
                         .contentType(MediaType.APPLICATION_JSON)
-                        .content(json(Map.of("plannedWritingDays", List.of("MONDAY", "WEDNESDAY")))))
-                .andExpect(status().isOk())
-                .andExpect(jsonPath("$.plannedWritingDays[0]").value("MONDAY"))
-                .andExpect(jsonPath("$.plannedWritingDays[1]").value("WEDNESDAY"));
-    }
+                        .content(json(Map.of("title", "Created with a personal goal", "dailyTargetWordCount", 1000))))
+                .andExpect(status().isBadRequest())
+                .andExpect(jsonPath("$.messages", hasItem(containsString("dailyTargetWordCount"))));
 
-    @Test
-    void patchBookRejectsEmptyPlannedWritingDays() throws Exception {
-        var book = createBook("HTTP empty schedule");
-
-        mockMvc.perform(patch("/api/books/{bookId}", book.id())
+        mockMvc.perform(post("/api/books")
                         .contentType(MediaType.APPLICATION_JSON)
-                        .content(json(Map.of("plannedWritingDays", List.of()))))
+                        .content(json(Map.of("title", "Created with a routine", "plannedWritingDays", List.of("MONDAY")))))
                 .andExpect(status().isBadRequest())
                 .andExpect(jsonPath("$.messages", hasItem(containsString("plannedWritingDays"))));
+
+        // The refusal is specific to the two fields this contract gave up. The shared settings it does
+        // own still create a Book, and an unrelated unknown field keeps being ignored rather than
+        // refused: that is the established behavior the tenant and identity isolation tests pin, where
+        // a body carrying tenantId or userId must be answered by creating the Book under the
+        // authenticated identity instead of being rejected on a path the header and query-parameter
+        // attempts do not share.
+        mockMvc.perform(post("/api/books")
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content(json(Map.of("title", "Created with shared settings", "targetWordCount", 50000))))
+                .andExpect(status().isCreated())
+                .andExpect(jsonPath("$.targetWordCount").value(50000));
+
+        mockMvc.perform(post("/api/books")
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content(json(Map.of("title", "Created with a stray field", "tenantId", UUID.randomUUID().toString()))))
+                .andExpect(status().isCreated());
+    }
+
+    /**
+     * The Book contract no longer owns a Personal Book Writing Goal. A request that still carries one
+     * is refused outright, so a stale client cannot appear to save a personal target through the shared
+     * Book surface, and no hidden field is mass assigned into settings this contract does not own.
+     */
+    @Test
+    void patchBookRefusesPersonalWritingGoalFields() throws Exception {
+        var book = createBook("HTTP separated settings");
+
+        mockMvc.perform(patch("/api/books/{bookId}", book.id())
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content(json(Map.of("dailyTargetWordCount", 1000))))
+                .andExpect(status().isBadRequest())
+                .andExpect(jsonPath("$.messages", hasItem(containsString("dailyTargetWordCount"))));
+
+        mockMvc.perform(patch("/api/books/{bookId}", book.id())
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content(json(Map.of("plannedWritingDays", List.of("MONDAY")))))
+                .andExpect(status().isBadRequest())
+                .andExpect(jsonPath("$.messages", hasItem(containsString("plannedWritingDays"))));
+
+        mockMvc.perform(get("/api/books/{bookId}/writing-goal", book.id()))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.dailyTargetWordCount").value(nullValue()))
+                .andExpect(jsonPath("$.plannedWritingDays", hasSize(7)));
+    }
+
+    @Test
+    void patchWritingGoalUpdatesDailyTargetAndRoutineSeparately() throws Exception {
+        var book = createBook("HTTP writing goal");
+
+        mockMvc.perform(patch("/api/books/{bookId}/writing-goal", book.id())
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content(json(Map.of(
+                                "expectedRevision", 0,
+                                "dailyTargetWordCount", 1000,
+                                "plannedWritingDays", List.of("MONDAY", "WEDNESDAY")
+                        ))))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.dailyTargetWordCount").value(1000))
+                .andExpect(jsonPath("$.plannedWritingDays[0]").value("MONDAY"))
+                .andExpect(jsonPath("$.plannedWritingDays[1]").value("WEDNESDAY"));
+
+        // The Book itself is untouched: a personal goal is not shared Book data.
+        mockMvc.perform(get("/api/books/{bookId}", book.id()))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.dailyTargetWordCount").doesNotExist())
+                .andExpect(jsonPath("$.plannedWritingDays").doesNotExist());
+
+        // An absent field leaves its half of the goal alone; an explicit null clears the target back to
+        // "no target chosen" without touching the routine.
+        mockMvc.perform(patch("/api/books/{bookId}/writing-goal", book.id())
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content("{\"expectedRevision\":1,\"dailyTargetWordCount\":null}"))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.dailyTargetWordCount").value(nullValue()))
+                .andExpect(jsonPath("$.plannedWritingDays[0]").value("MONDAY"));
+    }
+
+    @Test
+    void patchWritingGoalRejectsEmptyPlannedWritingDays() throws Exception {
+        var book = createBook("HTTP empty schedule");
+
+        mockMvc.perform(patch("/api/books/{bookId}/writing-goal", book.id())
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content(json(Map.of("expectedRevision", 0, "plannedWritingDays", List.of()))))
+                .andExpect(status().isBadRequest())
+                .andExpect(jsonPath("$.messages", hasItem(containsString("plannedWritingDays"))));
+    }
+
+    @Test
+    void patchWritingGoalRejectsUnknownFieldsAndNonPositiveTargets() throws Exception {
+        var book = createBook("HTTP invalid goal");
+
+        for (int invalidTarget : new int[]{0, -1}) {
+            mockMvc.perform(patch("/api/books/{bookId}/writing-goal", book.id())
+                            .contentType(MediaType.APPLICATION_JSON)
+                            .content(json(Map.of("expectedRevision", 0, "dailyTargetWordCount", invalidTarget))))
+                    .andExpect(status().isBadRequest())
+                    .andExpect(jsonPath("$.messages", hasItem(containsString("dailyTargetWordCount"))));
+        }
+
+        // The goal contract cannot be used to reach a Book setting either.
+        mockMvc.perform(patch("/api/books/{bookId}/writing-goal", book.id())
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content(json(Map.of("expectedRevision", 0, "targetWordCount", 1000))))
+                .andExpect(status().isBadRequest())
+                .andExpect(jsonPath("$.messages", hasItem(containsString("targetWordCount"))));
+
+        // A save that does not say which state it was decided against is not a save this contract can
+        // accept: it is exactly the request that silently overwrites another tab.
+        mockMvc.perform(patch("/api/books/{bookId}/writing-goal", book.id())
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content(json(Map.of("dailyTargetWordCount", 1000))))
+                .andExpect(status().isBadRequest())
+                .andExpect(jsonPath("$.messages", hasItem(containsString("expectedRevision"))));
+
+        // A save that names no half of the goal changes nothing, so it is not a save either. Accepting
+        // it would advance the revision and make a real edit in another tab conflict with a no-op.
+        mockMvc.perform(patch("/api/books/{bookId}/writing-goal", book.id())
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content(json(Map.of("expectedRevision", 0))))
+                .andExpect(status().isBadRequest())
+                .andExpect(jsonPath("$.messages", hasItem(containsString("dailyTargetWordCount"))));
+
+        mockMvc.perform(get("/api/books/{bookId}/writing-goal", book.id()))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.revision").value(0));
+    }
+
+    /**
+     * The per-field presence flags are internal bookkeeping, not part of the contract. Jackson infers a
+     * property from every public getter and pulls in the matching private field as its mutator, so
+     * {@code dailyTargetWordCountPresent} was a known field rather than an unknown one: naming it made
+     * the request behave as if the target had been sent explicitly as {@code null}, clearing a chosen
+     * target and advancing the revision without the body ever naming the target itself.
+     */
+    @Test
+    void patchWritingGoalRefusesTheInternalPresenceFlags() throws Exception {
+        var book = createBook("HTTP hidden goal fields");
+
+        mockMvc.perform(patch("/api/books/{bookId}/writing-goal", book.id())
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content(json(Map.of(
+                                "expectedRevision", 0,
+                                "dailyTargetWordCount", 700,
+                                "plannedWritingDays", List.of("TUESDAY")
+                        ))))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.revision").value(1));
+
+        for (String hiddenField : List.of("dailyTargetWordCountPresent", "plannedWritingDaysPresent", "goalChangeNamed")) {
+            mockMvc.perform(patch("/api/books/{bookId}/writing-goal", book.id())
+                            .contentType(MediaType.APPLICATION_JSON)
+                            .content(json(Map.of("expectedRevision", 1, hiddenField, true))))
+                    .andExpect(status().isBadRequest())
+                    .andExpect(jsonPath("$.messages", hasItem(containsString(hiddenField))));
+        }
+
+        // Nothing the refused requests named reached the goal: both halves and the revision survive.
+        mockMvc.perform(get("/api/books/{bookId}/writing-goal", book.id()))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.dailyTargetWordCount").value(700))
+                .andExpect(jsonPath("$.plannedWritingDays", contains("TUESDAY")))
+                .andExpect(jsonPath("$.revision").value(1));
+    }
+
+    /**
+     * The same hidden mutator on the shared settings contract: {@code targetWordCountPresent} would
+     * clear the Book-wide target through a body that never names {@code targetWordCount}.
+     */
+    @Test
+    void patchBookRefusesTheInternalPresenceFlag() throws Exception {
+        var book = createBook("HTTP hidden book setting", 50000);
+
+        mockMvc.perform(patch("/api/books/{bookId}", book.id())
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content(json(Map.of("targetWordCountPresent", true))))
+                .andExpect(status().isBadRequest())
+                .andExpect(jsonPath("$.messages", hasItem(containsString("targetWordCountPresent"))));
+
+        mockMvc.perform(get("/api/books/{bookId}", book.id()))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.targetWordCount").value(50000));
+    }
+
+    @Test
+    void patchWritingGoalFromASupersededRevisionConflictsInsteadOfOverwriting() throws Exception {
+        var book = createBook("HTTP stale goal");
+
+        mockMvc.perform(patch("/api/books/{bookId}/writing-goal", book.id())
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content(json(Map.of("expectedRevision", 0, "dailyTargetWordCount", 800))))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.revision").value(1));
+
+        // A second tab still holding revision 0 loses instead of replacing the newer choice.
+        mockMvc.perform(patch("/api/books/{bookId}/writing-goal", book.id())
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content(json(Map.of("expectedRevision", 0, "dailyTargetWordCount", 1200))))
+                .andExpect(status().isConflict());
+
+        mockMvc.perform(get("/api/books/{bookId}/writing-goal", book.id()))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.dailyTargetWordCount").value(800))
+                .andExpect(jsonPath("$.revision").value(1));
     }
 
     @Test
@@ -444,18 +646,6 @@ class ControllerContractIntegrationTest extends PostgresIntegrationTest {
                         .content(json(Map.of("targetWordCount", -1))))
                 .andExpect(status().isBadRequest())
                 .andExpect(jsonPath("$.messages", hasItem(containsString("targetWordCount"))));
-
-        mockMvc.perform(patch("/api/books/{bookId}", book.id())
-                        .contentType(MediaType.APPLICATION_JSON)
-                        .content(json(Map.of("dailyTargetWordCount", 0))))
-                .andExpect(status().isBadRequest())
-                .andExpect(jsonPath("$.messages", hasItem(containsString("dailyTargetWordCount"))));
-
-        mockMvc.perform(patch("/api/books/{bookId}", book.id())
-                        .contentType(MediaType.APPLICATION_JSON)
-                        .content(json(Map.of("dailyTargetWordCount", -1))))
-                .andExpect(status().isBadRequest())
-                .andExpect(jsonPath("$.messages", hasItem(containsString("dailyTargetWordCount"))));
     }
 
     private String json(Object value) throws Exception {

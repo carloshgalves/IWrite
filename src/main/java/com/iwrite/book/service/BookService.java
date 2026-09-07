@@ -16,7 +16,6 @@ import com.iwrite.writingprogress.service.WritingScheduleService;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
-import java.time.DayOfWeek;
 import java.util.List;
 import java.util.UUID;
 
@@ -57,7 +56,6 @@ public class BookService {
                 .stream()
                 .map(accessible -> BookResponse.fromEntity(
                         accessible.book(),
-                        writingScheduleService.getActivePlannedWritingDays(accessible.book()),
                         bookAccessService.accessContextFor(accessible.book(), userId, accessible.role())
                 ))
                 .toList();
@@ -66,12 +64,7 @@ public class BookService {
     @Transactional
     public BookResponse findById(UUID bookId) {
         BookAccessService.AccessibleBook accessible = bookAccessService.resolveAccessibleBook(bookId);
-        Book book = accessible.book();
-        return BookResponse.fromEntity(
-                book,
-                writingScheduleService.getActivePlannedWritingDays(book),
-                accessible.access()
-        );
+        return BookResponse.fromEntity(accessible.book(), accessible.access());
     }
 
     @Transactional
@@ -85,16 +78,28 @@ public class BookService {
         book.setDescription(request.description());
         book.setStatus(request.status() == null ? BookStatus.PLANNING : request.status());
         book.setTargetWordCount(request.targetWordCount());
-        book.setDailyTargetWordCount(request.dailyTargetWordCount());
 
         Book savedBook = bookRepository.save(book);
-        List<DayOfWeek> plannedWritingDays = writingScheduleService.createInitialSchedule(savedBook, request.plannedWritingDays());
-        return BookResponse.fromEntity(savedBook, plannedWritingDays, bookAccessService.accessContextFor(savedBook, userId, null));
+        // The creator's own writing routine starts with the Book so their progress has a schedule to be
+        // measured against from day one. It is their Personal Book Writing Goal, not a Book setting, so
+        // it takes the default routine and is changed through the writing-goal contract.
+        writingScheduleService.createInitialSchedule(savedBook, null);
+        return BookResponse.fromEntity(savedBook, bookAccessService.accessContextFor(savedBook, userId, null));
     }
 
+    /**
+     * Changes the shared settings of the Book: metadata, {@link BookStatus} and the optional Book-wide
+     * target. The minimum capability is {@link BookCapability#EDIT_BOOK_SETTINGS}, which the policy
+     * grants to the Book Owner and, for compatibility until the cutover, to the legacy collaboration
+     * role. An Author, Editor or Reader cannot reshape data every collaborator shares.
+     *
+     * <p>Nothing here touches a Personal Book Writing Goal: a daily target and planned writing days
+     * are owned by one User and are changed only through their own goal contract.
+     */
     @Transactional
     public BookResponse update(UUID bookId, BookUpdateRequest request) {
-        BookAccessService.AccessibleBook accessible = bookAccessService.resolveAccessibleBook(bookId);
+        BookAccessService.AccessibleBook accessible =
+                bookAccessService.requireAccessibleBookForUpdate(bookId, BookCapability.EDIT_BOOK_SETTINGS);
         Book book = accessible.book();
         RequestValidation.rejectBlankWhenPresent("title", request.title());
 
@@ -113,15 +118,8 @@ public class BookService {
         if (request.isTargetWordCountPresent()) {
             book.setTargetWordCount(request.targetWordCount());
         }
-        if (request.isDailyTargetWordCountPresent()) {
-            book.setDailyTargetWordCount(request.dailyTargetWordCount());
-        }
 
-        List<DayOfWeek> plannedWritingDays = request.isPlannedWritingDaysPresent()
-                ? writingScheduleService.changeSchedule(book, request.plannedWritingDays())
-                : writingScheduleService.getActivePlannedWritingDays(book);
-
-        return BookResponse.fromEntity(book, plannedWritingDays, accessible.access());
+        return BookResponse.fromEntity(book, accessible.access());
     }
 
     @Transactional

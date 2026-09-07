@@ -217,7 +217,7 @@ O workspace atual possui modos de visão separados para overview, storyboard, ka
 
 ## Banco e migrations
 
-Flyway é a única forma aceita para evolução do schema. O head atual é **V35**.
+Flyway é a única forma aceita para evolução do schema. O head atual é **V36**.
 
 Migrations críticas são verificadas em PostgreSQL real, inclusive cenários de backfill, constraints, concorrência e migração a partir de versão anterior relevante.
 

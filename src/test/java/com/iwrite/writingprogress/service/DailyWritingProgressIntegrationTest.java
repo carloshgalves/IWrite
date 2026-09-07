@@ -1,7 +1,5 @@
 package com.iwrite.writingprogress.service;
 
-import com.iwrite.book.dto.BookRequest;
-import com.iwrite.book.dto.BookUpdateRequest;
 import com.iwrite.book.entity.Book;
 import com.iwrite.dashboard.service.BookDashboardService;
 import com.iwrite.scene.dto.SceneContentRequest;
@@ -10,6 +8,7 @@ import com.iwrite.scene.entity.SceneStatus;
 import com.iwrite.support.PostgresIntegrationTest;
 import com.iwrite.user.entity.User;
 import com.iwrite.writingprogress.entity.DailyWritingProgress;
+import com.iwrite.writingprogress.repository.BookWritingScheduleRepository;
 import com.iwrite.writingprogress.repository.DailyWritingProgressRepository;
 import jakarta.persistence.EntityManager;
 import jakarta.persistence.PersistenceContext;
@@ -24,7 +23,9 @@ import java.time.DayOfWeek;
 import java.time.Instant;
 import java.time.LocalDate;
 import java.time.ZoneOffset;
+import java.util.EnumSet;
 import java.util.List;
+import java.util.UUID;
 
 import static com.iwrite.support.SwitchableCurrentUserProvider.DEFAULT_USER_ID;
 import static org.assertj.core.api.Assertions.assertThat;
@@ -38,6 +39,9 @@ class DailyWritingProgressIntegrationTest extends PostgresIntegrationTest {
 
     @Autowired
     private BookDashboardService dashboardService;
+
+    @Autowired
+    private BookWritingScheduleRepository scheduleRepository;
 
     @PersistenceContext
     private EntityManager entityManager;
@@ -138,9 +142,7 @@ class DailyWritingProgressIntegrationTest extends PostgresIntegrationTest {
     @Test
     void dashboardReturnsTodayAndRecentDaysNewestFirst() {
         var book = createBook("recent writing progress");
-        BookUpdateRequest targetRequest = new BookUpdateRequest();
-        targetRequest.setDailyTargetWordCount(6);
-        bookService.update(book.id(), targetRequest);
+        setPersonalDailyTarget(book.id(), 6);
         var section = createSection(book, "Part");
         var chapter = createChapter(section, "Chapter");
         var scene = createScene(chapter, "Scene", SceneStatus.DRAFT, 0, "");
@@ -165,9 +167,7 @@ class DailyWritingProgressIntegrationTest extends PostgresIntegrationTest {
     @Test
     void dashboardExposesProductiveAndAdjustmentValuesSeparately() {
         var book = createBook("adjustment dashboard");
-        BookUpdateRequest targetRequest = new BookUpdateRequest();
-        targetRequest.setDailyTargetWordCount(5);
-        bookService.update(book.id(), targetRequest);
+        setPersonalDailyTarget(book.id(), 5);
         Book persistedBook = bookService.getBook(book.id());
 
         saveProgress(persistedBook, TODAY, 100, 112, 2, 10);
@@ -367,9 +367,10 @@ class DailyWritingProgressIntegrationTest extends PostgresIntegrationTest {
         saveProgress(persistedBook, today.minusDays(1), 0, 1);
         saveProgress(persistedBook, today, 1, 2);
 
-        BookUpdateRequest scheduleRequest = new BookUpdateRequest();
-        scheduleRequest.setPlannedWritingDays(List.of(DayOfWeek.MONDAY, DayOfWeek.TUESDAY, DayOfWeek.WEDNESDAY, DayOfWeek.THURSDAY, DayOfWeek.FRIDAY));
-        bookService.update(book.id(), scheduleRequest);
+        setPersonalPlannedWritingDays(
+                book.id(),
+                List.of(DayOfWeek.MONDAY, DayOfWeek.TUESDAY, DayOfWeek.WEDNESDAY, DayOfWeek.THURSDAY, DayOfWeek.FRIDAY)
+        );
 
         var dashboard = dashboardService.getDashboard(book.id());
 
@@ -382,15 +383,8 @@ class DailyWritingProgressIntegrationTest extends PostgresIntegrationTest {
 
     @Test
     void restDayWritingIsRecordedButDoesNotIncrementPlannedStreak() {
-        var book = bookService.create(new BookRequest(
-                "rest day bonus",
-                null,
-                null,
-                null,
-                null,
-                null,
-                List.of(DayOfWeek.MONDAY, DayOfWeek.TUESDAY, DayOfWeek.WEDNESDAY, DayOfWeek.THURSDAY, DayOfWeek.FRIDAY)
-        ));
+        var book = createBook("rest day bonus");
+        writeOnWeekdaysSinceTheBookStarted(book.id());
         LocalDate today = TODAY;
         Book persistedBook = bookService.getBook(book.id());
         saveProgress(persistedBook, today.minusDays(1), 0, 2);
@@ -407,15 +401,8 @@ class DailyWritingProgressIntegrationTest extends PostgresIntegrationTest {
 
     @Test
     void recentPlannedConsistencyUsesPlannedDaysAsDenominator() {
-        var book = bookService.create(new BookRequest(
-                "planned denominator",
-                null,
-                null,
-                null,
-                null,
-                null,
-                List.of(DayOfWeek.MONDAY, DayOfWeek.TUESDAY, DayOfWeek.WEDNESDAY, DayOfWeek.THURSDAY, DayOfWeek.FRIDAY)
-        ));
+        var book = createBook("planned denominator");
+        writeOnWeekdaysSinceTheBookStarted(book.id());
         LocalDate today = TODAY;
         Book persistedBook = bookService.getBook(book.id());
         saveProgress(persistedBook, today.minusDays(5), 0, 1);
@@ -453,12 +440,31 @@ class DailyWritingProgressIntegrationTest extends PostgresIntegrationTest {
         progress.setBook(book);
         progress.setUser(entityManager.getReference(User.class, DEFAULT_USER_ID));
         progress.setProgressDate(progressDate);
-        progress.setDailyTargetWordCount(book.getDailyTargetWordCount());
+        progress.setDailyTargetWordCount(personalBookWritingGoalService.dailyTargetWordCountFor(book.getId(), DEFAULT_USER_ID));
         progress.setStartingManuscriptWordCount(startingManuscriptWordCount);
         progress.setEndingManuscriptWordCount(endingManuscriptWordCount);
         progress.setProductiveWordCountChange(productiveWordCountChange);
         progress.setManuscriptAdjustmentWordCount(manuscriptAdjustmentWordCount);
         progressRepository.save(progress);
+    }
+
+    /**
+     * Puts the User's routine on weekdays for the Book's whole history. Changing a routine through the
+     * goal only takes effect tomorrow, on purpose, so a test about rest days that already happened has
+     * to seed the schedule period itself instead of asking the product to rewrite the past.
+     */
+    private void writeOnWeekdaysSinceTheBookStarted(UUID bookId) {
+        var activeSchedule = scheduleRepository
+                .findFirstByUser_IdAndBookIdAndEffectiveToIsNull(DEFAULT_USER_ID, bookId)
+                .orElseThrow();
+        activeSchedule.setPlannedDays(EnumSet.of(
+                DayOfWeek.MONDAY,
+                DayOfWeek.TUESDAY,
+                DayOfWeek.WEDNESDAY,
+                DayOfWeek.THURSDAY,
+                DayOfWeek.FRIDAY
+        ));
+        scheduleRepository.saveAndFlush(activeSchedule);
     }
 
     @TestConfiguration
