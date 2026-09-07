@@ -24,11 +24,18 @@ updates:
         update-types:
           - "minor"
           - "patch"
-    # Major framework/runtime upgrades are explicit migration work, never bot-driven maintenance.
+    # Framework line changes are explicit compatibility work. Keep automatic maintenance to
+    # patches on the selected Spring Boot/Spring AI lines; all majors remain manual.
     ignore:
       - dependency-name: "*"
         update-types:
           - "version-update:semver-major"
+      - dependency-name: "org.springframework.boot:spring-boot-starter-parent"
+        update-types:
+          - "version-update:semver-minor"
+      - dependency-name: "org.springframework.ai:spring-ai-bom"
+        update-types:
+          - "version-update:semver-minor"
     commit-message:
       prefix: "chore(deps)"
 
@@ -39,12 +46,22 @@ updates:
       interval: "weekly"
     open-pull-requests-limit: 5
     groups:
+      # Keep the framework and its lint/types surface in one coherent PR.
       next-react:
         patterns:
           - "next"
+          - "eslint-config-next"
           - "react"
           - "react-dom"
           - "@types/react*"
+        update-types:
+          - "minor"
+          - "patch"
+      # TipTap minors can change editor semantics, but may also contain security fixes.
+      # Keep them visible and isolated instead of mixing them with generic tooling.
+      tiptap:
+        patterns:
+          - "@tiptap/*"
         update-types:
           - "minor"
           - "patch"
@@ -53,17 +70,29 @@ updates:
           - "*"
         exclude-patterns:
           - "next"
+          - "eslint-config-next"
           - "react"
           - "react-dom"
           - "@types/react*"
+          - "@tiptap/*"
         update-types:
           - "minor"
           - "patch"
-    # Keep Next/React/TypeScript/tooling on their selected major lines until an explicit migration ticket exists.
+    # Major frontend upgrades are explicit migration work. Next/React framework-line minors are
+    # also deliberate; patches remain automated. TipTap minors stay visible in their own group.
     ignore:
       - dependency-name: "*"
         update-types:
           - "version-update:semver-major"
+      - dependency-name: "next"
+        update-types:
+          - "version-update:semver-minor"
+      - dependency-name: "react"
+        update-types:
+          - "version-update:semver-minor"
+      - dependency-name: "react-dom"
+        update-types:
+          - "version-update:semver-minor"
     commit-message:
       prefix: "chore(deps)"
 
@@ -100,11 +129,14 @@ updates:
         update-types:
           - "minor"
           - "patch"
-    # Java/Node/runtime majors are architecture compatibility decisions.
+    # Dependabot parses the composite Maven image tag as a Maven version and can therefore treat
+    # 3.9.x-eclipse-temurin-21 -> 3.9.x-eclipse-temurin-26 as a minor update. That silently changes
+    # IWrite's Java baseline. The Maven builder image is maintained manually while Java 21 is pinned.
     ignore:
       - dependency-name: "*"
         update-types:
           - "version-update:semver-major"
+      - dependency-name: "maven"
     commit-message:
       prefix: "chore(docker)"
 
