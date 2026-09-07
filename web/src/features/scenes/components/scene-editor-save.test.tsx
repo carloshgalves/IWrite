@@ -722,11 +722,11 @@ describe("SceneEditor content save contract", () => {
     }));
 
     rerender(
-      <SceneEditor bookId="book-1" sceneId={sceneTwo.id} canMutateStructure canEditContent onSceneDeleted={vi.fn()} />
+      <SceneEditor bookId="book-1" sceneId={sceneTwo.id} canMutateStructure onSceneDeleted={vi.fn()} />
     );
     await screen.findByRole("heading", { name: sceneTwo.title });
     rerender(
-      <SceneEditor bookId="book-1" sceneId={sceneForPlanning.id} canMutateStructure canEditContent onSceneDeleted={vi.fn()} />
+      <SceneEditor bookId="book-1" sceneId={sceneForPlanning.id} canMutateStructure onSceneDeleted={vi.fn()} />
     );
 
     await waitFor(() => {
@@ -1001,7 +1001,6 @@ function renderEditor() {
       bookId="book-1"
       sceneId={sceneForPlanning.id}
       canMutateStructure
-      canEditContent
       onSceneDeleted={vi.fn()}
     />
   );

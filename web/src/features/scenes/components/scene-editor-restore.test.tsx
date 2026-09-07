@@ -200,7 +200,6 @@ function renderEditor() {
       bookId="book-1"
       sceneId={sceneForPlanning.id}
       canMutateStructure
-      canEditContent
       onSceneDeleted={vi.fn()}
     />
   );

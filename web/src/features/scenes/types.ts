@@ -27,6 +27,12 @@ export type Scene = {
   sortOrder: number;
   wordCount: number;
   contentRevision: number;
+  /**
+   * Effective authority over this scene's canonical text, resolved by the backend with the same rule
+   * the save applies. It is not the book-scoped eligibility: a user may hold
+   * EDIT_AUTHORED_CONTRIBUTION for the book and still have no authority over this scene.
+   */
+  canEditContent: boolean;
   goal: string | null;
   conflict: string | null;
   outcome: string | null;

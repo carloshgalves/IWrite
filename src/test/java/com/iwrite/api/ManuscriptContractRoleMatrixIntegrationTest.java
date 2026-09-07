@@ -80,7 +80,7 @@ class ManuscriptContractRoleMatrixIntegrationTest extends PostgresIntegrationTes
     void theOwnerReadsAndRestructuresTheManuscriptOverHttp() throws Exception {
         StoryWorld world = createStoryWorld("HTTP owner manuscript");
 
-        assertOutlineAndSceneReadable(world);
+        assertOutlineAndSceneReadable(world, true);
         assertStructureRoutesAccepted(world);
         assertContentSaveAccepted(world);
     }
@@ -94,7 +94,7 @@ class ManuscriptContractRoleMatrixIntegrationTest extends PostgresIntegrationTes
         switchTo(collaboratorId);
 
         if (canReadManuscript(role)) {
-            assertOutlineAndSceneReadable(world);
+            assertOutlineAndSceneReadable(world, canSaveSceneContent(role));
         } else {
             assertOutlineAndSceneNotFound(world);
         }
@@ -130,14 +130,24 @@ class ManuscriptContractRoleMatrixIntegrationTest extends PostgresIntegrationTes
         return role == BookRole.LEGACY_COLLABORATOR;
     }
 
-    private void assertOutlineAndSceneReadable(StoryWorld world) throws Exception {
+    /**
+     * The effective authority over the canonical text, which the Scene route projects as
+     * {@code canEditContent}. An Author is eligible for the capability and still not authorized here,
+     * so the projection has to answer the resource-scoped rule and not the Book-scoped eligibility.
+     */
+    private static boolean canSaveSceneContent(BookRole role) {
+        return role == BookRole.LEGACY_COLLABORATOR;
+    }
+
+    private void assertOutlineAndSceneReadable(StoryWorld world, boolean canEditContent) throws Exception {
         mockMvc.perform(get("/api/books/{bookId}/outline", world.book().id()))
                 .andExpect(status().isOk())
                 .andExpect(jsonPath("$.sections[0].id").value(world.section().id().toString()));
 
         mockMvc.perform(get("/api/scenes/{sceneId}", world.scene().id()))
                 .andExpect(status().isOk())
-                .andExpect(jsonPath("$.id").value(world.scene().id().toString()));
+                .andExpect(jsonPath("$.id").value(world.scene().id().toString()))
+                .andExpect(jsonPath("$.canEditContent").value(canEditContent));
     }
 
     private void assertOutlineAndSceneNotFound(StoryWorld world) throws Exception {
@@ -252,7 +262,8 @@ class ManuscriptContractRoleMatrixIntegrationTest extends PostgresIntegrationTes
                                 "operationId", UUID.randomUUID().toString()
                         ))))
                 .andExpect(status().isOk())
-                .andExpect(jsonPath("$.contentText").value("texto autorizado"));
+                .andExpect(jsonPath("$.contentText").value("texto autorizado"))
+                .andExpect(jsonPath("$.canEditContent").value(true));
     }
 
     private void assertContentSaveNotFound(StoryWorld world) throws Exception {

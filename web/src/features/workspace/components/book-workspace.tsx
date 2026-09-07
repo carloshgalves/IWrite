@@ -6,6 +6,7 @@ import { useRouter, useSearchParams } from "next/navigation";
 import { useQuery } from "@tanstack/react-query";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
+import { FeedbackMessage } from "@/components/ui/feedback-message";
 import { getBook } from "@/features/books/api/books-api";
 import { CharactersPanel } from "@/features/characters/components/characters-panel";
 import type { DashboardWorkspaceTab } from "@/features/dashboard/components/dashboard-detail-modal";
@@ -106,14 +107,15 @@ export function BookWorkspace({ bookId, initialSceneId }: BookWorkspaceProps) {
   // read-only surface: a control that turns out to be unauthorized is worse than one that appears a
   // moment late, and the server authorizes every request again either way.
   const capabilities = bookQuery.data?.capabilities;
-  const contextualCapabilities = bookQuery.data?.contextualCapabilities;
   const canMutateStructure = Boolean(capabilities?.includes("MUTATE_MANUSCRIPT_STRUCTURE"));
-  // EDIT_AUTHORED_CONTRIBUTION is contextual for the roles that hold it at all: book scope makes a
-  // user eligible to attempt a content save, and the backend still decides it per scene. Offering the
-  // editor to an eligible user is the contract; hiding it would make the browser guess the predicate.
-  const canEditSceneContent = Boolean(
-    capabilities?.includes("EDIT_AUTHORED_CONTRIBUTION") || contextualCapabilities?.includes("EDIT_AUTHORED_CONTRIBUTION")
-  );
+  // Content editability is deliberately not derived here. EDIT_AUTHORED_CONTRIBUTION is contextual, so
+  // book scope only makes a user eligible; the authority over a given scene is resolved by the backend
+  // and arrives on the scene itself, which is what the editor reads.
+  //
+  // A failed request, in turn, is not an answer about what this user may do. Loading and failure both
+  // withhold the controls, but only one of them is a decision: presenting a transport failure as "you
+  // may not change this book" would state an authorization outcome the backend never gave.
+  const capabilitiesUnavailable = bookQuery.isError;
   const isScenesFocusMode = mode === "scenes" && isFocusMode;
 
   const exitNativeFullscreen = useCallback(() => {
@@ -396,6 +398,17 @@ export function BookWorkspace({ bookId, initialSceneId }: BookWorkspaceProps) {
       </header>
       )}
 
+      {capabilitiesUnavailable ? (
+        <div className="grid gap-2 border-b border-zinc-200 bg-white px-4 py-3 md:flex md:items-center md:justify-between">
+          <FeedbackMessage variant="error">
+            Não foi possível carregar suas permissões deste livro. As ações de edição ficam indisponíveis até isso ser resolvido.
+          </FeedbackMessage>
+          <Button type="button" size="sm" variant="ghost" onClick={() => void bookQuery.refetch()}>
+            Tentar novamente
+          </Button>
+        </div>
+      ) : null}
+
       <div className={`grid min-h-0 grid-cols-1 overflow-hidden ${isScenesFocusMode ? "" : "md:grid-cols-[340px_minmax(0,1fr)]"}`}>
         {mode === "scenes" && !isScenesFocusMode ? (
           <div className="min-h-0 overflow-hidden border-r border-zinc-200 bg-white">
@@ -403,6 +416,7 @@ export function BookWorkspace({ bookId, initialSceneId }: BookWorkspaceProps) {
               bookId={bookId}
               selectedSceneId={selectedSceneId}
               canMutateStructure={canMutateStructure}
+              capabilitiesUnavailable={capabilitiesUnavailable}
               onSelectScene={handleSelectScene}
             />
           </div>
@@ -437,7 +451,6 @@ export function BookWorkspace({ bookId, initialSceneId }: BookWorkspaceProps) {
               bookId={bookId}
               sceneId={selectedSceneId}
               canMutateStructure={canMutateStructure}
-              canEditContent={canEditSceneContent}
               isFocusMode={isScenesFocusMode}
               isFullscreenAvailable={isFullscreenAvailable}
               isFullscreenActive={isFullscreenActive}

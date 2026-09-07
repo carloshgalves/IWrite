@@ -34,12 +34,6 @@ type SceneEditorProps = {
    * so without it the header and the metadata form are read-only.
    */
   canMutateStructure: boolean;
-  /**
-   * Eligibility for EDIT_AUTHORED_CONTRIBUTION. Book scope alone never authorizes a content save: the
-   * backend evaluates authority over the scene itself, so this only decides whether the editor is
-   * offered as writable at all.
-   */
-  canEditContent: boolean;
   isFocusMode?: boolean;
   isFullscreenAvailable?: boolean;
   isFullscreenActive?: boolean;
@@ -85,7 +79,6 @@ export function SceneEditor({
   bookId,
   sceneId,
   canMutateStructure,
-  canEditContent,
   isFocusMode = false,
   isFullscreenAvailable = false,
   isFullscreenActive = false,
@@ -130,6 +123,16 @@ export function SceneEditor({
     queryFn: () => getScene(sceneId as string),
     enabled: Boolean(sceneId),
   });
+
+  /**
+   * The effective authority over this scene's canonical text, as the backend resolved it with the same
+   * rule its save applies. Deriving it here from book-scoped eligibility would duplicate the server's
+   * resource-scoped decision in the browser and offer an editor for a save that is always refused.
+   *
+   * Read-only until the loaded scene is this scene: a control that turns out to be unauthorized is
+   * worse than one that appears a moment late, and the server authorizes every request again anyway.
+   */
+  const canEditContent = sceneQuery.data?.id === sceneId && sceneQuery.data.canEditContent === true;
 
   const metadataMutation = useMutation({
     mutationFn: () =>

@@ -1,5 +1,6 @@
 package com.iwrite.scene.service;
 
+import com.iwrite.book.authorization.BookAccessContext;
 import com.iwrite.book.authorization.BookCapability;
 import com.iwrite.book.entity.Book;
 import com.iwrite.book.service.BookAccessService;
@@ -118,17 +119,20 @@ public class SceneService {
 
     @Transactional(readOnly = true)
     public SceneResponse findById(UUID sceneId) {
-        return SceneResponse.fromEntity(getScene(sceneId));
+        AccessibleScene accessible = requireAccessibleScene(sceneId, BookCapability.READ_MANUSCRIPT);
+        return SceneResponse.fromEntity(accessible.scene(), accessible.access());
     }
 
     @Transactional
     public SceneResponse create(UUID chapterId, SceneRequest request) {
         Chapter chapter = chapterService.getChapterForStructureMutation(chapterId);
         UUID bookId = chapter.getBook().getId();
-        Book lockedBook = bookAccessService.requireCapabilityForUpdate(
+        BookAccessService.AccessibleBook accessibleBook = bookAccessService.requireAccessibleBookForUpdate(
                 bookId,
                 BookCapability.MUTATE_MANUSCRIPT_STRUCTURE
         );
+        Book lockedBook = accessibleBook.book();
+        BookAccessContext access = accessibleBook.access();
         UUID operationId = request.operationId() == null ? UUID.randomUUID() : request.operationId();
         String requestFingerprint = WordCountRequestFingerprint.sceneCreate(
                 currentUserProvider.userId(),
@@ -141,7 +145,7 @@ public class SceneService {
                 request.contentJson(),
                 request.contentText()
         );
-        SceneResponse idempotentCreateResponse = idempotentCreateRetryResponse(bookId, operationId, requestFingerprint);
+        SceneResponse idempotentCreateResponse = idempotentCreateRetryResponse(bookId, operationId, requestFingerprint, access);
         if (idempotentCreateResponse != null) {
             return idempotentCreateResponse;
         }
@@ -183,12 +187,14 @@ public class SceneService {
             ));
         }
 
-        return SceneResponse.fromEntity(savedScene);
+        return SceneResponse.fromEntity(savedScene, access);
     }
 
     @Transactional
     public SceneResponse update(UUID sceneId, SceneUpdateRequest request) {
-        Scene scene = requireScene(sceneId, BookCapability.MUTATE_MANUSCRIPT_STRUCTURE);
+        AccessibleScene accessible = requireAccessibleScene(sceneId, BookCapability.MUTATE_MANUSCRIPT_STRUCTURE);
+        Scene scene = accessible.scene();
+        BookAccessContext access = accessible.access();
         RequestValidation.rejectBlankWhenPresent("title", request.title());
 
         if (request.title() != null) {
@@ -208,7 +214,7 @@ public class SceneService {
             scene.setSortOrder(request.sortOrder());
         }
 
-        return SceneResponse.fromEntity(scene);
+        return SceneResponse.fromEntity(scene, access);
     }
 
     /*
@@ -258,7 +264,9 @@ public class SceneService {
     ) {
         Scene scene = requireSceneForContentUpdate(sceneId);
         rejectMissingOperationId(request.operationId());
-        Book lockedBook = requireSceneContentAuthority(scene);
+        BookAccessService.AccessibleBook authority = requireSceneContentAuthority(scene);
+        Book lockedBook = authority.book();
+        BookAccessContext access = authority.access();
         SceneVersionSource source = contentSource(request.source());
         telemetry.attribute(BusinessTelemetry.SCENE_SOURCE, telemetrySource(source));
         telemetry.attribute(
@@ -274,7 +282,7 @@ public class SceneService {
                 request.contentJson(),
                 request.contentText()
         );
-        SceneResponse idempotentRetryResponse = idempotentRetryResponse(scene, request.operationId(), requestFingerprint);
+        SceneResponse idempotentRetryResponse = idempotentRetryResponse(scene, request.operationId(), requestFingerprint, access);
         if (idempotentRetryResponse != null) {
             telemetry.result(BusinessTelemetry.RESULT_IDEMPOTENT_RETRY)
                     .attribute(BusinessTelemetry.SCENE_CONTENT_CHANGED, false);
@@ -300,7 +308,7 @@ public class SceneService {
                     requestFingerprint,
                     Math.toIntExact(sceneRepository.sumWordCountByBookId(lockedBook.getId()))
             ));
-            return SceneResponse.fromEntity(scene);
+            return SceneResponse.fromEntity(scene, access);
         }
 
         telemetry.attribute(BusinessTelemetry.SCENE_CONTENT_CHANGED, true);
@@ -335,7 +343,7 @@ public class SceneService {
                 totalBefore + wordCountDelta
         ));
 
-        return SceneResponse.fromEntity(scene);
+        return SceneResponse.fromEntity(scene, access);
     }
 
     @Transactional
@@ -343,6 +351,7 @@ public class SceneService {
         Scene scene = getSceneForLegacyUpdate(sceneId);
         rejectMissingOperationId(request.operationId());
         Book lockedBook = bookAccessService.requireBookEditAccessForUpdate(scene.getBook().getId());
+        BookAccessContext access = bookAccessService.resolveAccessContext(scene.getBook().getId());
         SceneVersion version = sceneVersionService.getCurrentSceneVersion(sceneId, versionId);
         String requestFingerprint = WordCountRequestFingerprint.versionRestore(
                 currentUserProvider.userId(),
@@ -351,14 +360,14 @@ public class SceneService {
                 versionId,
                 request.expectedContentRevision()
         );
-        SceneResponse idempotentRetryResponse = idempotentRestoreRetryResponse(scene, request.operationId(), requestFingerprint);
+        SceneResponse idempotentRetryResponse = idempotentRestoreRetryResponse(scene, request.operationId(), requestFingerprint, access);
         if (idempotentRetryResponse != null) {
             return idempotentRetryResponse;
         }
         rejectStaleContentRevision(scene, request.expectedContentRevision());
 
         if (sameContent(scene, version.getContentJson(), version.getContentText())) {
-            return SceneResponse.fromEntity(scene);
+            return SceneResponse.fromEntity(scene, access);
         }
 
         UUID bookId = lockedBook.getId();
@@ -389,13 +398,14 @@ public class SceneService {
                 totalBefore + manuscriptWordDelta
         ));
 
-        return SceneResponse.fromEntity(scene);
+        return SceneResponse.fromEntity(scene, access);
     }
 
     @Transactional
     public SceneResponse updatePlanning(UUID sceneId, ScenePlanningRequest request) {
         Scene scene = getSceneForLegacyEdit(sceneId);
         UUID bookId = scene.getBook().getId();
+        BookAccessContext access = bookAccessService.resolveAccessContext(bookId);
         List<String> gapsBefore = scene.getStatus() == SceneStatus.PLANNED
                 ? planningCompletenessService.planningGaps(scene)
                 : List.of();
@@ -416,7 +426,7 @@ public class SceneService {
             rejectIntroducedPlanningGaps(scene, gapsBefore);
         }
 
-        return SceneResponse.fromEntity(scene);
+        return SceneResponse.fromEntity(scene, access);
     }
 
     @Transactional
@@ -451,10 +461,17 @@ public class SceneService {
      * to learn that a Scene, a Chapter or a Book exists.
      */
     private Scene requireScene(UUID sceneId, BookCapability capability) {
+        return requireAccessibleScene(sceneId, capability).scene();
+    }
+
+    /**
+     * Same proof as {@link #requireScene(UUID, BookCapability)}, paired with the effective access it
+     * resolved, for a caller that also projects that access back into its response.
+     */
+    private AccessibleScene requireAccessibleScene(UUID sceneId, BookCapability capability) {
         Scene scene = sceneRepository.findByIdAndTenantId(sceneId, currentUserProvider.tenantId())
                 .orElseThrow(() -> sceneNotFound(sceneId));
-        requireSceneBookCapability(scene, sceneId, capability);
-        return scene;
+        return new AccessibleScene(scene, requireSceneBookCapability(scene, sceneId, capability));
     }
 
     /** Same proof as {@link #requireScene(UUID, BookCapability)}, taking the Scene row lock first. */
@@ -463,6 +480,10 @@ public class SceneService {
                 .orElseThrow(() -> sceneNotFound(sceneId));
         requireSceneBookCapability(scene, sceneId, capability);
         return scene;
+    }
+
+    /** A Scene together with the effective Book access that was proven to reach it. */
+    private record AccessibleScene(Scene scene, BookAccessContext access) {
     }
 
     /**
@@ -491,7 +512,7 @@ public class SceneService {
      * <p>A User who is merely eligible is refused with the same {@code Scene not found} as one who
      * cannot see the Scene at all, so the refusal never reports which half of the rule failed.
      */
-    private Book requireSceneContentAuthority(Scene scene) {
+    private BookAccessService.AccessibleBook requireSceneContentAuthority(Scene scene) {
         BookAccessService.AccessibleBook accessible = bookAccessService.requireCapabilityEligibilityForUpdate(
                 scene.getBook().getId(),
                 BookCapability.EDIT_AUTHORED_CONTRIBUTION
@@ -499,12 +520,12 @@ public class SceneService {
         if (!SceneContentAuthority.canEditSceneContent(accessible.access())) {
             throw sceneNotFound(scene.getId());
         }
-        return accessible.book();
+        return accessible;
     }
 
-    private void requireSceneBookCapability(Scene scene, UUID sceneId, BookCapability capability) {
+    private BookAccessContext requireSceneBookCapability(Scene scene, UUID sceneId, BookCapability capability) {
         try {
-            bookAccessService.requireCapability(scene.getBook().getId(), capability);
+            return bookAccessService.requireAccessibleBook(scene.getBook().getId(), capability).access();
         } catch (ResourceNotFoundException exception) {
             throw sceneNotFound(sceneId);
         }
@@ -674,7 +695,12 @@ public class SceneService {
                 && normalized(scene.getContentText()).equals(normalized(contentText));
     }
 
-    private SceneResponse idempotentCreateRetryResponse(UUID bookId, UUID idempotencyKey, String requestFingerprint) {
+    private SceneResponse idempotentCreateRetryResponse(
+            UUID bookId,
+            UUID idempotencyKey,
+            String requestFingerprint,
+            BookAccessContext access
+    ) {
         return wordCountEventRepository.findByBookIdAndIdempotencyKey(bookId, idempotencyKey)
                 .map(event -> {
                     requireMatchingFingerprint(
@@ -685,12 +711,17 @@ public class SceneService {
                     if (event.getScene() == null) {
                         throw new ResourceNotFoundException("Scene not found for idempotent create retry.");
                     }
-                    return SceneResponse.fromEntity(event.getScene());
+                    return SceneResponse.fromEntity(event.getScene(), access);
                 })
                 .orElse(null);
     }
 
-    private SceneResponse idempotentRetryResponse(Scene scene, UUID idempotencyKey, String requestFingerprint) {
+    private SceneResponse idempotentRetryResponse(
+            Scene scene,
+            UUID idempotencyKey,
+            String requestFingerprint,
+            BookAccessContext access
+    ) {
         return wordCountEventRepository.findByBookIdAndIdempotencyKey(scene.getBook().getId(), idempotencyKey)
                 .map(event -> {
                     requireMatchingFingerprint(
@@ -698,7 +729,7 @@ public class SceneService {
                             requestFingerprint,
                             "Idempotency key was already used for a different scene content update."
                     );
-                    return SceneResponse.fromEntity(scene);
+                    return SceneResponse.fromEntity(scene, access);
                 })
                 .orElse(null);
     }
@@ -706,7 +737,8 @@ public class SceneService {
     private SceneResponse idempotentRestoreRetryResponse(
             Scene scene,
             UUID idempotencyKey,
-            String requestFingerprint
+            String requestFingerprint,
+            BookAccessContext access
     ) {
         return wordCountEventRepository.findByBookIdAndIdempotencyKey(scene.getBook().getId(), idempotencyKey)
                 .map(event -> {
@@ -715,7 +747,7 @@ public class SceneService {
                             requestFingerprint,
                             "Idempotency key was already used for a different scene version restore."
                     );
-                    return SceneResponse.fromEntity(scene);
+                    return SceneResponse.fromEntity(scene, access);
                 })
                 .orElse(null);
     }

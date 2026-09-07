@@ -69,7 +69,8 @@ describe("TiptapEditor toolbar", () => {
 
     expect(screen.queryByRole("button", { name: "B" })).not.toBeInTheDocument();
     expect(mocks.useEditor).toHaveBeenCalledWith(expect.objectContaining({ editable: false }));
-    expect(editor.setEditable).toHaveBeenCalledWith(false);
+    // Never emitting an update: tiptap-editor-editable.test.tsx proves what that suppression buys.
+    expect(editor.setEditable).toHaveBeenCalledWith(false, false);
   });
 
   test("aciona comando de alinhamento ao clicar em um botao", () => {

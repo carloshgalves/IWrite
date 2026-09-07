@@ -69,6 +69,18 @@ const editorBook: Book = {
   contextualCapabilities: [],
 };
 
+/**
+ * An author is eligible for EDIT_AUTHORED_CONTRIBUTION at book scope and still holds no authority
+ * over a given scene until #184. Book-scoped eligibility is not permission to edit.
+ */
+const authorBook: Book = {
+  ...ownedBook,
+  relationship: "COLLABORATOR",
+  role: "AUTHOR",
+  capabilities: ["READ_MANUSCRIPT"],
+  contextualCapabilities: ["EDIT_AUTHORED_CONTRIBUTION"],
+};
+
 const mocks = vi.hoisted(() => ({
   getOutline: vi.fn(),
   getBook: vi.fn(),
@@ -694,7 +706,7 @@ describe("BookWorkspace sem capabilities de estrutura e conteudo", () => {
     window.localStorage.clear();
     mocks.getOutline.mockResolvedValue(outline);
     mocks.getBook.mockResolvedValue(editorBook);
-    mocks.getScene.mockResolvedValue(sceneForPlanning);
+    mocks.getScene.mockResolvedValue({ ...sceneForPlanning, canEditContent: false });
     mocks.updateScene.mockResolvedValue(sceneForPlanning);
     mocks.updateSceneContent.mockResolvedValue(sceneForPlanning);
     mocks.deleteScene.mockResolvedValue(undefined);
@@ -741,3 +753,95 @@ function selectScene() {
   expect(sceneRow).not.toBeNull();
   fireEvent.click(sceneRow as HTMLButtonElement);
 }
+
+describe("BookWorkspace com elegibilidade de conteudo sem autoridade sobre a cena", () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+    mocks.searchParams = new URLSearchParams();
+    window.localStorage.clear();
+    mocks.getOutline.mockResolvedValue(outline);
+    mocks.getBook.mockResolvedValue(authorBook);
+    mocks.updateScene.mockResolvedValue(sceneForPlanning);
+    mocks.updateSceneContent.mockResolvedValue(sceneForPlanning);
+    mocks.deleteScene.mockResolvedValue(undefined);
+  });
+
+  test("a cena que o servidor projeta como nao editavel abre somente leitura", async () => {
+    mocks.getScene.mockResolvedValue({ ...sceneForPlanning, canEditContent: false });
+
+    renderWithClient(<BookWorkspace bookId="book-1" />);
+
+    expect(await screen.findByText("Livro")).toBeInTheDocument();
+    selectScene();
+
+    expect(await screen.findByRole("heading", { name: sceneForPlanning.title })).toBeInTheDocument();
+    // The browser must not read the book-scoped eligibility as permission and offer a save the
+    // backend always refuses.
+    expect(screen.queryByRole("button", { name: /Salvar conte.do/ })).not.toBeInTheDocument();
+    expect(screen.getByText(/n.o autoriza voc. a alterar o conte.do desta cena/)).toBeInTheDocument();
+  });
+
+  // Control: the decision follows the server for the very same role, so it is the projection being
+  // read and not the role being guessed at.
+  test("a mesma cena projetada como editavel abre para escrita", async () => {
+    mocks.getScene.mockResolvedValue({ ...sceneForPlanning, canEditContent: true });
+
+    renderWithClient(<BookWorkspace bookId="book-1" />);
+
+    expect(await screen.findByText("Livro")).toBeInTheDocument();
+    selectScene();
+
+    expect(await screen.findByRole("heading", { name: sceneForPlanning.title })).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: /Salvar conte.do/ })).toBeInTheDocument();
+  });
+});
+
+describe("BookWorkspace quando as capabilities nao carregam", () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+    mocks.searchParams = new URLSearchParams();
+    window.localStorage.clear();
+    mocks.getOutline.mockResolvedValue(outline);
+    mocks.getScene.mockResolvedValue(sceneForPlanning);
+  });
+
+  test("uma falha de getBook aparece como erro com nova tentativa, nao como negacao de acesso", async () => {
+    mocks.getBook.mockRejectedValue(new Error("network down"));
+
+    renderWithClient(<BookWorkspace bookId="book-1" />);
+
+    expect(await screen.findByText("Livro")).toBeInTheDocument();
+
+    // A failure is not an answer about what this user may do: saying "you do not change this book"
+    // would report a transport problem as an authorization decision.
+    const alert = await screen.findByRole("alert");
+    expect(alert).toHaveTextContent(/n.o foi poss.vel carregar suas permiss.es/i);
+    expect(screen.getByRole("button", { name: /Tentar novamente/ })).toBeInTheDocument();
+    expect(screen.queryByText(/Somente leitura: voc. n.o altera a estrutura deste livro/)).not.toBeInTheDocument();
+    // Still conservative while it is unknown: no structure control is offered.
+    expect(screen.queryByRole("textbox", { name: "Nova seção" })).not.toBeInTheDocument();
+  });
+
+  test("a nova tentativa recarrega as capabilities e devolve os controles", async () => {
+    mocks.getBook.mockRejectedValueOnce(new Error("network down")).mockResolvedValue(ownedBook);
+
+    renderWithClient(<BookWorkspace bookId="book-1" />);
+
+    fireEvent.click(await screen.findByRole("button", { name: /Tentar novamente/ }));
+
+    expect(await screen.findByRole("textbox", { name: "Nova seção" })).toBeInTheDocument();
+    await waitFor(() => expect(screen.queryByRole("alert")).not.toBeInTheDocument());
+  });
+
+  // Control: while the answer is merely on its way, the surface stays quiet and conservative instead
+  // of announcing a failure that has not happened.
+  test("enquanto as capabilities carregam nao ha erro nem controles de estrutura", async () => {
+    mocks.getBook.mockImplementation(() => new Promise(() => undefined));
+
+    renderWithClient(<BookWorkspace bookId="book-1" />);
+
+    expect(await screen.findByText("Livro")).toBeInTheDocument();
+    expect(screen.queryByRole("alert")).not.toBeInTheDocument();
+    expect(screen.queryByRole("textbox", { name: "Nova seção" })).not.toBeInTheDocument();
+  });
+});

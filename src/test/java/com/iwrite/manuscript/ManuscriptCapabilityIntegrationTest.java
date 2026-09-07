@@ -131,8 +131,56 @@ class ManuscriptCapabilityIntegrationTest extends PostgresIntegrationTest {
         // no Authored Contribution exists to attribute the text to before #184.
         assertThat(bookAccessCapabilities(world.book().id())).contains("EDIT_AUTHORED_CONTRIBUTION");
         assertCannotSaveSceneContent(world);
+        // The Scene projects the authority the save enforces, so the surface cannot read Book-scoped
+        // eligibility as permission to edit and offer an editor for a save that is always refused.
+        assertThat(sceneService.findById(world.scene().id()).canEditContent()).isFalse();
         // Eligibility must not have leaked into the structure surface either.
         assertCannotRestructureTheManuscript(world);
+    }
+
+    @ParameterizedTest
+    @EnumSource(BookRole.class)
+    void theSceneProjectsTheSameContentAuthorityTheSaveEnforces(BookRole role) {
+        StoryWorld world = createStoryWorld("Projected authority " + role);
+        UUID collaboratorId = grantRole(world.book().id(), role);
+
+        switchTo(collaboratorId);
+
+        if (!canReadManuscript(role)) {
+            assertNotFound(() -> sceneService.findById(world.scene().id()));
+            return;
+        }
+
+        // Read back from the same seam the browser reads: whatever the projection claims here is what
+        // the save does below, for every role, so the two can never drift apart.
+        assertThat(sceneService.findById(world.scene().id()).canEditContent())
+                .isEqualTo(canSaveSceneContent(role));
+        if (canSaveSceneContent(role)) {
+            assertSavesSceneContent(world);
+        } else {
+            assertCannotSaveSceneContent(world);
+        }
+    }
+
+    @Test
+    void everySceneResponseOfAnAuthorizedSaveCarriesTheAuthorityItWasDecidedWith() {
+        StoryWorld world = createStoryWorld("Owner projection");
+
+        assertThat(sceneService.findById(world.scene().id()).canEditContent()).isTrue();
+        // A mutation response refreshes the same client-side Scene, so a response that dropped the
+        // authority would turn the Owner's own editor read-only right after a successful save.
+        assertThat(sceneService.update(world.scene().id(), new SceneUpdateRequest("Renomeada", null, null, null)).canEditContent())
+                .isTrue();
+        assertThat(sceneService.updateContent(
+                world.scene().id(),
+                new SceneContentRequest(
+                        "{\"type\":\"doc\"}",
+                        "conteudo do owner",
+                        SceneVersionSource.MANUAL_SAVE,
+                        sceneService.findById(world.scene().id()).contentRevision(),
+                        UUID.randomUUID()
+                )
+        ).canEditContent()).isTrue();
     }
 
     @Test

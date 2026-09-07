@@ -299,6 +299,7 @@ export const sceneForPlanning: Scene = {
   sortOrder: 0,
   wordCount: 3,
   contentRevision: 0,
+  canEditContent: true,
   goal: null,
   conflict: null,
   outcome: null,

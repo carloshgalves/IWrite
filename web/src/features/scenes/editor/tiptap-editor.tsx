@@ -211,8 +211,12 @@ export function TiptapEditor({
 
   // The effective access arrives from the backend after the editor is created, so the editable flag
   // has to follow it rather than being fixed at construction time.
+  //
+  // Without emitting an update: setEditable emits one by default, and this call runs on mount and on
+  // every permission change. That update would reach onChange with no human edit behind it, marking
+  // the scene dirty and arming autosave just for opening it or for a capability arriving late.
   useEffect(() => {
-    editor?.setEditable(!readOnly);
+    editor?.setEditable(!readOnly, false);
   }, [editor, readOnly]);
 
   return (

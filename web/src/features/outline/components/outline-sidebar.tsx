@@ -50,12 +50,20 @@ type OutlineSidebarProps = {
    * them is presentation only — every one of those requests is authorized again on the server.
    */
   canMutateStructure: boolean;
+  /** The effective access could not be loaded, so the missing controls are unknown, not denied. */
+  capabilitiesUnavailable?: boolean;
   onSelectScene: (sceneId: string | null) => void;
 };
 
 const sectionTypes: SectionType[] = ["PART", "PROLOGUE", "INTERLUDE", "EPILOGUE", "OTHER"];
 
-export function OutlineSidebar({ bookId, selectedSceneId, canMutateStructure, onSelectScene }: OutlineSidebarProps) {
+export function OutlineSidebar({
+  bookId,
+  selectedSceneId,
+  canMutateStructure,
+  capabilitiesUnavailable = false,
+  onSelectScene,
+}: OutlineSidebarProps) {
   const queryClient = useQueryClient();
   const [successMessage, setSuccessMessage] = useState("");
   const [editingSectionId, setEditingSectionId] = useState<string | null>(null);
@@ -388,6 +396,8 @@ export function OutlineSidebar({ bookId, selectedSceneId, canMutateStructure, on
             disabled={sectionMutation.isPending}
             onCreate={(title) => sectionMutation.mutate(title)}
           />
+        ) : capabilitiesUnavailable ? (
+          <p className="text-xs text-zinc-500">Suas permissões deste livro não puderam ser carregadas.</p>
         ) : (
           <p className="text-xs text-zinc-500">Somente leitura: você não altera a estrutura deste livro.</p>
         )}
