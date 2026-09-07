@@ -307,6 +307,11 @@ function DailyWritingGoalCard({
   }));
   const [isEditing, setIsEditing] = useState(false);
   const [isEditingRoutine, setIsEditingRoutine] = useState(false);
+  // A refused save leaves this card holding state the server already replaced. Closing the editors
+  // starts reconciliation but does not finish it, so until the goal that won is adopted there is no
+  // revision here worth deciding against: editing stays unavailable rather than reopening on the
+  // revision the server just refused and earning a second conflict nobody caused.
+  const [isReconcilingConflict, setIsReconcilingConflict] = useState(false);
   const [targetValue, setTargetValue] = useState(goal.dailyTargetWordCount?.toString() ?? "");
   const [selectedRoutineDays, setSelectedRoutineDays] = useState<DayOfWeek[]>(goal.plannedWritingDays);
   const [validationMessage, setValidationMessage] = useState<string | null>(null);
@@ -346,11 +351,14 @@ function DailyWritingGoalCard({
   //
   // Closing the editors is what makes that reconciliation happen: an open draft holds the snapshot it
   // was decided against, so a draft left open over a refusal would keep quoting the revision the
-  // server just rejected and earn the same conflict on every retry.
+  // server just rejected and earn the same conflict on every retry. Editing then stays closed until
+  // the goal that won actually arrives, because reopening on the refused revision would earn that
+  // same conflict from the other direction.
   function refetchOnStaleGoal(error: unknown) {
     if (error instanceof ApiError && error.status === STALE_GOAL_STATUS) {
       setIsEditing(false);
       setIsEditingRoutine(false);
+      setIsReconcilingConflict(true);
       void queryClient.invalidateQueries({ queryKey: queryKeys.bookDashboard(dashboard.bookId) });
     }
   }
@@ -361,15 +369,17 @@ function DailyWritingGoalCard({
   // the server accept a decision taken against superseded state; the draft keeps its own revision
   // and reconciles through the conflict the server then answers with. A read older than the goal an
   // accepted save returned is stale in the other direction and is ignored for the same reason.
+  // Adopting such a read is also the only thing that ends a conflict's reconciliation: it is the
+  // moment this card stops holding refused state, so it is the moment editing can honestly reopen. A
+  // read that is not newer reconciles nothing and therefore releases nothing.
   useEffect(() => {
-    if (isEditing || isEditingRoutine) {
+    if (isEditing || isEditingRoutine || serverRevision <= goal.revision) {
       return;
     }
 
-    setGoal((currentGoal) => (serverRevision > currentGoal.revision
-      ? { dailyTargetWordCount: serverTargetWordCount, plannedWritingDays: serverPlannedWritingDays, revision: serverRevision }
-      : currentGoal));
-  }, [isEditing, isEditingRoutine, serverRevision, serverTargetWordCount, serverPlannedWritingDays]);
+    setGoal({ dailyTargetWordCount: serverTargetWordCount, plannedWritingDays: serverPlannedWritingDays, revision: serverRevision });
+    setIsReconcilingConflict(false);
+  }, [isEditing, isEditingRoutine, serverRevision, serverTargetWordCount, serverPlannedWritingDays, goal.revision]);
 
   function startEditing() {
     setValidationMessage(null);
@@ -481,7 +491,7 @@ function DailyWritingGoalCard({
           <p className="mt-1 text-sm text-zinc-500">Acompanhe os dias planejados e o avanco de escrita registrado hoje.</p>
           <p className="mt-2 text-sm font-medium text-zinc-900">{routineSummary}</p>
         </div>
-        {canManageOwnGoal && !isEditing && !isEditingRoutine ? (
+        {canManageOwnGoal && !isEditing && !isEditingRoutine && !isReconcilingConflict ? (
           <div className="flex flex-wrap gap-2">
             <Button type="button" variant="secondary" size="sm" onClick={startEditingRoutine}>
               Editar rotina
