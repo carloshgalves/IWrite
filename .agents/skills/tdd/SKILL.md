@@ -7,6 +7,8 @@ description: Use red-green development for IWrite at the highest stable seam tha
 
 TDD is useful when a precise observable behavior can be made red before implementation. It is not a rule that every change must begin with an HTTP or UI test.
 
+If the implementation is already green and the task is to verify that existing tests would detect a weakened guarantee, use `regression-audit` instead. That skill audits regression signal with temporary negative controls; this skill drives behavior red -> green.
+
 ## Choose the proof seam first
 
 Pick the highest stable seam that can actually prove the invariant:
