@@ -24,6 +24,11 @@ updates:
         update-types:
           - "minor"
           - "patch"
+    # Major framework/runtime upgrades are explicit migration work, never bot-driven maintenance.
+    ignore:
+      - dependency-name: "*"
+        update-types:
+          - "version-update:semver-major"
     commit-message:
       prefix: "chore(deps)"
 
@@ -54,6 +59,11 @@ updates:
         update-types:
           - "minor"
           - "patch"
+    # Keep Next/React/TypeScript/tooling on their selected major lines until an explicit migration ticket exists.
+    ignore:
+      - dependency-name: "*"
+        update-types:
+          - "version-update:semver-major"
     commit-message:
       prefix: "chore(deps)"
 
@@ -70,6 +80,10 @@ updates:
         update-types:
           - "minor"
           - "patch"
+    ignore:
+      - dependency-name: "*"
+        update-types:
+          - "version-update:semver-major"
     commit-message:
       prefix: "chore(ci)"
 
@@ -86,6 +100,11 @@ updates:
         update-types:
           - "minor"
           - "patch"
+    # Java/Node/runtime majors are architecture compatibility decisions.
+    ignore:
+      - dependency-name: "*"
+        update-types:
+          - "version-update:semver-major"
     commit-message:
       prefix: "chore(docker)"
 
@@ -102,6 +121,10 @@ updates:
         update-types:
           - "minor"
           - "patch"
+    ignore:
+      - dependency-name: "*"
+        update-types:
+          - "version-update:semver-major"
     commit-message:
       prefix: "chore(docker)"
 
@@ -118,5 +141,10 @@ updates:
         update-types:
           - "minor"
           - "patch"
+    # PostgreSQL and other service-image majors require explicit compatibility/migration validation.
+    ignore:
+      - dependency-name: "*"
+        update-types:
+          - "version-update:semver-major"
     commit-message:
       prefix: "chore(docker)"
