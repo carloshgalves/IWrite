@@ -106,7 +106,11 @@ export function BookWorkspace({ bookId, initialSceneId }: BookWorkspaceProps) {
   // Effective access as the backend derived it. Until it arrives, the workspace presents the
   // read-only surface: a control that turns out to be unauthorized is worse than one that appears a
   // moment late, and the server authorizes every request again either way.
-  const capabilities = bookQuery.data?.capabilities;
+  //
+  // Only a currently successful projection answers that question. Query data outlives the fetch that
+  // produced it, so a refetch that fails leaves the previous capabilities in the cache; acting on
+  // them would keep offering an authority the server is no longer confirming.
+  const capabilities = bookQuery.isSuccess ? bookQuery.data.capabilities : undefined;
   const canMutateStructure = Boolean(capabilities?.includes("MUTATE_MANUSCRIPT_STRUCTURE"));
   // Content editability is deliberately not derived here. EDIT_AUTHORED_CONTRIBUTION is contextual, so
   // book scope only makes a user eligible; the authority over a given scene is resolved by the backend

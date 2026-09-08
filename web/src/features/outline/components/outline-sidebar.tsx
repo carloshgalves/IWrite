@@ -94,6 +94,19 @@ export function OutlineSidebar({
     })
   );
 
+  // Losing the capability has to end the mutable state opened under it. An inline edit or an active
+  // drag left behind is a control the workspace already decided not to offer, still holding a Salvar
+  // that would dispatch a request the server now refuses.
+  useEffect(() => {
+    if (canMutateStructure) {
+      return;
+    }
+
+    setEditingSectionId(null);
+    setEditingChapterId(null);
+    setActiveSectionId(null);
+  }, [canMutateStructure]);
+
   useEffect(() => {
     const outline = outlineQuery.data;
     if (!outline || !selectedSceneId) {
@@ -242,6 +255,12 @@ export function OutlineSidebar({
   }
 
   function handleReorderSections(orderedIds: string[]) {
+    // The last check before the request leaves: hiding and disabling controls is presentation, so a
+    // dispatch reached by a stale control, a pending drag or a race must still refuse itself.
+    if (!canMutateStructure) {
+      return;
+    }
+
     setSuccessMessage("");
     reorderSectionsMutation.mutate(
       { orderedIds },
@@ -252,6 +271,10 @@ export function OutlineSidebar({
   }
 
   function handleReorderChapters(section: OutlineSection, orderedIds: string[]) {
+    if (!canMutateStructure) {
+      return;
+    }
+
     setSuccessMessage("");
     reorderChaptersMutation.mutate(
       { sectionId: section.id, orderedIds },
@@ -262,6 +285,10 @@ export function OutlineSidebar({
   }
 
   function handleReorderScenes(chapter: OutlineChapter, orderedIds: string[]) {
+    if (!canMutateStructure) {
+      return;
+    }
+
     setSuccessMessage("");
     reorderScenesMutation.mutate(
       { chapterId: chapter.id, orderedIds },
@@ -269,6 +296,30 @@ export function OutlineSidebar({
         onSuccess: () => setSuccessMessage("Ordem das cenas atualizada."),
       }
     );
+  }
+
+  function handleCreateSection(title: string) {
+    if (!canMutateStructure) {
+      return;
+    }
+
+    sectionMutation.mutate(title);
+  }
+
+  function handleCreateChapter(sectionId: string, title: string) {
+    if (!canMutateStructure) {
+      return;
+    }
+
+    chapterMutation.mutate({ sectionId, title });
+  }
+
+  function handleCreateScene(chapterId: string, title: string) {
+    if (!canMutateStructure) {
+      return;
+    }
+
+    sceneMutation.mutate({ chapterId, title });
   }
 
   function startEditingSection(section: OutlineSection) {
@@ -279,13 +330,17 @@ export function OutlineSidebar({
 
   function handleSectionSubmit(event: FormEvent<HTMLFormElement>, sectionId: string) {
     event.preventDefault();
-    if (!sectionTitle.trim()) {
+    if (!canMutateStructure || !sectionTitle.trim()) {
       return;
     }
     updateSectionMutation.mutate({ sectionId, title: sectionTitle.trim(), type: sectionType });
   }
 
   function handleDeleteSection(section: OutlineSection) {
+    if (!canMutateStructure) {
+      return;
+    }
+
     const confirmed = window.confirm(
       `Excluir a seção "${section.title}"? Esta ação pode remover capítulos e cenas desta seção.`
     );
@@ -307,13 +362,17 @@ export function OutlineSidebar({
 
   function handleChapterSubmit(event: FormEvent<HTMLFormElement>, chapterId: string) {
     event.preventDefault();
-    if (!chapterTitle.trim()) {
+    if (!canMutateStructure || !chapterTitle.trim()) {
       return;
     }
     updateChapterMutation.mutate({ chapterId, title: chapterTitle.trim(), summary: chapterSummary.trim() });
   }
 
   function handleDeleteChapter(chapter: OutlineChapter) {
+    if (!canMutateStructure) {
+      return;
+    }
+
     const confirmed = window.confirm(`Excluir o capítulo "${chapter.title}"? Esta ação pode remover cenas deste capítulo.`);
     if (!confirmed) {
       return;
@@ -326,6 +385,10 @@ export function OutlineSidebar({
   }
 
   function handleDeleteScene(sceneId: string, sceneTitle: string) {
+    if (!canMutateStructure) {
+      return;
+    }
+
     const confirmed = window.confirm(`Excluir a cena "${sceneTitle}"? Esta ação não pode ser desfeita nesta etapa.`);
     if (confirmed) {
       deleteSceneMutation.mutate(sceneId);
@@ -394,7 +457,7 @@ export function OutlineSidebar({
             placeholder="Nova seção"
             buttonLabel="Criar"
             disabled={sectionMutation.isPending}
-            onCreate={(title) => sectionMutation.mutate(title)}
+            onCreate={handleCreateSection}
           />
         ) : capabilitiesUnavailable ? (
           <p className="text-xs text-zinc-500">Suas permissões deste livro não puderam ser carregadas.</p>
@@ -458,7 +521,7 @@ export function OutlineSidebar({
                     onDeleteSection={handleDeleteSection}
                     onToggleSection={toggleSection}
                     onToggleChapter={toggleChapter}
-                    onCreateChapter={(sectionId, title) => chapterMutation.mutate({ sectionId, title })}
+                    onCreateChapter={handleCreateChapter}
                     onChapterTitleChange={setChapterTitle}
                     onChapterSummaryChange={setChapterSummary}
                     onStartEditChapter={startEditingChapter}
@@ -466,7 +529,7 @@ export function OutlineSidebar({
                     onSubmitChapter={handleChapterSubmit}
                     onDeleteChapter={handleDeleteChapter}
                     onReorderChapters={handleReorderChapters}
-                    onCreateScene={(chapterId, title) => sceneMutation.mutate({ chapterId, title })}
+                    onCreateScene={handleCreateScene}
                     onSelectScene={(sceneId) => onSelectScene(sceneId)}
                     onDeleteScene={handleDeleteScene}
                     onReorderScenes={handleReorderScenes}

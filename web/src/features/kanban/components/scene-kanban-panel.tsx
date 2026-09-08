@@ -100,6 +100,18 @@ export function SceneKanbanPanel({
     setStatusOverrides((previous) => reconcileKanbanStatusOverrides(outline, previous, pendingSceneIdsRef.current));
   }, [outline]);
 
+  // A pending transition or an active drag is mutable state opened under the previous authority. Once
+  // the capability is gone the confirmation must go with it, or its button would still apply the
+  // optimistic move and dispatch the write.
+  useEffect(() => {
+    if (canMutateStructure) {
+      return;
+    }
+
+    setPendingTransition(null);
+    setActiveSceneId(null);
+  }, [canMutateStructure]);
+
   if (isLoading) {
     return (
       <section className="h-full overflow-y-auto bg-zinc-50 p-4 md:p-6">
@@ -187,7 +199,7 @@ export function SceneKanbanPanel({
   }
 
   async function applyStatusChange(scene: KanbanSceneCardModel, targetStatus: SceneStatus) {
-    if (pendingSceneIdsRef.current.has(scene.id)) {
+    if (!canMutateStructure || pendingSceneIdsRef.current.has(scene.id)) {
       return;
     }
 
@@ -233,7 +245,7 @@ export function SceneKanbanPanel({
   }
 
   function handleConfirmAdvancedTransition() {
-    if (!pendingTransition || pendingTransition.kind !== "confirm-advanced") {
+    if (!canMutateStructure || !pendingTransition || pendingTransition.kind !== "confirm-advanced") {
       return;
     }
 
