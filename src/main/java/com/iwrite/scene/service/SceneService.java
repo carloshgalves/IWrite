@@ -192,7 +192,7 @@ public class SceneService {
 
     @Transactional
     public SceneResponse update(UUID sceneId, SceneUpdateRequest request) {
-        AccessibleScene accessible = requireAccessibleScene(sceneId, BookCapability.MUTATE_MANUSCRIPT_STRUCTURE);
+        AccessibleScene accessible = requireAccessibleSceneForStructureMutation(sceneId);
         Scene scene = accessible.scene();
         BookAccessContext access = accessible.access();
         RequestValidation.rejectBlankWhenPresent("title", request.title());
@@ -442,7 +442,7 @@ public class SceneService {
 
     @Transactional
     public void reorder(UUID chapterId, ReorderRequest request) {
-        chapterService.getChapterForStructureMutation(chapterId);
+        chapterService.getChapterForStructureMutationUnderLock(chapterId);
         List<Scene> scenes = sceneRepository.findByChapterIdOrderBySortOrderAsc(chapterId);
         applyReorder(scenes, request.orderedIds(), Scene::getId, Scene::setSortOrder, "scenes");
     }
@@ -472,6 +472,28 @@ public class SceneService {
         Scene scene = sceneRepository.findByIdAndTenantId(sceneId, currentUserProvider.tenantId())
                 .orElseThrow(() -> sceneNotFound(sceneId));
         return new AccessibleScene(scene, requireSceneBookCapability(scene, sceneId, capability));
+    }
+
+    /**
+     * Same proof as {@link #requireAccessibleScene(UUID, BookCapability)} for a Manuscript Structure
+     * Mutation, with the capability re-proven under the Book row lock before the caller writes.
+     *
+     * <p>A structure mutation that trusted only the unlocked proof would straddle a revocation
+     * committing right after it, and the reproven access is also what the response projects, so the
+     * Scene is never described with an authority that has already been taken away.
+     */
+    private AccessibleScene requireAccessibleSceneForStructureMutation(UUID sceneId) {
+        Scene scene = sceneRepository.findByIdAndTenantId(sceneId, currentUserProvider.tenantId())
+                .orElseThrow(() -> sceneNotFound(sceneId));
+        try {
+            BookAccessService.AccessibleBook reproven = bookAccessService.requireAccessibleBookForUpdate(
+                    scene.getBook().getId(),
+                    BookCapability.MUTATE_MANUSCRIPT_STRUCTURE
+            );
+            return new AccessibleScene(scene, reproven.access());
+        } catch (ResourceNotFoundException exception) {
+            throw sceneNotFound(sceneId);
+        }
     }
 
     /** Same proof as {@link #requireScene(UUID, BookCapability)}, taking the Scene row lock first. */

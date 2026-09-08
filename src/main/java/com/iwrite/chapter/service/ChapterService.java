@@ -63,7 +63,7 @@ public class ChapterService {
 
     @Transactional
     public ChapterResponse create(UUID sectionId, ChapterRequest request) {
-        BookSection section = sectionService.getSectionForStructureMutation(sectionId);
+        BookSection section = sectionService.getSectionForStructureMutationUnderLock(sectionId);
 
         Chapter chapter = new Chapter();
         chapter.setBook(section.getBook());
@@ -77,7 +77,7 @@ public class ChapterService {
 
     @Transactional
     public ChapterResponse update(UUID chapterId, ChapterUpdateRequest request) {
-        Chapter chapter = getChapterForStructureMutation(chapterId);
+        Chapter chapter = getChapterForStructureMutationUnderLock(chapterId);
         RequestValidation.rejectBlankWhenPresent("title", request.title());
 
         if (request.title() != null) {
@@ -107,7 +107,7 @@ public class ChapterService {
 
     @Transactional
     public void reorder(UUID sectionId, ReorderRequest request) {
-        sectionService.getSectionForStructureMutation(sectionId);
+        sectionService.getSectionForStructureMutationUnderLock(sectionId);
         List<Chapter> chapters = chapterRepository.findBySectionIdOrderBySortOrderAsc(sectionId);
         applyReorder(chapters, request.orderedIds(), Chapter::getId, Chapter::setSortOrder, "chapters");
     }
@@ -122,6 +122,27 @@ public class ChapterService {
     @Transactional(readOnly = true)
     public Chapter getChapterForStructureMutation(UUID chapterId) {
         return requireChapter(chapterId, BookCapability.MUTATE_MANUSCRIPT_STRUCTURE);
+    }
+
+    /**
+     * Same proof as {@link #getChapterForStructureMutation(UUID)}, re-taken under the Book row lock,
+     * for a caller that is about to write. See
+     * {@link BookSectionService#getSectionForStructureMutationUnderLock(UUID)} for why a mutation
+     * cannot rely on the read-only answer.
+     */
+    @Transactional
+    public Chapter getChapterForStructureMutationUnderLock(UUID chapterId) {
+        Chapter chapter = chapterRepository.findByIdAndTenantId(chapterId, currentUserProvider.tenantId())
+                .orElseThrow(() -> chapterNotFound(chapterId));
+        try {
+            bookAccessService.requireCapabilityForUpdate(
+                    chapter.getBook().getId(),
+                    BookCapability.MUTATE_MANUSCRIPT_STRUCTURE
+            );
+        } catch (ResourceNotFoundException exception) {
+            throw chapterNotFound(chapterId);
+        }
+        return chapter;
     }
 
     /**

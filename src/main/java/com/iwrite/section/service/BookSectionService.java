@@ -59,7 +59,7 @@ public class BookSectionService {
 
     @Transactional
     public BookSectionResponse create(UUID bookId, BookSectionRequest request) {
-        Book book = bookAccessService.requireCapability(bookId, BookCapability.MUTATE_MANUSCRIPT_STRUCTURE);
+        Book book = bookAccessService.requireCapabilityForUpdate(bookId, BookCapability.MUTATE_MANUSCRIPT_STRUCTURE);
 
         BookSection section = new BookSection();
         section.setBook(book);
@@ -72,7 +72,7 @@ public class BookSectionService {
 
     @Transactional
     public BookSectionResponse update(UUID sectionId, BookSectionUpdateRequest request) {
-        BookSection section = getSectionForStructureMutation(sectionId);
+        BookSection section = getSectionForStructureMutationUnderLock(sectionId);
         RequestValidation.rejectBlankWhenPresent("title", request.title());
 
         if (request.title() != null) {
@@ -102,7 +102,7 @@ public class BookSectionService {
 
     @Transactional
     public void reorder(UUID bookId, ReorderRequest request) {
-        bookAccessService.requireCapability(bookId, BookCapability.MUTATE_MANUSCRIPT_STRUCTURE);
+        bookAccessService.requireCapabilityForUpdate(bookId, BookCapability.MUTATE_MANUSCRIPT_STRUCTURE);
         List<BookSection> sections = sectionRepository.findByBookIdOrderBySortOrderAsc(bookId);
         applyReorder(sections, request.orderedIds(), BookSection::getId, BookSection::setSortOrder, "sections");
     }
@@ -117,6 +117,30 @@ public class BookSectionService {
     @Transactional(readOnly = true)
     public BookSection getSectionForStructureMutation(UUID sectionId) {
         return requireSection(sectionId, BookCapability.MUTATE_MANUSCRIPT_STRUCTURE);
+    }
+
+    /**
+     * Same proof as {@link #getSectionForStructureMutation(UUID)}, re-taken under the Book row lock,
+     * for a caller that is about to write.
+     *
+     * <p>The read-only variant answers "may this User restructure right now", which a mutation cannot
+     * rely on: a revocation committing between that answer and the write would be straddled, and the
+     * Manuscript would be restructured on authority that no longer exists. Locking the Book row and
+     * proving the capability again under it is the same discipline the canonical content save uses.
+     */
+    @Transactional
+    public BookSection getSectionForStructureMutationUnderLock(UUID sectionId) {
+        BookSection section = sectionRepository.findByIdAndBook_Tenant_Id(sectionId, currentUserProvider.tenantId())
+                .orElseThrow(() -> sectionNotFound(sectionId));
+        try {
+            bookAccessService.requireCapabilityForUpdate(
+                    section.getBook().getId(),
+                    BookCapability.MUTATE_MANUSCRIPT_STRUCTURE
+            );
+        } catch (ResourceNotFoundException exception) {
+            throw sectionNotFound(sectionId);
+        }
+        return section;
     }
 
     /**
