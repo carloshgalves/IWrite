@@ -137,6 +137,38 @@ export function SceneEditor({
   const projectedScene = sceneQuery.isSuccess ? sceneQuery.data : undefined;
   const canEditContent = projectedScene?.id === sceneId && projectedScene.canEditContent === true;
 
+  /**
+   * Writes a mutation response into the scene cache without letting it put back an authority a newer
+   * projection has already taken away. The response carries the grant the mutation was decided with,
+   * so a response that lands late would otherwise turn a denial — or a failed refetch, where the
+   * authority is unknown rather than granted — back into a confirmed grant.
+   *
+   * Content, revision and authority do not share a clock: the response is the newest word about the
+   * text it just wrote, never about a permission that may have been withdrawn while it travelled. It
+   * may therefore narrow the authority, never widen it, and while the projection is not currently
+   * successful it does not write at all — the next successful fetch brings both back together.
+   */
+  const applySceneMutationResponse = useCallback(
+    (savedScene: Scene) => {
+      const queryState = queryClient.getQueryState<Scene>(queryKeys.scene(savedScene.id));
+      if (queryState && queryState.status !== "success") {
+        return;
+      }
+
+      queryClient.setQueryData<Scene>(queryKeys.scene(savedScene.id), (cachedScene) => {
+        if (!cachedScene || cachedScene.id !== savedScene.id) {
+          return savedScene;
+        }
+
+        return {
+          ...savedScene,
+          canEditContent: savedScene.canEditContent === true && cachedScene.canEditContent === true,
+        };
+      });
+    },
+    [queryClient]
+  );
+
   const metadataMutation = useMutation({
     mutationFn: () =>
       updateScene(sceneId as string, {
@@ -145,7 +177,7 @@ export function SceneEditor({
         status,
       }),
     onSuccess: (scene) => {
-      void queryClient.setQueryData(queryKeys.scene(scene.id), scene);
+      applySceneMutationResponse(scene);
       void queryClient.invalidateQueries({ queryKey: queryKeys.outline(bookId) });
     },
   });
@@ -459,7 +491,7 @@ export function SceneEditor({
     try {
       const savedScene = await savePromise;
       trackEvent({ name: "scene_saved", data: { source: source === "AUTO_SAVE" ? "AUTO_SAVE" : "MANUAL_SAVE" } });
-      void queryClient.setQueryData(queryKeys.scene(savedScene.id), savedScene);
+      applySceneMutationResponse(savedScene);
       void queryClient.invalidateQueries({ queryKey: queryKeys.outline(bookId) });
 
       if (activeSceneIdRef.current !== targetSceneId || savedScene.id !== targetSceneId) {
@@ -641,7 +673,7 @@ export function SceneEditor({
     setEditorContentVersion((version) => version + 1);
     setIsHistoryOpen(false);
     setRestoreError(null);
-    void queryClient.setQueryData(queryKeys.scene(restoredScene.id), restoredScene);
+    applySceneMutationResponse(restoredScene);
     void queryClient.invalidateQueries({ queryKey: queryKeys.sceneVersions(restoredScene.id) });
     void queryClient.invalidateQueries({ queryKey: queryKeys.outline(bookId) });
     void queryClient.invalidateQueries({ queryKey: queryKeys.bookDashboard(bookId) });
