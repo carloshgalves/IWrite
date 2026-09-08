@@ -1,6 +1,6 @@
 ---
 name: tdd
-description: Use red-green development for IWrite at the highest stable seam that can actually prove the behavior or invariant.
+description: Use red-green development for IWrite at the highest stable seam that can actually prove the behavior or invariant. When given a pull request, drive the highest-priority unresolved actionable review finding red -> green before exploring unrelated work.
 ---
 
 # TDD for IWrite
@@ -8,6 +8,22 @@ description: Use red-green development for IWrite at the highest stable seam tha
 TDD is useful when a precise observable behavior can be made red before implementation. It is not a rule that every change must begin with an HTTP or UI test.
 
 If the implementation is already green and the task is to verify that existing tests would detect a weakened guarantee, use `regression-audit` instead. That skill audits regression signal with temporary negative controls; this skill drives behavior red -> green.
+
+## PR / review mode
+
+When invoked with a pull request, treat the PR discussion as part of the task contract rather than starting from the current green test state alone.
+
+1. Read the current PR head, linked issue/spec, relevant ADRs/invariants, review threads and top-level review findings before choosing work.
+2. If the caller names a specific finding, work on that finding only unless it is already demonstrably fixed at the current head.
+3. Otherwise identify unresolved actionable findings and choose the highest-priority one first. Work on one finding at a time.
+4. Treat the finding's reproduction and acceptance details as the behavioral contract. Do not require the caller to restate steps that are already in the review discussion.
+5. Reproduce the finding at the highest stable seam and make it red for the intended reason before implementation. A green PR does not make an unresolved finding disappear.
+6. If the finding cannot be reproduced at the current head, stop and report the evidence instead of changing code speculatively.
+7. Implement only the smallest coherent fix that closes that finding and its directly shared invariant. Do not search for unrelated defects or new invariants while an assigned finding remains unresolved.
+8. Re-run the focused test, then the smallest meaningful regression set and any project-required validation for the touched surface.
+9. Report measured evidence: the failing signal, the green signal, relevant negative/positive controls, validation commands/results, and any intentionally deferred boundary.
+
+Do not turn `$tdd PR #...` into an open-ended audit. If there are no unresolved actionable findings and the purpose is to challenge whether green tests really protect claimed guarantees, use `regression-audit`.
 
 ## Choose the proof seam first
 
