@@ -16,7 +16,7 @@ import { SceneEmptyState } from "@/features/scenes/components/scene-empty-state"
 import { SceneMetadataForm } from "@/features/scenes/components/scene-metadata-form";
 import { ScenePlanningPanel } from "@/features/scenes/components/scene-planning-panel";
 import { SceneVersionHistoryPanel, type SceneVersionRestoreMode } from "@/features/scenes/components/scene-version-history-panel";
-import { applySceneMutationResponse } from "@/features/scenes/cache/apply-scene-mutation-response";
+import { applySceneMutationResponse, updateSceneProjection } from "@/features/scenes/cache/apply-scene-mutation-response";
 import type { Scene, SceneStatus, SceneVersionSource } from "@/features/scenes/types";
 import { trackEvent } from "@/lib/analytics/analytics";
 import { queryKeys } from "@/lib/query/keys";
@@ -290,7 +290,12 @@ export function SceneEditor({
     }
 
     acceptContentRevision(pendingSnapshot.contentRevision);
-    queryClient.setQueryData<Scene>(queryKeys.scene(pendingSnapshot.sceneId), (cachedScene) => {
+    // Reconciling text is not a permission refresh, so this write obeys the same rule every other
+    // writer of the shared cache does: while the projection is not currently successful it is
+    // refused, instead of returning the query to success on a grant nothing has confirmed since.
+    // The revision the surface accepted above is kept either way, so refusing the write costs the
+    // ordering nothing and the next successful fetch carries the same text back.
+    updateSceneProjection(queryClient, pendingSnapshot.sceneId, (cachedScene) => {
       const sceneToUpdate = cachedScene ?? pendingSnapshot.sourceScene;
       if (sceneToUpdate.id !== pendingSnapshot.sceneId || sceneToUpdate.contentRevision > pendingSnapshot.contentRevision) {
         return sceneToUpdate;

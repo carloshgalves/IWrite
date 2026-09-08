@@ -3,6 +3,33 @@ import type { Scene } from "@/features/scenes/types";
 import { queryKeys } from "@/lib/query/keys";
 
 /**
+ * Writes into the shared scene cache under the projection's current state.
+ *
+ * `setQueryData` does not only carry data: it also puts the query back into `success`. A write
+ * performed while the projection is not currently successful — a failed refetch leaves the authority
+ * unknown, not withdrawn and not granted — would turn the retained `data`, grant included, back into
+ * a projection the surface treats as currently confirmed, without the server having confirmed
+ * anything. So while the projection is not successful nothing is written here, and the next
+ * successful fetch is what brings content and authority back together.
+ *
+ * Returns whether the write happened, so a caller that also keeps local state can tell reconciled
+ * from refused.
+ */
+export function updateSceneProjection(
+  queryClient: QueryClient,
+  sceneId: string,
+  updateScene: (cachedScene: Scene | undefined) => Scene
+): boolean {
+  const queryState = queryClient.getQueryState<Scene>(queryKeys.scene(sceneId));
+  if (queryState && queryState.status !== "success") {
+    return false;
+  }
+
+  queryClient.setQueryData<Scene>(queryKeys.scene(sceneId), updateScene);
+  return true;
+}
+
+/**
  * Writes a scene mutation response into the shared scene cache without letting it put back an
  * authority a newer projection has already taken away.
  *
@@ -13,17 +40,10 @@ import { queryKeys } from "@/lib/query/keys";
  *
  * A mutation response carries the grant its mutation was decided with, so it is the newest word
  * about the data it just wrote and never about a permission that may have been withdrawn while it
- * travelled. It may therefore reconcile data and narrow `canEditContent`, never widen it, and while
- * the projection is not currently successful — an error leaves the authority unknown, not granted —
- * it does not write at all. The next successful fetch is what may widen the authority again.
+ * travelled. It may therefore reconcile data and narrow `canEditContent`, never widen it.
  */
 export function applySceneMutationResponse(queryClient: QueryClient, savedScene: Scene): void {
-  const queryState = queryClient.getQueryState<Scene>(queryKeys.scene(savedScene.id));
-  if (queryState && queryState.status !== "success") {
-    return;
-  }
-
-  queryClient.setQueryData<Scene>(queryKeys.scene(savedScene.id), (cachedScene) => {
+  updateSceneProjection(queryClient, savedScene.id, (cachedScene) => {
     if (!cachedScene || cachedScene.id !== savedScene.id) {
       return savedScene;
     }
