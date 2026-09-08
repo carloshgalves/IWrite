@@ -129,20 +129,23 @@ public class BookSectionService {
      * rely on: a revocation committing between that answer and the write would be straddled, and the
      * Manuscript would be restructured on authority that no longer exists. Locking the Book row and
      * proving the capability again under it is the same discipline the canonical content save uses.
+     *
+     * <p>Only the Section's Book is needed to prove the capability, so the Section row is read for the
+     * first time under the lock. A Section loaded before the lock would be written back at flush with
+     * whatever it held before this caller queued, silently restoring the {@code sortOrder} of a reorder
+     * that committed while this transaction waited.
      */
     @Transactional
     public BookSection getSectionForStructureMutationUnderLock(UUID sectionId) {
-        BookSection section = sectionRepository.findByIdAndBook_Tenant_Id(sectionId, currentUserProvider.tenantId())
+        UUID bookId = sectionRepository.findBookIdByIdAndTenantId(sectionId, currentUserProvider.tenantId())
                 .orElseThrow(() -> sectionNotFound(sectionId));
         try {
-            bookAccessService.requireCapabilityForUpdate(
-                    section.getBook().getId(),
-                    BookCapability.MUTATE_MANUSCRIPT_STRUCTURE
-            );
+            bookAccessService.requireCapabilityForUpdate(bookId, BookCapability.MUTATE_MANUSCRIPT_STRUCTURE);
         } catch (ResourceNotFoundException exception) {
             throw sectionNotFound(sectionId);
         }
-        return section;
+        return sectionRepository.findByIdAndBookIdForUpdate(sectionId, bookId)
+                .orElseThrow(() -> sectionNotFound(sectionId));
     }
 
     /**

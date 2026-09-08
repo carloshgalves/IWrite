@@ -130,21 +130,20 @@ public class ChapterService {
      * Same proof as {@link #getChapterForStructureMutation(UUID)}, re-taken under the Book row lock,
      * for a caller that is about to write. See
      * {@link BookSectionService#getSectionForStructureMutationUnderLock(UUID)} for why a mutation
-     * cannot rely on the read-only answer.
+     * cannot rely on the read-only answer, and why the Chapter row is read only under the lock rather
+     * than before it.
      */
     @Transactional
     public Chapter getChapterForStructureMutationUnderLock(UUID chapterId) {
-        Chapter chapter = chapterRepository.findByIdAndTenantId(chapterId, currentUserProvider.tenantId())
+        UUID bookId = chapterRepository.findBookIdByIdAndTenantId(chapterId, currentUserProvider.tenantId())
                 .orElseThrow(() -> chapterNotFound(chapterId));
         try {
-            bookAccessService.requireCapabilityForUpdate(
-                    chapter.getBook().getId(),
-                    BookCapability.MUTATE_MANUSCRIPT_STRUCTURE
-            );
+            bookAccessService.requireCapabilityForUpdate(bookId, BookCapability.MUTATE_MANUSCRIPT_STRUCTURE);
         } catch (ResourceNotFoundException exception) {
             throw chapterNotFound(chapterId);
         }
-        return chapter;
+        return chapterRepository.findByIdAndBookIdForUpdate(chapterId, bookId)
+                .orElseThrow(() -> chapterNotFound(chapterId));
     }
 
     /**
