@@ -60,9 +60,13 @@ public interface SceneRepository extends JpaRepository<Scene, UUID> {
             """)
     List<Scene> findBySectionIdForUpdate(@Param("sectionId") UUID sectionId);
 
-    @Lock(LockModeType.PESSIMISTIC_WRITE)
+    /**
+     * The Book a Scene belongs to, for a caller that must take the Book row lock before it touches the
+     * Scene. It resolves the owning Book without loading the Scene, so the Scene is read for the first
+     * time under the lock instead of carrying pre-lock state into the write.
+     */
     @Query("""
-            select scene
+            select book.id
             from Scene scene
             join scene.chapter chapter
             join chapter.section section
@@ -70,9 +74,29 @@ public interface SceneRepository extends JpaRepository<Scene, UUID> {
             where scene.id = :sceneId
               and book.tenant.id = :tenantId
             """)
-    Optional<Scene> findByIdAndTenantIdForUpdate(
+    Optional<UUID> findBookIdByIdAndTenantId(
             @Param("sceneId") UUID sceneId,
             @Param("tenantId") UUID tenantId
+    );
+
+    /**
+     * Locks a single Scene row of an already proven Book.
+     *
+     * <p>It matches on the Scene's own {@code book_id} rather than joining up to the Workspace so the
+     * statement locks the Scene row and nothing else. A {@code for no key update} over the joined
+     * Chapter, Section and Book would silently lock those rows too, taking the Book row lock ahead of
+     * the capability proof and against the Book-first order every Manuscript surface follows.
+     */
+    @Lock(LockModeType.PESSIMISTIC_WRITE)
+    @Query("""
+            select scene
+            from Scene scene
+            where scene.id = :sceneId
+              and scene.book.id = :bookId
+            """)
+    Optional<Scene> findByIdAndBookIdForUpdate(
+            @Param("sceneId") UUID sceneId,
+            @Param("bookId") UUID bookId
     );
 
     int countByChapterId(UUID chapterId);

@@ -91,11 +91,13 @@ public class BookSectionService {
     @Transactional
     public void delete(UUID sectionId) {
         BookSection section = getSectionForStructureMutation(sectionId);
-        var scenes = sceneRepository.findBySectionIdForUpdate(sectionId);
         Book lockedBook = bookAccessService.requireCapabilityForUpdate(
                 section.getBook().getId(),
                 BookCapability.MUTATE_MANUSCRIPT_STRUCTURE
         );
+        // The Book row first, then the Scene rows: the reverse order closes a cycle with every
+        // Manuscript Structure Mutation, which locks the Book and reaches its Scenes afterwards.
+        var scenes = sceneRepository.findBySectionIdForUpdate(sectionId);
         sceneDeletionLedgerService.prepareSceneDeletes(scenes, lockedBook, UUID.randomUUID());
         sectionRepository.deleteById(sectionId);
     }
