@@ -16,6 +16,7 @@ import { SceneEmptyState } from "@/features/scenes/components/scene-empty-state"
 import { SceneMetadataForm } from "@/features/scenes/components/scene-metadata-form";
 import { ScenePlanningPanel } from "@/features/scenes/components/scene-planning-panel";
 import { SceneVersionHistoryPanel, type SceneVersionRestoreMode } from "@/features/scenes/components/scene-version-history-panel";
+import { applySceneMutationResponse } from "@/features/scenes/cache/apply-scene-mutation-response";
 import type { Scene, SceneStatus, SceneVersionSource } from "@/features/scenes/types";
 import { trackEvent } from "@/lib/analytics/analytics";
 import { queryKeys } from "@/lib/query/keys";
@@ -138,34 +139,12 @@ export function SceneEditor({
   const canEditContent = projectedScene?.id === sceneId && projectedScene.canEditContent === true;
 
   /**
-   * Writes a mutation response into the scene cache without letting it put back an authority a newer
-   * projection has already taken away. The response carries the grant the mutation was decided with,
-   * so a response that lands late would otherwise turn a denial — or a failed refetch, where the
-   * authority is unknown rather than granted — back into a confirmed grant.
-   *
-   * Content, revision and authority do not share a clock: the response is the newest word about the
-   * text it just wrote, never about a permission that may have been withdrawn while it travelled. It
-   * may therefore narrow the authority, never widen it, and while the projection is not currently
-   * successful it does not write at all — the next successful fetch brings both back together.
+   * Content, revision and authority do not share a clock, so every writer of this cache applies the
+   * same rule: a mutation response reconciles the text it just wrote and may narrow the authority,
+   * never widen one a newer projection has withdrawn.
    */
-  const applySceneMutationResponse = useCallback(
-    (savedScene: Scene) => {
-      const queryState = queryClient.getQueryState<Scene>(queryKeys.scene(savedScene.id));
-      if (queryState && queryState.status !== "success") {
-        return;
-      }
-
-      queryClient.setQueryData<Scene>(queryKeys.scene(savedScene.id), (cachedScene) => {
-        if (!cachedScene || cachedScene.id !== savedScene.id) {
-          return savedScene;
-        }
-
-        return {
-          ...savedScene,
-          canEditContent: savedScene.canEditContent === true && cachedScene.canEditContent === true,
-        };
-      });
-    },
+  const applyMutationResponse = useCallback(
+    (savedScene: Scene) => applySceneMutationResponse(queryClient, savedScene),
     [queryClient]
   );
 
@@ -177,7 +156,7 @@ export function SceneEditor({
         status,
       }),
     onSuccess: (scene) => {
-      applySceneMutationResponse(scene);
+      applyMutationResponse(scene);
       void queryClient.invalidateQueries({ queryKey: queryKeys.outline(bookId) });
     },
   });
@@ -491,7 +470,7 @@ export function SceneEditor({
     try {
       const savedScene = await savePromise;
       trackEvent({ name: "scene_saved", data: { source: source === "AUTO_SAVE" ? "AUTO_SAVE" : "MANUAL_SAVE" } });
-      applySceneMutationResponse(savedScene);
+      applyMutationResponse(savedScene);
       void queryClient.invalidateQueries({ queryKey: queryKeys.outline(bookId) });
 
       if (activeSceneIdRef.current !== targetSceneId || savedScene.id !== targetSceneId) {
@@ -673,7 +652,7 @@ export function SceneEditor({
     setEditorContentVersion((version) => version + 1);
     setIsHistoryOpen(false);
     setRestoreError(null);
-    applySceneMutationResponse(restoredScene);
+    applyMutationResponse(restoredScene);
     void queryClient.invalidateQueries({ queryKey: queryKeys.sceneVersions(restoredScene.id) });
     void queryClient.invalidateQueries({ queryKey: queryKeys.outline(bookId) });
     void queryClient.invalidateQueries({ queryKey: queryKeys.bookDashboard(bookId) });

@@ -25,6 +25,7 @@ import { ErrorState, LoadingState } from "@/components/ui/feedback";
 import { FeedbackMessage } from "@/components/ui/feedback-message";
 import type { BookOutline } from "@/features/outline/types";
 import { updateScene } from "@/features/scenes/api/scenes-api";
+import { applySceneMutationResponse } from "@/features/scenes/cache/apply-scene-mutation-response";
 import type { SceneStatus } from "@/features/scenes/types";
 import {
   buildKanbanModel,
@@ -85,7 +86,7 @@ export function SceneKanbanPanel({
   const mutation = useMutation({
     mutationFn: ({ sceneId, status }: { sceneId: string; status: SceneStatus }) => updateScene(sceneId, { status }),
     onSuccess: (scene) => {
-      queryClient.setQueryData(queryKeys.scene(scene.id), scene);
+      applySceneMutationResponse(queryClient, scene);
       void queryClient.invalidateQueries({ queryKey: queryKeys.outline(bookId) });
       void queryClient.invalidateQueries({ queryKey: queryKeys.scene(scene.id) });
       void queryClient.invalidateQueries({ queryKey: queryKeys.bookDashboard(bookId) });
