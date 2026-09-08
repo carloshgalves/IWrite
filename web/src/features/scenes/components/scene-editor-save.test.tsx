@@ -6,6 +6,7 @@ import { sceneForPlanning } from "@/test/fixtures";
 import { renderWithClient } from "@/test/test-utils";
 import { queryKeys } from "@/lib/query/keys";
 import type { Scene } from "@/features/scenes/types";
+import type { QueryClient } from "@tanstack/react-query";
 
 const mocks = vi.hoisted(() => ({
   getScene: vi.fn(),
@@ -994,6 +995,148 @@ describe("SceneEditor content save contract", () => {
     expect(mocks.updateSceneContent).not.toHaveBeenCalled();
   });
 });
+
+describe("SceneEditor pending autosave versus the scene's projected authority", () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+    mocks.randomUUID.mockReset().mockReturnValue("operation-id");
+    vi.stubGlobal("crypto", {
+      randomUUID: mocks.randomUUID,
+    });
+    mocks.getScene.mockResolvedValue({ ...sceneForPlanning, contentRevision: 3 });
+    mocks.updateScene.mockResolvedValue(sceneForPlanning);
+    mocks.updateSceneContent.mockResolvedValue({ ...sceneForPlanning, contentText: "Novo texto", contentRevision: 4 });
+    mocks.restoreSceneVersion.mockResolvedValue(sceneForPlanning);
+    mocks.deleteScene.mockResolvedValue(undefined);
+    mocks.analyzeScene.mockResolvedValue(analysisResult);
+  });
+
+  afterEach(() => {
+    vi.useRealTimers();
+    vi.unstubAllGlobals();
+  });
+
+  test("um autosave agendado nao dispara depois que a autoridade sobre o conteudo desaparece", async () => {
+    const { queryClient } = renderEditor();
+    await screen.findByRole("heading", { name: sceneForPlanning.title });
+
+    vi.useFakeTimers();
+    fireEvent.click(screen.getByRole("button", { name: "Alterar conteudo" }));
+
+    // The server stops projecting authority over this scene's text while the timer is still pending.
+    // The revision does not move, so nothing else in the editor reacts to the refetch.
+    mocks.getScene.mockResolvedValue({ ...sceneForPlanning, contentRevision: 3, canEditContent: false });
+    await refetchScene(queryClient);
+
+    // The surface itself already gave the answer up: the save control is gone.
+    expect(screen.queryByRole("button", { name: /Salvar conte.do/ })).not.toBeInTheDocument();
+
+    await act(async () => {
+      vi.advanceTimersByTime(1200);
+    });
+    vi.useRealTimers();
+
+    // Scheduling checked the authority; firing must check it again, or the browser dispatches a
+    // mutation under an authority the server has already withdrawn.
+    expect(mocks.updateSceneContent).not.toHaveBeenCalled();
+  });
+
+  test("um autosave agendado nao dispara depois que o refetch da cena falha", async () => {
+    const { queryClient } = renderEditor();
+    await screen.findByRole("heading", { name: sceneForPlanning.title });
+
+    vi.useFakeTimers();
+    fireEvent.click(screen.getByRole("button", { name: "Alterar conteudo" }));
+
+    // A failed refetch keeps the cached scene in TanStack Query, so the authority it carries is no
+    // longer a currently confirmed projection: it is unknown, not granted.
+    mocks.getScene.mockRejectedValue(new Error("network down"));
+    await refetchScene(queryClient);
+
+    // The editor is already showing the failure rather than the writable scene.
+    expect(screen.getByText(/N.o foi poss.vel carregar a cena/)).toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: /Salvar conte.do/ })).not.toBeInTheDocument();
+
+    await act(async () => {
+      vi.advanceTimersByTime(1200);
+    });
+    vi.useRealTimers();
+
+    expect(mocks.updateSceneContent).not.toHaveBeenCalled();
+  });
+
+  test("um autosave que dispara junto com a revogacao revalida antes de despachar", async () => {
+    const { queryClient } = renderEditor();
+    await screen.findByRole("heading", { name: sceneForPlanning.title });
+
+    vi.useFakeTimers();
+    fireEvent.click(screen.getByRole("button", { name: "Alterar conteudo" }));
+
+    // Deliberately not flushing the query notification: the withdrawal and the autosave land in the
+    // same tick, so React has not re-rendered and nothing has had the chance to cancel the timer.
+    mocks.getScene.mockResolvedValue({ ...sceneForPlanning, contentRevision: 3, canEditContent: false });
+    await act(async () => {
+      await queryClient.refetchQueries({ queryKey: queryKeys.scene(sceneForPlanning.id) }).catch(() => undefined);
+    });
+    expect(screen.getByRole("button", { name: /Salvar conte.do/ })).toBeInTheDocument();
+
+    await act(async () => {
+      vi.advanceTimersByTime(1200);
+    });
+    vi.useRealTimers();
+
+    // The dispatch point has to ask the projection again; the render it was scheduled from still
+    // says the user may write.
+    expect(mocks.updateSceneContent).not.toHaveBeenCalled();
+  });
+
+  // Control: with the authority still projected, the very same edit and the very same refetch still
+  // reach the server. Without it, an editor that simply stopped autosaving would look identical to
+  // the two assertions above.
+  test("com a autoridade preservada o mesmo autosave continua sendo enviado", async () => {
+    mocks.randomUUID.mockReturnValueOnce("operation-autosave");
+    const { queryClient } = renderEditor();
+    await screen.findByRole("heading", { name: sceneForPlanning.title });
+
+    vi.useFakeTimers();
+    fireEvent.click(screen.getByRole("button", { name: "Alterar conteudo" }));
+
+    mocks.getScene.mockResolvedValue({ ...sceneForPlanning, contentRevision: 3, canEditContent: true });
+    await refetchScene(queryClient);
+
+    expect(screen.getByRole("button", { name: /Salvar conte.do/ })).toBeInTheDocument();
+
+    await act(async () => {
+      vi.advanceTimersByTime(1200);
+    });
+    vi.useRealTimers();
+
+    await waitFor(() => {
+      expect(mocks.updateSceneContent).toHaveBeenCalledWith(sceneForPlanning.id, {
+        contentJson: "{\"type\":\"doc\"}",
+        contentText: "Novo texto",
+        source: "AUTO_SAVE",
+        expectedContentRevision: 3,
+        operationId: "operation-autosave",
+      });
+    });
+  });
+});
+
+/**
+ * Refetches the scene and lets the editor actually observe the answer. TanStack Query delivers query
+ * updates through a zero-delay timeout, so under fake timers the new projection would otherwise only
+ * reach React in the same tick that fires the autosave — the editor would never have had the chance
+ * to react to the authority change before dispatching.
+ */
+async function refetchScene(queryClient: QueryClient) {
+  await act(async () => {
+    await queryClient.refetchQueries({ queryKey: queryKeys.scene(sceneForPlanning.id) }).catch(() => undefined);
+  });
+  await act(async () => {
+    vi.advanceTimersByTime(0);
+  });
+}
 
 function renderEditor() {
   return renderWithClient(

@@ -129,10 +129,13 @@ export function SceneEditor({
    * rule its save applies. Deriving it here from book-scoped eligibility would duplicate the server's
    * resource-scoped decision in the browser and offer an editor for a save that is always refused.
    *
-   * Read-only until the loaded scene is this scene: a control that turns out to be unauthorized is
-   * worse than one that appears a moment late, and the server authorizes every request again anyway.
+   * Only a currently successful projection answers: a failed refetch keeps the previous `data` in the
+   * cache, and that stale grant is no longer something the server has confirmed. Read-only until the
+   * loaded scene is this scene: a control that turns out to be unauthorized is worse than one that
+   * appears a moment late, and the server authorizes every request again anyway.
    */
-  const canEditContent = sceneQuery.data?.id === sceneId && sceneQuery.data.canEditContent === true;
+  const projectedScene = sceneQuery.isSuccess ? sceneQuery.data : undefined;
+  const canEditContent = projectedScene?.id === sceneId && projectedScene.canEditContent === true;
 
   const metadataMutation = useMutation({
     mutationFn: () =>
@@ -191,6 +194,19 @@ export function SceneEditor({
     autosaveGenerationRef.current += 1;
     clearPendingAutosave();
   }, [clearPendingAutosave]);
+
+  /**
+   * The authority as currently projected, read from the same query the surface reads. A save dispatched
+   * from a timer must ask again here instead of trusting the closure that scheduled it or the last
+   * render: the withdrawal can land after the timer was armed and before React re-renders.
+   */
+  const hasCurrentContentAuthority = useCallback(
+    (targetSceneId: string) => {
+      const queryState = queryClient.getQueryState<Scene>(queryKeys.scene(targetSceneId));
+      return queryState?.status === "success" && queryState.data?.id === targetSceneId && queryState.data.canEditContent === true;
+    },
+    [queryClient]
+  );
 
   const hasPendingNewerRemoteContent = useCallback((targetSceneId: string) => {
     const pendingSnapshot = pendingRemoteContentRef.current;
@@ -318,6 +334,16 @@ export function SceneEditor({
   }, [planningPanelOpenIntent, sceneId]);
 
   useEffect(() => clearPendingAutosave, [clearPendingAutosave]);
+
+  /**
+   * Losing the projected authority invalidates whatever was scheduled under it. A timer armed while
+   * the user could still write would otherwise outlive the permission and dispatch the save anyway.
+   */
+  useEffect(() => {
+    if (!canEditContent) {
+      cancelQueuedAutosaves();
+    }
+  }, [canEditContent, cancelQueuedAutosaves]);
 
   useEffect(() => {
     cancelQueuedAutosaves();
@@ -472,7 +498,7 @@ export function SceneEditor({
   }
 
   function handleSaveContent(targetSceneId: string) {
-    if (!canEditContent) {
+    if (!canEditContent || !hasCurrentContentAuthority(targetSceneId)) {
       return;
     }
 
@@ -502,6 +528,11 @@ export function SceneEditor({
       autosaveTimerRef.current = null;
 
       if (scheduledGeneration !== autosaveGenerationRef.current) {
+        return;
+      }
+
+      // The authority is proved again here, not read from the closure that scheduled the save.
+      if (!hasCurrentContentAuthority(targetSceneId)) {
         return;
       }
 
