@@ -1,5 +1,6 @@
 package com.iwrite.chapter.service;
 
+import com.iwrite.book.authorization.BookCapability;
 import com.iwrite.book.entity.Book;
 import com.iwrite.book.service.BookAccessService;
 import com.iwrite.chapter.dto.ChapterRequest;
@@ -26,6 +27,14 @@ import java.util.UUID;
 import java.util.function.Function;
 import java.util.stream.Collectors;
 
+/**
+ * Chapter surfaces of the manuscript hierarchy.
+ *
+ * <p>Same split as {@code BookSectionService} (#207): reading a Chapter is Manuscript reading, while
+ * creating, renaming, reordering, moving or deleting one is a Manuscript Structure Mutation reserved
+ * for the Book Owner in this partition. Creating a Chapter is a mutation of its parent Section, so it
+ * is the Section that has to authorize the mutation.
+ */
 @Service
 public class ChapterService {
 
@@ -54,7 +63,7 @@ public class ChapterService {
 
     @Transactional
     public ChapterResponse create(UUID sectionId, ChapterRequest request) {
-        BookSection section = sectionService.getSection(sectionId);
+        BookSection section = sectionService.getSectionForStructureMutationUnderLock(sectionId);
 
         Chapter chapter = new Chapter();
         chapter.setBook(section.getBook());
@@ -68,7 +77,7 @@ public class ChapterService {
 
     @Transactional
     public ChapterResponse update(UUID chapterId, ChapterUpdateRequest request) {
-        Chapter chapter = getChapter(chapterId);
+        Chapter chapter = getChapterForStructureMutationUnderLock(chapterId);
         RequestValidation.rejectBlankWhenPresent("title", request.title());
 
         if (request.title() != null) {
@@ -86,34 +95,70 @@ public class ChapterService {
 
     @Transactional
     public void delete(UUID chapterId) {
-        Chapter chapter = getChapter(chapterId);
+        Chapter chapter = getChapterForStructureMutation(chapterId);
+        Book lockedBook = bookAccessService.requireCapabilityForUpdate(
+                chapter.getBook().getId(),
+                BookCapability.MUTATE_MANUSCRIPT_STRUCTURE
+        );
+        // The Book row first, then the Scene rows: the reverse order closes a cycle with every
+        // Manuscript Structure Mutation, which locks the Book and reaches its Scenes afterwards.
         var scenes = sceneRepository.findByChapterIdForUpdate(chapterId);
-        Book lockedBook = bookAccessService.requireBookEditAccessForUpdate(chapter.getBook().getId());
         sceneDeletionLedgerService.prepareSceneDeletes(scenes, lockedBook, UUID.randomUUID());
         chapterRepository.deleteById(chapterId);
     }
 
     @Transactional
     public void reorder(UUID sectionId, ReorderRequest request) {
-        sectionService.getSection(sectionId);
+        sectionService.getSectionForStructureMutationUnderLock(sectionId);
         List<Chapter> chapters = chapterRepository.findBySectionIdOrderBySortOrderAsc(sectionId);
         applyReorder(chapters, request.orderedIds(), Chapter::getId, Chapter::setSortOrder, "chapters");
     }
 
+    /** Reads a Chapter the current User may read the Manuscript of. */
     @Transactional(readOnly = true)
     public Chapter getChapter(UUID chapterId) {
-        Chapter chapter = chapterRepository.findByIdAndTenantId(chapterId, currentUserProvider.tenantId())
-                .orElseThrow(() -> chapterNotFound(chapterId));
-        requireChapterBookEditAccess(chapter, chapterId);
-        return chapter;
+        return requireChapter(chapterId, BookCapability.READ_MANUSCRIPT);
     }
 
-    private void requireChapterBookEditAccess(Chapter chapter, UUID chapterId) {
+    /** Reads a Chapter the current User may restructure, for a Manuscript Structure Mutation. */
+    @Transactional(readOnly = true)
+    public Chapter getChapterForStructureMutation(UUID chapterId) {
+        return requireChapter(chapterId, BookCapability.MUTATE_MANUSCRIPT_STRUCTURE);
+    }
+
+    /**
+     * Same proof as {@link #getChapterForStructureMutation(UUID)}, re-taken under the Book row lock,
+     * for a caller that is about to write. See
+     * {@link BookSectionService#getSectionForStructureMutationUnderLock(UUID)} for why a mutation
+     * cannot rely on the read-only answer, and why the Chapter row is read only under the lock rather
+     * than before it.
+     */
+    @Transactional
+    public Chapter getChapterForStructureMutationUnderLock(UUID chapterId) {
+        UUID bookId = chapterRepository.findBookIdByIdAndTenantId(chapterId, currentUserProvider.tenantId())
+                .orElseThrow(() -> chapterNotFound(chapterId));
         try {
-            bookAccessService.requireBookEditAccess(chapter.getBook().getId());
+            bookAccessService.requireCapabilityForUpdate(bookId, BookCapability.MUTATE_MANUSCRIPT_STRUCTURE);
         } catch (ResourceNotFoundException exception) {
             throw chapterNotFound(chapterId);
         }
+        return chapterRepository.findByIdAndBookIdForUpdate(chapterId, bookId)
+                .orElseThrow(() -> chapterNotFound(chapterId));
+    }
+
+    /**
+     * Resolves a Chapter by tenant and then proves the capability on its Book, collapsing every denial
+     * into the same {@code Chapter not found} so a Chapter identifier cannot be used to probe a Book.
+     */
+    private Chapter requireChapter(UUID chapterId, BookCapability capability) {
+        Chapter chapter = chapterRepository.findByIdAndTenantId(chapterId, currentUserProvider.tenantId())
+                .orElseThrow(() -> chapterNotFound(chapterId));
+        try {
+            bookAccessService.requireCapability(chapter.getBook().getId(), capability);
+        } catch (ResourceNotFoundException exception) {
+            throw chapterNotFound(chapterId);
+        }
+        return chapter;
     }
 
     private ResourceNotFoundException chapterNotFound(UUID chapterId) {

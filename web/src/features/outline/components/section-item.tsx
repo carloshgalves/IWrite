@@ -24,6 +24,8 @@ import { getReorderedIds } from "@/features/outline/utils/reorder";
 
 type SectionItemProps = {
   section: OutlineSection;
+  /** Whether this book granted MUTATE_MANUSCRIPT_STRUCTURE; false renders the section read-only. */
+  canMutateStructure: boolean;
   sectionTypes: SectionType[];
   selectedSceneId: string | null;
   editingSectionId: string | null;
@@ -68,6 +70,7 @@ type SectionItemProps = {
 
 export function SectionItem({
   section,
+  canMutateStructure,
   sectionTypes,
   selectedSceneId,
   editingSectionId,
@@ -111,8 +114,12 @@ export function SectionItem({
 }: SectionItemProps) {
   const { attributes, listeners, setActivatorNodeRef, setNodeRef, transform, transition, isDragging } = useSortable({
     id: section.id,
-    disabled: reorderSectionPending || editingSectionId === section.id,
+    disabled: !canMutateStructure || reorderSectionPending || editingSectionId === section.id,
   });
+  // Reordering is a manuscript structure mutation: without the capability the header stays a plain
+  // collapse control instead of a drag activator.
+  const dragAttributes = canMutateStructure ? attributes : {};
+  const dragListeners = canMutateStructure ? listeners : undefined;
   const style = {
     transform: CSS.Transform.toString(transform),
     transition,
@@ -202,12 +209,14 @@ export function SectionItem({
                 <button
                   type="button"
                   ref={setActivatorNodeRef}
-                  className="min-w-0 flex-1 cursor-grab rounded-md text-left transition hover:bg-zinc-50 active:cursor-grabbing focus:outline-none focus:ring-2 focus:ring-zinc-800 focus:ring-offset-2"
+                  className={`min-w-0 flex-1 rounded-md text-left transition hover:bg-zinc-50 focus:outline-none focus:ring-2 focus:ring-zinc-800 focus:ring-offset-2 ${
+                    canMutateStructure ? "cursor-grab active:cursor-grabbing" : ""
+                  }`}
                   aria-expanded={!isCollapsed}
                   aria-label={`${isCollapsed ? "Expandir" : "Recolher"} seção ${section.title}`}
                   onClick={() => onToggleSection(section.id)}
-                  {...attributes}
-                  {...listeners}
+                  {...dragAttributes}
+                  {...dragListeners}
                 >
                   <p className="text-[11px] font-medium uppercase text-zinc-500">Seção · {section.type}</p>
                   <h2 className="truncate text-sm font-semibold text-zinc-900">{section.title}</h2>
@@ -215,38 +224,42 @@ export function SectionItem({
               </div>
               <WordCount count={section.wordCount} />
             </div>
-            <div className="flex flex-wrap gap-1.5 opacity-70 transition group-hover/section:opacity-100 focus-within:opacity-100">
-              <button
-                type="button"
-                aria-label={`Reordenar seção ${section.title}`}
-                title="Reordenar seção"
-                disabled={reorderSectionPending}
-                className="inline-flex min-h-8 cursor-grab items-center justify-center rounded-md px-2 py-1 text-sm font-medium text-zinc-700 transition hover:bg-zinc-100 active:cursor-grabbing focus:outline-none focus:ring-2 focus:ring-zinc-800 focus:ring-offset-1 disabled:cursor-not-allowed disabled:opacity-70"
-                {...listeners}
-              >
-                ::
-              </button>
-              <Button type="button" variant="ghost" size="sm" onClick={() => onStartEditSection(section)}>
-                Editar
-              </Button>
-              <Button type="button" variant="ghost" size="sm" disabled={deleteSectionPending} onClick={() => onDeleteSection(section)}>
-                Excluir
-              </Button>
-            </div>
+            {canMutateStructure ? (
+              <div className="flex flex-wrap gap-1.5 opacity-70 transition group-hover/section:opacity-100 focus-within:opacity-100">
+                <button
+                  type="button"
+                  aria-label={`Reordenar seção ${section.title}`}
+                  title="Reordenar seção"
+                  disabled={reorderSectionPending}
+                  className="inline-flex min-h-8 cursor-grab items-center justify-center rounded-md px-2 py-1 text-sm font-medium text-zinc-700 transition hover:bg-zinc-100 active:cursor-grabbing focus:outline-none focus:ring-2 focus:ring-zinc-800 focus:ring-offset-1 disabled:cursor-not-allowed disabled:opacity-70"
+                  {...dragListeners}
+                >
+                  ::
+                </button>
+                <Button type="button" variant="ghost" size="sm" onClick={() => onStartEditSection(section)}>
+                  Editar
+                </Button>
+                <Button type="button" variant="ghost" size="sm" disabled={deleteSectionPending} onClick={() => onDeleteSection(section)}>
+                  Excluir
+                </Button>
+              </div>
+            ) : null}
           </div>
         )}
       </div>
 
       {!isCollapsed ? (
         <div className="grid gap-3 bg-zinc-50/40 p-3">
-          <InlineCreateForm
-            compact
-            ariaLabel={`Novo capítulo em ${section.title}`}
-            placeholder="Novo capítulo"
-            buttonLabel="Cap."
-            disabled={createChapterPending}
-            onCreate={(title) => onCreateChapter(section.id, title)}
-          />
+          {canMutateStructure ? (
+            <InlineCreateForm
+              compact
+              ariaLabel={`Novo capítulo em ${section.title}`}
+              placeholder="Novo capítulo"
+              buttonLabel="Cap."
+              disabled={createChapterPending}
+              onCreate={(title) => onCreateChapter(section.id, title)}
+            />
+          ) : null}
 
           {section.chapters.length === 0 ? (
             <EmptyState size="sm" title="Nenhum capítulo" description="Esta seção ainda não tem capítulos." />
@@ -264,6 +277,7 @@ export function SectionItem({
                     <ChapterItem
                       key={chapter.id}
                       chapter={chapter}
+                      canMutateStructure={canMutateStructure}
                       isCollapsed={collapsedChapterIds.has(chapter.id)}
                       isEditing={editingChapterId === chapter.id}
                       chapterTitle={chapterTitle}

@@ -1,10 +1,12 @@
-import { fireEvent, screen, waitFor } from "@testing-library/react";
+import { act, fireEvent, screen, waitFor } from "@testing-library/react";
 import React from "react";
 import { beforeEach, describe, expect, test, vi } from "vitest";
 import { SceneKanbanPanel } from "@/features/kanban/components/scene-kanban-panel";
 import type { BookOutline } from "@/features/outline/types";
 import { updateScene } from "@/features/scenes/api/scenes-api";
-import type { SceneStatus } from "@/features/scenes/types";
+import type { Scene, SceneStatus } from "@/features/scenes/types";
+import { queryKeys } from "@/lib/query/keys";
+import { sceneForPlanning } from "@/test/fixtures";
 import { renderWithClient } from "@/test/test-utils";
 
 vi.mock("@/features/scenes/api/scenes-api", () => ({
@@ -27,6 +29,7 @@ describe("SceneKanbanPanel", () => {
     const { rerender } = renderWithClient(
       <SceneKanbanPanel
         bookId="book-1"
+        canMutateStructure
         outline={null}
         isLoading
         isError={false}
@@ -40,6 +43,7 @@ describe("SceneKanbanPanel", () => {
     rerender(
       <SceneKanbanPanel
         bookId="book-1"
+        canMutateStructure
         outline={null}
         isLoading={false}
         isError
@@ -52,6 +56,7 @@ describe("SceneKanbanPanel", () => {
     rerender(
       <SceneKanbanPanel
         bookId="book-1"
+        canMutateStructure
         outline={emptyOutline}
         isLoading={false}
         isError={false}
@@ -215,6 +220,7 @@ describe("SceneKanbanPanel", () => {
     rerender(
       <SceneKanbanPanel
         bookId="book-1"
+        canMutateStructure
         outline={outlineWithSceneStatus("scene-complete", "REVISED")}
         isLoading={false}
         isError={false}
@@ -225,12 +231,34 @@ describe("SceneKanbanPanel", () => {
 
     expect(screen.getByLabelText("Status de Cena completa")).toHaveValue("REVISED");
   });
+
+  test("sem a capability de estrutura o quadro so le o fluxo", async () => {
+    renderWithClient(
+      <SceneKanbanPanel
+        bookId="book-1"
+        canMutateStructure={false}
+        outline={outlineWithScenes}
+        isLoading={false}
+        isError={false}
+        onOpenSceneInEditor={vi.fn()}
+        onOpenScenePlanning={vi.fn()}
+      />
+    );
+
+    expect(screen.getByLabelText("Status de Cena completa")).toBeDisabled();
+    expect(screen.queryByRole("button", { name: "Mover cena Cena completa" })).not.toBeInTheDocument();
+
+    fireEvent.change(screen.getByLabelText("Status de Cena completa"), { target: { value: "PLANNED" } });
+
+    expect(updateSceneMock).not.toHaveBeenCalled();
+  });
 });
 
 function renderKanban(onOpenSceneInEditor = vi.fn(), onOpenScenePlanning = vi.fn()) {
   return renderWithClient(
     <SceneKanbanPanel
       bookId="book-1"
+      canMutateStructure
       outline={outlineWithScenes}
       isLoading={false}
       isError={false}
@@ -328,4 +356,110 @@ function createDeferredSceneResponse(sceneId: string, status: SceneStatus) {
     promise,
     resolve: resolvePromise,
   };
+}
+
+/**
+ * The board's status move writes into the same scene cache the editor reads its effective authority
+ * from, so a response that lands after a newer projection must not put back a grant that projection
+ * took away.
+ */
+describe("SceneKanbanPanel versus the newest projected authority", () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+  });
+
+  test("uma resposta atrasada do quadro nao ressuscita a autoridade retirada", async () => {
+    const deferred = createDeferredScene();
+    updateSceneMock.mockImplementation(() => deferred.promise);
+    const { queryClient } = renderKanban();
+    queryClient.setQueryData<Scene>(sceneKey, { ...cachedScene, canEditContent: true });
+
+    fireEvent.change(screen.getByLabelText("Status de Cena completa"), { target: { value: "PLANNED" } });
+    await waitFor(() => {
+      expect(updateSceneMock).toHaveBeenCalledTimes(1);
+    });
+
+    // While the move is in flight, a newer projection withdraws the authority over this scene's text.
+    queryClient.setQueryData<Scene>(sceneKey, { ...cachedScene, canEditContent: false });
+
+    await act(async () => {
+      deferred.resolve({ ...cachedScene, status: "PLANNED", canEditContent: true });
+      await deferred.promise;
+    });
+
+    const scene = queryClient.getQueryData<Scene>(sceneKey);
+    expect(scene?.canEditContent).toBe(false);
+    // The response is still the newest word about the status it just wrote.
+    expect(scene?.status).toBe("PLANNED");
+  });
+
+  test("uma resposta atrasada do quadro nao transforma a falha de refetch em concessao", async () => {
+    const deferred = createDeferredScene();
+    updateSceneMock.mockImplementation(() => deferred.promise);
+    const { queryClient } = renderKanban();
+    queryClient.setQueryData<Scene>(sceneKey, { ...cachedScene, canEditContent: true });
+
+    fireEvent.change(screen.getByLabelText("Status de Cena completa"), { target: { value: "PLANNED" } });
+    await waitFor(() => {
+      expect(updateSceneMock).toHaveBeenCalledTimes(1);
+    });
+
+    // A failed refetch leaves the authority unknown, not granted.
+    await act(async () => {
+      await queryClient
+        .fetchQuery({ queryKey: sceneKey, queryFn: () => Promise.reject(new Error("network down")) })
+        .catch(() => undefined);
+    });
+    expect(queryClient.getQueryState<Scene>(sceneKey)?.status).toBe("error");
+
+    await act(async () => {
+      deferred.resolve({ ...cachedScene, status: "PLANNED", canEditContent: true });
+      await deferred.promise;
+    });
+
+    expect(queryClient.getQueryState<Scene>(sceneKey)?.status).toBe("error");
+    expect(queryClient.getQueryData<Scene>(sceneKey)?.status).toBe("DRAFT");
+  });
+
+  // Control: with the authority still projected, the very same delayed response still reconciles the
+  // scene data. Without it, a writer that simply stopped applying responses would pass too.
+  test("com a autoridade preservada a mesma resposta atrasada reconcilia os dados da cena", async () => {
+    const deferred = createDeferredScene();
+    updateSceneMock.mockImplementation(() => deferred.promise);
+    const { queryClient } = renderKanban();
+    queryClient.setQueryData<Scene>(sceneKey, { ...cachedScene, canEditContent: true });
+
+    fireEvent.change(screen.getByLabelText("Status de Cena completa"), { target: { value: "PLANNED" } });
+    await waitFor(() => {
+      expect(updateSceneMock).toHaveBeenCalledTimes(1);
+    });
+
+    queryClient.setQueryData<Scene>(sceneKey, { ...cachedScene, canEditContent: true });
+
+    await act(async () => {
+      deferred.resolve({ ...cachedScene, status: "PLANNED", canEditContent: true });
+      await deferred.promise;
+    });
+
+    const scene = queryClient.getQueryData<Scene>(sceneKey);
+    expect(scene?.status).toBe("PLANNED");
+    expect(scene?.canEditContent).toBe(true);
+  });
+});
+
+const cachedScene: Scene = {
+  ...sceneForPlanning,
+  id: "scene-complete",
+  title: "Cena completa",
+  status: "DRAFT",
+};
+
+const sceneKey = queryKeys.scene(cachedScene.id);
+
+function createDeferredScene() {
+  let resolve!: (scene: Scene) => void;
+  const promise = new Promise<Scene>((promiseResolve) => {
+    resolve = promiseResolve;
+  });
+  return { promise, resolve };
 }

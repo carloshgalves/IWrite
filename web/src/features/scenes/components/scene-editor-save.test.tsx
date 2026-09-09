@@ -6,6 +6,7 @@ import { sceneForPlanning } from "@/test/fixtures";
 import { renderWithClient } from "@/test/test-utils";
 import { queryKeys } from "@/lib/query/keys";
 import type { Scene } from "@/features/scenes/types";
+import type { QueryClient } from "@tanstack/react-query";
 
 const mocks = vi.hoisted(() => ({
   getScene: vi.fn(),
@@ -722,11 +723,11 @@ describe("SceneEditor content save contract", () => {
     }));
 
     rerender(
-      <SceneEditor bookId="book-1" sceneId={sceneTwo.id} onSceneDeleted={vi.fn()} />
+      <SceneEditor bookId="book-1" sceneId={sceneTwo.id} canMutateStructure onSceneDeleted={vi.fn()} />
     );
     await screen.findByRole("heading", { name: sceneTwo.title });
     rerender(
-      <SceneEditor bookId="book-1" sceneId={sceneForPlanning.id} onSceneDeleted={vi.fn()} />
+      <SceneEditor bookId="book-1" sceneId={sceneForPlanning.id} canMutateStructure onSceneDeleted={vi.fn()} />
     );
 
     await waitFor(() => {
@@ -995,11 +996,154 @@ describe("SceneEditor content save contract", () => {
   });
 });
 
+describe("SceneEditor pending autosave versus the scene's projected authority", () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+    mocks.randomUUID.mockReset().mockReturnValue("operation-id");
+    vi.stubGlobal("crypto", {
+      randomUUID: mocks.randomUUID,
+    });
+    mocks.getScene.mockResolvedValue({ ...sceneForPlanning, contentRevision: 3 });
+    mocks.updateScene.mockResolvedValue(sceneForPlanning);
+    mocks.updateSceneContent.mockResolvedValue({ ...sceneForPlanning, contentText: "Novo texto", contentRevision: 4 });
+    mocks.restoreSceneVersion.mockResolvedValue(sceneForPlanning);
+    mocks.deleteScene.mockResolvedValue(undefined);
+    mocks.analyzeScene.mockResolvedValue(analysisResult);
+  });
+
+  afterEach(() => {
+    vi.useRealTimers();
+    vi.unstubAllGlobals();
+  });
+
+  test("um autosave agendado nao dispara depois que a autoridade sobre o conteudo desaparece", async () => {
+    const { queryClient } = renderEditor();
+    await screen.findByRole("heading", { name: sceneForPlanning.title });
+
+    vi.useFakeTimers();
+    fireEvent.click(screen.getByRole("button", { name: "Alterar conteudo" }));
+
+    // The server stops projecting authority over this scene's text while the timer is still pending.
+    // The revision does not move, so nothing else in the editor reacts to the refetch.
+    mocks.getScene.mockResolvedValue({ ...sceneForPlanning, contentRevision: 3, canEditContent: false });
+    await refetchScene(queryClient);
+
+    // The surface itself already gave the answer up: the save control is gone.
+    expect(screen.queryByRole("button", { name: /Salvar conte.do/ })).not.toBeInTheDocument();
+
+    await act(async () => {
+      vi.advanceTimersByTime(1200);
+    });
+    vi.useRealTimers();
+
+    // Scheduling checked the authority; firing must check it again, or the browser dispatches a
+    // mutation under an authority the server has already withdrawn.
+    expect(mocks.updateSceneContent).not.toHaveBeenCalled();
+  });
+
+  test("um autosave agendado nao dispara depois que o refetch da cena falha", async () => {
+    const { queryClient } = renderEditor();
+    await screen.findByRole("heading", { name: sceneForPlanning.title });
+
+    vi.useFakeTimers();
+    fireEvent.click(screen.getByRole("button", { name: "Alterar conteudo" }));
+
+    // A failed refetch keeps the cached scene in TanStack Query, so the authority it carries is no
+    // longer a currently confirmed projection: it is unknown, not granted.
+    mocks.getScene.mockRejectedValue(new Error("network down"));
+    await refetchScene(queryClient);
+
+    // The editor is already showing the failure rather than the writable scene.
+    expect(screen.getByText(/N.o foi poss.vel carregar a cena/)).toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: /Salvar conte.do/ })).not.toBeInTheDocument();
+
+    await act(async () => {
+      vi.advanceTimersByTime(1200);
+    });
+    vi.useRealTimers();
+
+    expect(mocks.updateSceneContent).not.toHaveBeenCalled();
+  });
+
+  test("um autosave que dispara junto com a revogacao revalida antes de despachar", async () => {
+    const { queryClient } = renderEditor();
+    await screen.findByRole("heading", { name: sceneForPlanning.title });
+
+    vi.useFakeTimers();
+    fireEvent.click(screen.getByRole("button", { name: "Alterar conteudo" }));
+
+    // Deliberately not flushing the query notification: the withdrawal and the autosave land in the
+    // same tick, so React has not re-rendered and nothing has had the chance to cancel the timer.
+    mocks.getScene.mockResolvedValue({ ...sceneForPlanning, contentRevision: 3, canEditContent: false });
+    await act(async () => {
+      await queryClient.refetchQueries({ queryKey: queryKeys.scene(sceneForPlanning.id) }).catch(() => undefined);
+    });
+    expect(screen.getByRole("button", { name: /Salvar conte.do/ })).toBeInTheDocument();
+
+    await act(async () => {
+      vi.advanceTimersByTime(1200);
+    });
+    vi.useRealTimers();
+
+    // The dispatch point has to ask the projection again; the render it was scheduled from still
+    // says the user may write.
+    expect(mocks.updateSceneContent).not.toHaveBeenCalled();
+  });
+
+  // Control: with the authority still projected, the very same edit and the very same refetch still
+  // reach the server. Without it, an editor that simply stopped autosaving would look identical to
+  // the two assertions above.
+  test("com a autoridade preservada o mesmo autosave continua sendo enviado", async () => {
+    mocks.randomUUID.mockReturnValueOnce("operation-autosave");
+    const { queryClient } = renderEditor();
+    await screen.findByRole("heading", { name: sceneForPlanning.title });
+
+    vi.useFakeTimers();
+    fireEvent.click(screen.getByRole("button", { name: "Alterar conteudo" }));
+
+    mocks.getScene.mockResolvedValue({ ...sceneForPlanning, contentRevision: 3, canEditContent: true });
+    await refetchScene(queryClient);
+
+    expect(screen.getByRole("button", { name: /Salvar conte.do/ })).toBeInTheDocument();
+
+    await act(async () => {
+      vi.advanceTimersByTime(1200);
+    });
+    vi.useRealTimers();
+
+    await waitFor(() => {
+      expect(mocks.updateSceneContent).toHaveBeenCalledWith(sceneForPlanning.id, {
+        contentJson: "{\"type\":\"doc\"}",
+        contentText: "Novo texto",
+        source: "AUTO_SAVE",
+        expectedContentRevision: 3,
+        operationId: "operation-autosave",
+      });
+    });
+  });
+});
+
+/**
+ * Refetches the scene and lets the editor actually observe the answer. TanStack Query delivers query
+ * updates through a zero-delay timeout, so under fake timers the new projection would otherwise only
+ * reach React in the same tick that fires the autosave — the editor would never have had the chance
+ * to react to the authority change before dispatching.
+ */
+async function refetchScene(queryClient: QueryClient) {
+  await act(async () => {
+    await queryClient.refetchQueries({ queryKey: queryKeys.scene(sceneForPlanning.id) }).catch(() => undefined);
+  });
+  await act(async () => {
+    vi.advanceTimersByTime(0);
+  });
+}
+
 function renderEditor() {
   return renderWithClient(
     <SceneEditor
       bookId="book-1"
       sceneId={sceneForPlanning.id}
+      canMutateStructure
       onSceneDeleted={vi.fn()}
     />
   );
@@ -1013,4 +1157,297 @@ function createDeferred<T>() {
     reject = promiseReject;
   });
   return { promise, resolve, reject };
+}
+
+describe("SceneEditor delayed save response versus the newest projected authority", () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+    mocks.randomUUID.mockReset().mockReturnValue("operation-id");
+    vi.stubGlobal("crypto", {
+      randomUUID: mocks.randomUUID,
+    });
+    mocks.getScene.mockResolvedValue({ ...sceneForPlanning, contentRevision: 3 });
+    mocks.updateScene.mockResolvedValue(sceneForPlanning);
+    mocks.updateSceneContent.mockResolvedValue({ ...sceneForPlanning, contentText: "Novo texto", contentRevision: 4 });
+    mocks.restoreSceneVersion.mockResolvedValue(sceneForPlanning);
+    mocks.deleteScene.mockResolvedValue(undefined);
+    mocks.analyzeScene.mockResolvedValue(analysisResult);
+  });
+
+  afterEach(() => {
+    vi.useRealTimers();
+    vi.unstubAllGlobals();
+  });
+
+  test("uma resposta de save iniciada sob a concessao antiga nao ressuscita a autoridade retirada", async () => {
+    const deferredSave = createDeferred<Scene>();
+    mocks.updateSceneContent.mockImplementation(() => deferredSave.promise);
+    const { queryClient } = renderEditor();
+    await screen.findByRole("heading", { name: sceneForPlanning.title });
+
+    // The save leaves under an authority the server was still projecting.
+    fireEvent.click(screen.getByRole("button", { name: /Salvar conte.do/ }));
+    await waitFor(() => {
+      expect(mocks.updateSceneContent).toHaveBeenCalledTimes(1);
+    });
+
+    // While it is in flight, a newer projection withdraws the authority over this scene's text.
+    mocks.getScene.mockResolvedValue({ ...sceneForPlanning, contentRevision: 3, canEditContent: false });
+    await refetchSceneWithRealTimers(queryClient);
+    await waitFor(() => {
+      expect(screen.queryByRole("button", { name: /Salvar conte.do/ })).not.toBeInTheDocument();
+    });
+
+    // Only now does the older response land, still carrying the grant it was decided with.
+    await act(async () => {
+      deferredSave.resolve({ ...sceneForPlanning, contentText: "Novo texto", contentRevision: 4 });
+      await deferredSave.promise;
+    });
+
+    // Content and authority do not share a clock: reconciling the saved text must not put back an
+    // action the newest projection has already invalidated.
+    expect(queryClient.getQueryData<Scene>(queryKeys.scene(sceneForPlanning.id))?.canEditContent).toBe(false);
+    expect(screen.getByText("Somente leitura")).toBeInTheDocument();
+    // Both labels of the same control, so a save still in flight cannot satisfy this by being named
+    // "Salvando..." at the moment the assertion runs.
+    expect(screen.queryByRole("button", { name: /Salvar conte.do|Salvando/ })).not.toBeInTheDocument();
+  });
+
+  test("uma resposta de save atrasada nao transforma a falha de refetch em concessao", async () => {
+    const deferredSave = createDeferred<Scene>();
+    mocks.updateSceneContent.mockImplementation(() => deferredSave.promise);
+    const { queryClient } = renderEditor();
+    await screen.findByRole("heading", { name: sceneForPlanning.title });
+
+    fireEvent.click(screen.getByRole("button", { name: /Salvar conte.do/ }));
+    await waitFor(() => {
+      expect(mocks.updateSceneContent).toHaveBeenCalledTimes(1);
+    });
+
+    // A failed refetch leaves the authority unknown, not granted.
+    mocks.getScene.mockRejectedValue(new Error("network down"));
+    await refetchSceneWithRealTimers(queryClient);
+    await waitFor(() => {
+      expect(screen.getByText(/N.o foi poss.vel carregar a cena/)).toBeInTheDocument();
+    });
+
+    await act(async () => {
+      deferredSave.resolve({ ...sceneForPlanning, contentText: "Novo texto", contentRevision: 4 });
+      await deferredSave.promise;
+    });
+
+    // Writing the response into the cache would turn the failure back into a success carrying the
+    // old grant, so the editor would reopen on an authority nothing has confirmed since.
+    expect(queryClient.getQueryState<Scene>(queryKeys.scene(sceneForPlanning.id))?.status).toBe("error");
+    expect(screen.getByText(/N.o foi poss.vel carregar a cena/)).toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: /Salvar conte.do|Salvando/ })).not.toBeInTheDocument();
+  });
+
+  // Control: with the authority still projected, the very same delayed response still reconciles
+  // content and revision. Without it, a surface that simply stopped applying save responses would
+  // satisfy the two assertions above just as well.
+  test("com a autoridade preservada a mesma resposta atrasada reconcilia conteudo e revision", async () => {
+    const deferredSave = createDeferred<Scene>();
+    mocks.updateSceneContent.mockImplementationOnce(() => deferredSave.promise);
+    const { queryClient } = renderEditor();
+    await screen.findByRole("heading", { name: sceneForPlanning.title });
+
+    fireEvent.click(screen.getByRole("button", { name: /Salvar conte.do/ }));
+    await waitFor(() => {
+      expect(mocks.updateSceneContent).toHaveBeenCalledTimes(1);
+    });
+
+    mocks.getScene.mockResolvedValue({ ...sceneForPlanning, contentRevision: 3, canEditContent: true });
+    await refetchSceneWithRealTimers(queryClient);
+
+    await act(async () => {
+      deferredSave.resolve({ ...sceneForPlanning, contentText: "Novo texto", contentRevision: 4 });
+      await deferredSave.promise;
+    });
+
+    expect(await screen.findByRole("button", { name: /Salvar conte.do/ })).toBeInTheDocument();
+    expect(queryClient.getQueryData<Scene>(queryKeys.scene(sceneForPlanning.id))?.contentRevision).toBe(4);
+    expect(queryClient.getQueryData<Scene>(queryKeys.scene(sceneForPlanning.id))?.canEditContent).toBe(true);
+
+    // The accepted revision moved with the response, so the next save is sent against it.
+    mocks.randomUUID.mockReturnValueOnce("operation-after-delayed-response");
+    mocks.updateSceneContent.mockResolvedValue({ ...sceneForPlanning, contentText: "Texto mais novo", contentRevision: 5 });
+    fireEvent.click(screen.getByRole("button", { name: "Alterar novamente" }));
+    fireEvent.click(screen.getByRole("button", { name: /Salvar conte.do/ }));
+
+    await waitFor(() => {
+      expect(mocks.updateSceneContent).toHaveBeenLastCalledWith(sceneForPlanning.id, {
+        contentJson: "{\"type\":\"doc-2\"}",
+        contentText: "Texto mais novo",
+        source: "MANUAL_SAVE",
+        expectedContentRevision: 4,
+        operationId: "operation-after-delayed-response",
+      });
+    });
+  });
+});
+
+/**
+ * Refetches the scene under real timers and lets the editor observe the answer, so the newer
+ * projection is already in place when the older save response lands.
+ */
+async function refetchSceneWithRealTimers(queryClient: QueryClient) {
+  await act(async () => {
+    await queryClient.refetchQueries({ queryKey: queryKeys.scene(sceneForPlanning.id) }).catch(() => undefined);
+  });
+}
+
+describe("SceneEditor pending remote reconciliation versus the currently projected authority", () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+    mocks.randomUUID.mockReset().mockReturnValue("operation-id");
+    vi.stubGlobal("crypto", {
+      randomUUID: mocks.randomUUID,
+    });
+    mocks.getScene.mockResolvedValue({ ...sceneForPlanning, contentRevision: 3 });
+    mocks.updateScene.mockResolvedValue(sceneForPlanning);
+    mocks.updateSceneContent.mockResolvedValue({ ...sceneForPlanning, contentText: "Novo texto", contentRevision: 4 });
+    mocks.restoreSceneVersion.mockResolvedValue(sceneForPlanning);
+    mocks.deleteScene.mockResolvedValue(undefined);
+    mocks.analyzeScene.mockResolvedValue(analysisResult);
+  });
+
+  afterEach(() => {
+    vi.useRealTimers();
+    vi.unstubAllGlobals();
+  });
+
+  test("reconciliar conteudo remoto pendente nao transforma o refetch falho em concessao", async () => {
+    const deferredSave = createDeferred<Scene>();
+    mocks.updateSceneContent.mockImplementation(() => deferredSave.promise);
+    const { queryClient } = renderEditor();
+    await screen.findByRole("heading", { name: sceneForPlanning.title });
+
+    // The save leaves while the server still projects the authority over this scene's text.
+    fireEvent.click(screen.getByRole("button", { name: /Salvar conte.do/ }));
+    await waitFor(() => {
+      expect(mocks.updateSceneContent).toHaveBeenCalledTimes(1);
+    });
+
+    // A newer remote revision lands mid-save, so the editor holds it as pending content.
+    mocks.getScene.mockResolvedValue(remoteRevisionFive);
+    await observeSceneRefetch(queryClient);
+
+    // A later refetch fails: the authority is now unknown rather than granted, and the surface
+    // correctly goes conservative.
+    mocks.getScene.mockRejectedValue(new Error("network down"));
+    await observeSceneRefetch(queryClient);
+    await waitFor(() => {
+      expect(screen.getByText(/N.o foi poss.vel carregar a cena/)).toBeInTheDocument();
+    });
+
+    // The save response lands, and reconciling the held revision writes the shared scene cache.
+    await act(async () => {
+      deferredSave.resolve({ ...sceneForPlanning, contentText: "Novo texto", contentRevision: 4 });
+      await deferredSave.promise;
+    });
+
+    // Reconciling text is not a permission refresh. Writing it into the shared cache would put the
+    // query back into success carrying the grant nothing has confirmed since the failure, and the
+    // save control would reappear without any successful authority refresh.
+    // Both labels of the same control, so a save still in flight cannot satisfy this by being named
+    // "Salvando..." at the moment the assertion runs.
+    expect(screen.queryByRole("button", { name: /Salvar conte.do|Salvando/ })).not.toBeInTheDocument();
+    expect(screen.getByText(/N.o foi poss.vel carregar a cena/)).toBeInTheDocument();
+    expect(queryClient.getQueryState<Scene>(queryKeys.scene(sceneForPlanning.id))?.status).toBe("error");
+  });
+
+  test("recusar o write mantem a ordenacao: a revision reconciliada e a que o proximo save usa", async () => {
+    const deferredSave = createDeferred<Scene>();
+    mocks.updateSceneContent.mockImplementationOnce(() => deferredSave.promise);
+    const { queryClient } = renderEditor();
+    await screen.findByRole("heading", { name: sceneForPlanning.title });
+
+    fireEvent.click(screen.getByRole("button", { name: /Salvar conte.do/ }));
+    await waitFor(() => {
+      expect(mocks.updateSceneContent).toHaveBeenCalledTimes(1);
+    });
+
+    mocks.getScene.mockResolvedValue(remoteRevisionFive);
+    await observeSceneRefetch(queryClient);
+
+    mocks.getScene.mockRejectedValue(new Error("network down"));
+    await observeSceneRefetch(queryClient);
+
+    await act(async () => {
+      deferredSave.resolve({ ...sceneForPlanning, contentText: "Novo texto", contentRevision: 4 });
+      await deferredSave.promise;
+    });
+
+    // Refusing the cache write must not cost the ordering the reconciliation is there for: revision 5
+    // is still the one the surface holds, so once a successful fetch reconfirms the authority the
+    // next save is sent against it and not against the older 4 the save itself returned.
+    mocks.getScene.mockResolvedValue(remoteRevisionFive);
+    await observeSceneRefetch(queryClient);
+    expect(await screen.findByRole("button", { name: /Salvar conte.do/ })).toBeInTheDocument();
+
+    mocks.randomUUID.mockReturnValueOnce("operation-after-reconciliation");
+    mocks.updateSceneContent.mockResolvedValue({ ...remoteRevisionFive, contentText: "Texto mais novo", contentRevision: 6 });
+    fireEvent.click(screen.getByRole("button", { name: "Alterar novamente" }));
+    fireEvent.click(screen.getByRole("button", { name: /Salvar conte.do/ }));
+
+    await waitFor(() => {
+      expect(mocks.updateSceneContent).toHaveBeenLastCalledWith(sceneForPlanning.id, {
+        contentJson: "{\"type\":\"doc-2\"}",
+        contentText: "Texto mais novo",
+        source: "MANUAL_SAVE",
+        expectedContentRevision: 5,
+        operationId: "operation-after-reconciliation",
+      });
+    });
+  });
+
+  // Control: with the projection currently successful, the very same reconciliation still writes the
+  // pending revision into the shared cache. Without it, a surface that simply stopped reconciling
+  // remote content would satisfy the assertions above just as well.
+  test("com a projecao bem-sucedida a mesma reconciliacao aplica conteudo e revision no cache", async () => {
+    const deferredSave = createDeferred<Scene>();
+    mocks.updateSceneContent.mockImplementationOnce(() => deferredSave.promise);
+    const { queryClient } = renderEditor();
+    await screen.findByRole("heading", { name: sceneForPlanning.title });
+
+    fireEvent.click(screen.getByRole("button", { name: /Salvar conte.do/ }));
+    await waitFor(() => {
+      expect(mocks.updateSceneContent).toHaveBeenCalledTimes(1);
+    });
+
+    mocks.getScene.mockResolvedValue(remoteRevisionFive);
+    await observeSceneRefetch(queryClient);
+
+    await act(async () => {
+      deferredSave.resolve({ ...sceneForPlanning, contentText: "Novo texto", contentRevision: 4 });
+      await deferredSave.promise;
+    });
+
+    const reconciledScene = queryClient.getQueryData<Scene>(queryKeys.scene(sceneForPlanning.id));
+    expect(queryClient.getQueryState<Scene>(queryKeys.scene(sceneForPlanning.id))?.status).toBe("success");
+    expect(reconciledScene?.contentRevision).toBe(5);
+    expect(reconciledScene?.contentText).toBe("Texto remoto");
+    expect(await screen.findByRole("button", { name: /Salvar conte.do/ })).toBeInTheDocument();
+  });
+});
+
+const remoteRevisionFive: Scene = {
+  ...sceneForPlanning,
+  contentJson: "{\"type\":\"remote\"}",
+  contentText: "Texto remoto",
+  contentRevision: 5,
+  canEditContent: true,
+};
+
+/**
+ * Refetches the scene and lets the editor actually observe the answer. React Query notifies its
+ * observers on a macrotask, so without yielding to one the next step of the scenario would coalesce
+ * with this projection and the editor would never see it.
+ */
+async function observeSceneRefetch(queryClient: QueryClient) {
+  await act(async () => {
+    await queryClient.refetchQueries({ queryKey: queryKeys.scene(sceneForPlanning.id) }).catch(() => undefined);
+    await new Promise((resolve) => setTimeout(resolve, 0));
+  });
 }

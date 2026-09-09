@@ -24,6 +24,8 @@ import { getReorderedIds } from "@/features/outline/utils/reorder";
 
 type ChapterItemProps = {
   chapter: OutlineChapter;
+  /** Whether this book granted MUTATE_MANUSCRIPT_STRUCTURE; false renders the chapter read-only. */
+  canMutateStructure: boolean;
   isCollapsed: boolean;
   isEditing: boolean;
   chapterTitle: string;
@@ -50,6 +52,7 @@ type ChapterItemProps = {
 
 export function ChapterItem({
   chapter,
+  canMutateStructure,
   isCollapsed,
   isEditing,
   chapterTitle,
@@ -75,8 +78,10 @@ export function ChapterItem({
 }: ChapterItemProps) {
   const { attributes, listeners, setActivatorNodeRef, setNodeRef, transform, transition, isDragging } = useSortable({
     id: chapter.id,
-    disabled: reorderPending || isEditing,
+    disabled: !canMutateStructure || reorderPending || isEditing,
   });
+  const dragAttributes = canMutateStructure ? attributes : {};
+  const dragListeners = canMutateStructure ? listeners : undefined;
   const style = {
     transform: CSS.Transform.toString(transform),
     transition,
@@ -158,12 +163,14 @@ export function ChapterItem({
               <button
                 type="button"
                 ref={setActivatorNodeRef}
-                className="min-w-0 flex-1 cursor-grab rounded-md text-left transition hover:bg-zinc-50 active:cursor-grabbing focus:outline-none focus:ring-2 focus:ring-zinc-800 focus:ring-offset-2"
+                className={`min-w-0 flex-1 rounded-md text-left transition hover:bg-zinc-50 focus:outline-none focus:ring-2 focus:ring-zinc-800 focus:ring-offset-2 ${
+                  canMutateStructure ? "cursor-grab active:cursor-grabbing" : ""
+                }`}
                 aria-expanded={!isCollapsed}
                 aria-label={`${isCollapsed ? "Expandir" : "Recolher"} capítulo ${chapter.title}`}
                 onClick={() => onToggleChapter(chapter.id)}
-                {...attributes}
-                {...listeners}
+                {...dragAttributes}
+                {...dragListeners}
               >
                 <p className="text-[11px] font-medium uppercase text-zinc-500">Capítulo</p>
                 <h3 className="truncate text-sm font-medium text-zinc-800">{chapter.title}</h3>
@@ -172,37 +179,41 @@ export function ChapterItem({
             </div>
             <WordCount count={chapter.wordCount} />
           </div>
-          <div className="flex flex-wrap gap-1.5 opacity-60 transition group-hover/chapter:opacity-100 focus-within:opacity-100">
-            <button
-              type="button"
-              aria-label={`Reordenar capítulo ${chapter.title}`}
-              title="Reordenar capítulo"
-              disabled={reorderPending}
-              className="inline-flex min-h-8 cursor-grab items-center justify-center rounded-md px-2 py-1 text-sm font-medium text-zinc-700 transition hover:bg-zinc-100 active:cursor-grabbing focus:outline-none focus:ring-2 focus:ring-zinc-800 focus:ring-offset-1 disabled:cursor-not-allowed disabled:opacity-70"
-              {...listeners}
-            >
-              ::
-            </button>
-            <Button type="button" variant="ghost" size="sm" onClick={() => onStartEdit(chapter)}>
-              Editar
-            </Button>
-            <Button type="button" variant="ghost" size="sm" disabled={deletePending} onClick={() => onDeleteChapter(chapter)}>
-              Excluir
-            </Button>
-          </div>
+          {canMutateStructure ? (
+            <div className="flex flex-wrap gap-1.5 opacity-60 transition group-hover/chapter:opacity-100 focus-within:opacity-100">
+              <button
+                type="button"
+                aria-label={`Reordenar capítulo ${chapter.title}`}
+                title="Reordenar capítulo"
+                disabled={reorderPending}
+                className="inline-flex min-h-8 cursor-grab items-center justify-center rounded-md px-2 py-1 text-sm font-medium text-zinc-700 transition hover:bg-zinc-100 active:cursor-grabbing focus:outline-none focus:ring-2 focus:ring-zinc-800 focus:ring-offset-1 disabled:cursor-not-allowed disabled:opacity-70"
+                {...dragListeners}
+              >
+                ::
+              </button>
+              <Button type="button" variant="ghost" size="sm" onClick={() => onStartEdit(chapter)}>
+                Editar
+              </Button>
+              <Button type="button" variant="ghost" size="sm" disabled={deletePending} onClick={() => onDeleteChapter(chapter)}>
+                Excluir
+              </Button>
+            </div>
+          ) : null}
         </>
       )}
 
       {!isCollapsed ? (
         <>
-          <InlineCreateForm
-            compact
-            ariaLabel={`Nova cena em ${chapter.title}`}
-            placeholder="Nova cena"
-            buttonLabel="Cena"
-            disabled={createScenePending}
-            onCreate={(title) => onCreateScene(chapter.id, title)}
-          />
+          {canMutateStructure ? (
+            <InlineCreateForm
+              compact
+              ariaLabel={`Nova cena em ${chapter.title}`}
+              placeholder="Nova cena"
+              buttonLabel="Cena"
+              disabled={createScenePending}
+              onCreate={(title) => onCreateScene(chapter.id, title)}
+            />
+          ) : null}
 
           {chapter.scenes.length === 0 ? (
             <EmptyState size="sm" title="Nenhuma cena" description="Este capítulo ainda não tem cenas." />
@@ -220,6 +231,7 @@ export function ChapterItem({
                     <SceneRow
                       key={scene.id}
                       scene={scene}
+                      canMutateStructure={canMutateStructure}
                       isSelected={selectedSceneId === scene.id}
                       deletePending={deleteScenePending}
                       reorderPending={reorderScenePending}

@@ -25,6 +25,7 @@ import { ErrorState, LoadingState } from "@/components/ui/feedback";
 import { FeedbackMessage } from "@/components/ui/feedback-message";
 import type { BookOutline } from "@/features/outline/types";
 import { updateScene } from "@/features/scenes/api/scenes-api";
+import { applySceneMutationResponse } from "@/features/scenes/cache/apply-scene-mutation-response";
 import type { SceneStatus } from "@/features/scenes/types";
 import {
   buildKanbanModel,
@@ -43,6 +44,11 @@ type SceneKanbanPanelProps = {
   outline?: BookOutline | null;
   isLoading: boolean;
   isError: boolean;
+  /**
+   * Moving a scene between columns writes its status, which is scene metadata and therefore a
+   * manuscript structure mutation. Without the capability the board reads the flow and changes nothing.
+   */
+  canMutateStructure: boolean;
   onOpenSceneInEditor: (sceneId: string) => void;
   onOpenScenePlanning: (sceneId: string) => void;
 };
@@ -58,6 +64,7 @@ export function SceneKanbanPanel({
   outline,
   isLoading,
   isError,
+  canMutateStructure,
   onOpenSceneInEditor,
   onOpenScenePlanning,
 }: SceneKanbanPanelProps) {
@@ -79,7 +86,7 @@ export function SceneKanbanPanel({
   const mutation = useMutation({
     mutationFn: ({ sceneId, status }: { sceneId: string; status: SceneStatus }) => updateScene(sceneId, { status }),
     onSuccess: (scene) => {
-      queryClient.setQueryData(queryKeys.scene(scene.id), scene);
+      applySceneMutationResponse(queryClient, scene);
       void queryClient.invalidateQueries({ queryKey: queryKeys.outline(bookId) });
       void queryClient.invalidateQueries({ queryKey: queryKeys.scene(scene.id) });
       void queryClient.invalidateQueries({ queryKey: queryKeys.bookDashboard(bookId) });
@@ -93,6 +100,18 @@ export function SceneKanbanPanel({
 
     setStatusOverrides((previous) => reconcileKanbanStatusOverrides(outline, previous, pendingSceneIdsRef.current));
   }, [outline]);
+
+  // A pending transition or an active drag is mutable state opened under the previous authority. Once
+  // the capability is gone the confirmation must go with it, or its button would still apply the
+  // optimistic move and dispatch the write.
+  useEffect(() => {
+    if (canMutateStructure) {
+      return;
+    }
+
+    setPendingTransition(null);
+    setActiveSceneId(null);
+  }, [canMutateStructure]);
 
   if (isLoading) {
     return (
@@ -156,7 +175,7 @@ export function SceneKanbanPanel({
   }
 
   function requestStatusChange(scene: KanbanSceneCardModel, targetStatus: SceneStatus) {
-    if (pendingSceneIdsRef.current.has(scene.id)) {
+    if (!canMutateStructure || pendingSceneIdsRef.current.has(scene.id)) {
       return;
     }
 
@@ -181,7 +200,7 @@ export function SceneKanbanPanel({
   }
 
   async function applyStatusChange(scene: KanbanSceneCardModel, targetStatus: SceneStatus) {
-    if (pendingSceneIdsRef.current.has(scene.id)) {
+    if (!canMutateStructure || pendingSceneIdsRef.current.has(scene.id)) {
       return;
     }
 
@@ -227,7 +246,7 @@ export function SceneKanbanPanel({
   }
 
   function handleConfirmAdvancedTransition() {
-    if (!pendingTransition || pendingTransition.kind !== "confirm-advanced") {
+    if (!canMutateStructure || !pendingTransition || pendingTransition.kind !== "confirm-advanced") {
       return;
     }
 
@@ -254,6 +273,7 @@ export function SceneKanbanPanel({
                   <KanbanColumn
                     key={column.status}
                     column={column}
+                    canMutateStructure={canMutateStructure}
                     pendingSceneIds={pendingSceneIds}
                     onOpenSceneInEditor={onOpenSceneInEditor}
                     onRequestStatusChange={requestStatusChange}
@@ -266,6 +286,7 @@ export function SceneKanbanPanel({
             {activeScene ? (
               <KanbanSceneCard
                 scene={activeScene}
+                canMutateStructure={canMutateStructure}
                 pending={false}
                 overlay
                 onOpenSceneInEditor={onOpenSceneInEditor}
@@ -300,11 +321,13 @@ function KanbanHeader() {
 
 function KanbanColumn({
   column,
+  canMutateStructure,
   pendingSceneIds,
   onOpenSceneInEditor,
   onRequestStatusChange,
 }: {
   column: KanbanColumnModel;
+  canMutateStructure: boolean;
   pendingSceneIds: Set<string>;
   onOpenSceneInEditor: (sceneId: string) => void;
   onRequestStatusChange: (scene: KanbanSceneCardModel, targetStatus: SceneStatus) => void;
@@ -340,6 +363,7 @@ function KanbanColumn({
             <DraggableKanbanSceneCard
               key={scene.id}
               scene={scene}
+              canMutateStructure={canMutateStructure}
               pending={pendingSceneIds.has(scene.id)}
               onOpenSceneInEditor={onOpenSceneInEditor}
               onRequestStatusChange={onRequestStatusChange}
@@ -353,17 +377,20 @@ function KanbanColumn({
 
 function DraggableKanbanSceneCard({
   scene,
+  canMutateStructure,
   pending,
   onOpenSceneInEditor,
   onRequestStatusChange,
 }: {
   scene: KanbanSceneCardModel;
+  canMutateStructure: boolean;
   pending: boolean;
   onOpenSceneInEditor: (sceneId: string) => void;
   onRequestStatusChange: (scene: KanbanSceneCardModel, targetStatus: SceneStatus) => void;
 }) {
   const { attributes, listeners, setActivatorNodeRef, setNodeRef, transform, isDragging } = useDraggable({
     id: scene.id,
+    disabled: !canMutateStructure,
   });
   const style = {
     transform: CSS.Translate.toString(transform),
@@ -377,6 +404,7 @@ function DraggableKanbanSceneCard({
       dragListeners={listeners}
       style={style}
       scene={scene}
+      canMutateStructure={canMutateStructure}
       pending={pending}
       dragging={isDragging}
       onOpenSceneInEditor={onOpenSceneInEditor}
@@ -387,6 +415,7 @@ function DraggableKanbanSceneCard({
 
 type KanbanSceneCardProps = {
   scene: KanbanSceneCardModel;
+  canMutateStructure?: boolean;
   pending: boolean;
   overlay?: boolean;
   dragging?: boolean;
@@ -401,6 +430,7 @@ type KanbanSceneCardProps = {
 
 function KanbanSceneCard({
   scene,
+  canMutateStructure = false,
   pending,
   overlay = false,
   dragging = false,
@@ -424,17 +454,19 @@ function KanbanSceneCard({
       } ${overlay ? "w-[244px] shadow-lg" : ""}`}
     >
       <div className="flex items-start gap-2">
-        <button
-          ref={activatorRef}
-          type="button"
-          className="mt-0.5 inline-flex h-7 w-7 shrink-0 cursor-grab items-center justify-center rounded-md border border-zinc-200 bg-zinc-50 text-xs font-semibold text-zinc-500 transition hover:border-emerald-300 hover:bg-emerald-50 hover:text-emerald-800 focus:outline-none focus:ring-2 focus:ring-emerald-600 disabled:cursor-not-allowed disabled:opacity-50"
-          aria-label={`Mover cena ${scene.scene.title}`}
-          disabled={pending}
-          {...dragAttributes}
-          {...dragListeners}
-        >
-          ::
-        </button>
+        {canMutateStructure ? (
+          <button
+            ref={activatorRef}
+            type="button"
+            className="mt-0.5 inline-flex h-7 w-7 shrink-0 cursor-grab items-center justify-center rounded-md border border-zinc-200 bg-zinc-50 text-xs font-semibold text-zinc-500 transition hover:border-emerald-300 hover:bg-emerald-50 hover:text-emerald-800 focus:outline-none focus:ring-2 focus:ring-emerald-600 disabled:cursor-not-allowed disabled:opacity-50"
+            aria-label={`Mover cena ${scene.scene.title}`}
+            disabled={pending}
+            {...dragAttributes}
+            {...dragListeners}
+          >
+            ::
+          </button>
+        ) : null}
         <button
           type="button"
           aria-label={`Abrir cena ${scene.scene.title}`}
@@ -462,7 +494,7 @@ function KanbanSceneCard({
         <select
           className="min-h-8 rounded-md border border-zinc-300 bg-white px-2 py-1 text-sm text-zinc-800 focus:border-emerald-500 focus:outline-none focus:ring-2 focus:ring-emerald-100 disabled:cursor-not-allowed disabled:opacity-60"
           value={scene.status}
-          disabled={pending}
+          disabled={pending || !canMutateStructure}
           aria-label={`Status de ${scene.scene.title}`}
           onChange={(event) => onRequestStatusChange(scene, event.target.value as SceneStatus)}
         >

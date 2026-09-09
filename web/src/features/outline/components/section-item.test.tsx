@@ -18,6 +18,7 @@ const section: OutlineSection = {
 function renderSectionItem(props?: Partial<React.ComponentProps<typeof SectionItem>>) {
   const defaultProps: React.ComponentProps<typeof SectionItem> = {
     section,
+    canMutateStructure: true,
     sectionTypes: ["PART", "PROLOGUE", "INTERLUDE", "EPILOGUE", "OTHER"],
     selectedSceneId: null,
     editingSectionId: null,

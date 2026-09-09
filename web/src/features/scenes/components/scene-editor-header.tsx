@@ -9,6 +9,10 @@ type SceneEditorHeaderProps = {
   scene: Scene;
   metadataFormId: string;
   title: string;
+  /** Structure mutations (scene metadata, deletion) are offered only with the capability. */
+  canMutateStructure: boolean;
+  /** Whether a content save may be attempted at all for this book. */
+  canEditContent: boolean;
   contentSaveStatus: ContentSaveStatus;
   metadataPending: boolean;
   contentPending: boolean;
@@ -43,6 +47,8 @@ export function SceneEditorHeader({
   scene,
   metadataFormId,
   title,
+  canMutateStructure,
+  canEditContent,
   contentSaveStatus,
   metadataPending,
   contentPending,
@@ -67,9 +73,15 @@ export function SceneEditorHeader({
           <div className="mt-2 flex flex-wrap items-center gap-2">
             <Badge>{scene.status}</Badge>
             <Badge variant="outline">{scene.wordCount} palavras</Badge>
-            <span className={`rounded-full border px-2.5 py-1 text-xs font-medium ${saveStatusClasses[contentSaveStatus]}`}>
-              {saveStatusLabels[contentSaveStatus]}
-            </span>
+            {canEditContent ? (
+              <span className={`rounded-full border px-2.5 py-1 text-xs font-medium ${saveStatusClasses[contentSaveStatus]}`}>
+                {saveStatusLabels[contentSaveStatus]}
+              </span>
+            ) : (
+              <span className="rounded-full border border-zinc-200 bg-zinc-50 px-2.5 py-1 text-xs font-medium text-zinc-600">
+                Somente leitura
+              </span>
+            )}
           </div>
         </div>
 
@@ -90,31 +102,37 @@ export function SceneEditorHeader({
               Modo foco
             </Button>
           )}
-          <Button
-            type="submit"
-            form={metadataFormId}
-            variant="ghost"
-            size="sm"
-            disabled={metadataPending || !title.trim()}
-          >
-            {metadataPending ? "Salvando..." : "Salvar cena"}
-          </Button>
-          <Button type="button" variant="secondary" size="sm" onClick={onSaveContent} disabled={contentPending}>
-            {contentPending ? "Salvando..." : "Salvar conteúdo"}
-          </Button>
+          {canMutateStructure ? (
+            <Button
+              type="submit"
+              form={metadataFormId}
+              variant="ghost"
+              size="sm"
+              disabled={metadataPending || !title.trim()}
+            >
+              {metadataPending ? "Salvando..." : "Salvar cena"}
+            </Button>
+          ) : null}
+          {canEditContent ? (
+            <Button type="button" variant="secondary" size="sm" onClick={onSaveContent} disabled={contentPending}>
+              {contentPending ? "Salvando..." : "Salvar conteúdo"}
+            </Button>
+          ) : null}
           <Button type="button" variant="ghost" size="sm" onClick={onOpenHistory}>
             Histórico
           </Button>
-          <Button
-            type="button"
-            variant="ghost"
-            size="sm"
-            className="text-red-600 hover:bg-red-50"
-            onClick={() => onDeleteScene(scene.title)}
-            disabled={deletePending}
-          >
-            {deletePending ? "Excluindo..." : "Excluir cena"}
-          </Button>
+          {canMutateStructure ? (
+            <Button
+              type="button"
+              variant="ghost"
+              size="sm"
+              className="text-red-600 hover:bg-red-50"
+              onClick={() => onDeleteScene(scene.title)}
+              disabled={deletePending}
+            >
+              {deletePending ? "Excluindo..." : "Excluir cena"}
+            </Button>
+          ) : null}
         </div>
       </div>
 

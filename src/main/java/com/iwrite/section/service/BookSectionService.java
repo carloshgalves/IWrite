@@ -1,5 +1,6 @@
 package com.iwrite.section.service;
 
+import com.iwrite.book.authorization.BookCapability;
 import com.iwrite.book.entity.Book;
 import com.iwrite.book.service.BookAccessService;
 import com.iwrite.common.dto.ReorderRequest;
@@ -25,6 +26,14 @@ import java.util.UUID;
 import java.util.function.Function;
 import java.util.stream.Collectors;
 
+/**
+ * Book Section surfaces of the manuscript hierarchy.
+ *
+ * <p>Reading a Section is part of reading the Manuscript; creating, renaming, reordering, moving or
+ * deleting one is a Manuscript Structure Mutation, which the Book Capability Policy authorizes for the
+ * Book Owner alone in this partition (#207). The two lookups below exist so a caller has to name which
+ * of the two it is doing instead of inheriting a generic "can edit this Book" answer.
+ */
 @Service
 public class BookSectionService {
 
@@ -50,7 +59,7 @@ public class BookSectionService {
 
     @Transactional
     public BookSectionResponse create(UUID bookId, BookSectionRequest request) {
-        Book book = bookAccessService.requireBookEditAccess(bookId);
+        Book book = bookAccessService.requireCapabilityForUpdate(bookId, BookCapability.MUTATE_MANUSCRIPT_STRUCTURE);
 
         BookSection section = new BookSection();
         section.setBook(book);
@@ -63,7 +72,7 @@ public class BookSectionService {
 
     @Transactional
     public BookSectionResponse update(UUID sectionId, BookSectionUpdateRequest request) {
-        BookSection section = getSection(sectionId);
+        BookSection section = getSectionForStructureMutationUnderLock(sectionId);
         RequestValidation.rejectBlankWhenPresent("title", request.title());
 
         if (request.title() != null) {
@@ -81,34 +90,80 @@ public class BookSectionService {
 
     @Transactional
     public void delete(UUID sectionId) {
-        BookSection section = getSection(sectionId);
+        BookSection section = getSectionForStructureMutation(sectionId);
+        Book lockedBook = bookAccessService.requireCapabilityForUpdate(
+                section.getBook().getId(),
+                BookCapability.MUTATE_MANUSCRIPT_STRUCTURE
+        );
+        // The Book row first, then the Scene rows: the reverse order closes a cycle with every
+        // Manuscript Structure Mutation, which locks the Book and reaches its Scenes afterwards.
         var scenes = sceneRepository.findBySectionIdForUpdate(sectionId);
-        Book lockedBook = bookAccessService.requireBookEditAccessForUpdate(section.getBook().getId());
         sceneDeletionLedgerService.prepareSceneDeletes(scenes, lockedBook, UUID.randomUUID());
         sectionRepository.deleteById(sectionId);
     }
 
     @Transactional
     public void reorder(UUID bookId, ReorderRequest request) {
-        bookAccessService.requireBookEditAccess(bookId);
+        bookAccessService.requireCapabilityForUpdate(bookId, BookCapability.MUTATE_MANUSCRIPT_STRUCTURE);
         List<BookSection> sections = sectionRepository.findByBookIdOrderBySortOrderAsc(bookId);
         applyReorder(sections, request.orderedIds(), BookSection::getId, BookSection::setSortOrder, "sections");
     }
 
+    /** Reads a Section the current User may read the Manuscript of. */
     @Transactional(readOnly = true)
     public BookSection getSection(UUID sectionId) {
-        BookSection section = sectionRepository.findByIdAndBook_Tenant_Id(sectionId, currentUserProvider.tenantId())
-                .orElseThrow(() -> sectionNotFound(sectionId));
-        requireSectionBookEditAccess(section, sectionId);
-        return section;
+        return requireSection(sectionId, BookCapability.READ_MANUSCRIPT);
     }
 
-    private void requireSectionBookEditAccess(BookSection section, UUID sectionId) {
+    /** Reads a Section the current User may restructure, for a Manuscript Structure Mutation. */
+    @Transactional(readOnly = true)
+    public BookSection getSectionForStructureMutation(UUID sectionId) {
+        return requireSection(sectionId, BookCapability.MUTATE_MANUSCRIPT_STRUCTURE);
+    }
+
+    /**
+     * Same proof as {@link #getSectionForStructureMutation(UUID)}, re-taken under the Book row lock,
+     * for a caller that is about to write.
+     *
+     * <p>The read-only variant answers "may this User restructure right now", which a mutation cannot
+     * rely on: a revocation committing between that answer and the write would be straddled, and the
+     * Manuscript would be restructured on authority that no longer exists. Locking the Book row and
+     * proving the capability again under it is the same discipline the canonical content save uses.
+     *
+     * <p>Only the Section's Book is needed to prove the capability, so the Section row is read for the
+     * first time under the lock. A Section loaded before the lock would be written back at flush with
+     * whatever it held before this caller queued, silently restoring the {@code sortOrder} of a reorder
+     * that committed while this transaction waited.
+     */
+    @Transactional
+    public BookSection getSectionForStructureMutationUnderLock(UUID sectionId) {
+        UUID bookId = sectionRepository.findBookIdByIdAndTenantId(sectionId, currentUserProvider.tenantId())
+                .orElseThrow(() -> sectionNotFound(sectionId));
         try {
-            bookAccessService.requireBookEditAccess(section.getBook().getId());
+            bookAccessService.requireCapabilityForUpdate(bookId, BookCapability.MUTATE_MANUSCRIPT_STRUCTURE);
         } catch (ResourceNotFoundException exception) {
             throw sectionNotFound(sectionId);
         }
+        return sectionRepository.findByIdAndBookIdForUpdate(sectionId, bookId)
+                .orElseThrow(() -> sectionNotFound(sectionId));
+    }
+
+    /**
+     * Resolves a Section by tenant and then proves the capability on its Book.
+     *
+     * <p>A Section of another Workspace, of a Book this User has no relationship with, and one whose
+     * Book denies the capability all raise the same {@code Section not found}: reaching a Book
+     * indirectly through a Section identifier must not reveal that the Section exists.
+     */
+    private BookSection requireSection(UUID sectionId, BookCapability capability) {
+        BookSection section = sectionRepository.findByIdAndBook_Tenant_Id(sectionId, currentUserProvider.tenantId())
+                .orElseThrow(() -> sectionNotFound(sectionId));
+        try {
+            bookAccessService.requireCapability(section.getBook().getId(), capability);
+        } catch (ResourceNotFoundException exception) {
+            throw sectionNotFound(sectionId);
+        }
+        return section;
     }
 
     private ResourceNotFoundException sectionNotFound(UUID sectionId) {

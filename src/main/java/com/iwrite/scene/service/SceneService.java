@@ -1,5 +1,7 @@
 package com.iwrite.scene.service;
 
+import com.iwrite.book.authorization.BookAccessContext;
+import com.iwrite.book.authorization.BookCapability;
 import com.iwrite.book.entity.Book;
 import com.iwrite.book.service.BookAccessService;
 import com.iwrite.chapter.entity.Chapter;
@@ -17,6 +19,7 @@ import com.iwrite.item.service.ItemService;
 import com.iwrite.location.entity.Location;
 import com.iwrite.location.service.LocationService;
 import com.iwrite.observability.BusinessTelemetry;
+import com.iwrite.scene.authorization.SceneContentAuthority;
 import com.iwrite.scene.dto.SceneContentRequest;
 import com.iwrite.scene.dto.ScenePlanningRequest;
 import com.iwrite.scene.dto.SceneRequest;
@@ -50,6 +53,20 @@ import java.util.UUID;
 import java.util.function.Function;
 import java.util.stream.Collectors;
 
+/**
+ * Scene surfaces: the Manuscript read, the canonical content save, the Scene metadata and the Scene
+ * half of Manuscript Structure Mutation.
+ *
+ * <p>Each of them names its own minimum capability (#207). Reading a Scene needs
+ * {@code READ_MANUSCRIPT}. Creating, renaming, reordering, restating the status of or deleting one is a
+ * Manuscript Structure Mutation, Owner-only in this partition. Saving canonical content is the
+ * contextual {@code EDIT_AUTHORED_CONTRIBUTION}: Book scope only makes a User eligible, and
+ * {@link SceneContentAuthority} still has to answer for the Scene itself.
+ *
+ * <p>Scene planning ({@code updatePlanning}) and Scene Version restore keep the pre-migration generic
+ * guard on purpose: they belong to the Canonical Planning partition (#209) and the Scene Versions
+ * partition (#210), and narrowing them here would decide those tickets by accident.
+ */
 @Service
 public class SceneService {
 
@@ -102,14 +119,20 @@ public class SceneService {
 
     @Transactional(readOnly = true)
     public SceneResponse findById(UUID sceneId) {
-        return SceneResponse.fromEntity(getScene(sceneId));
+        AccessibleScene accessible = requireAccessibleScene(sceneId, BookCapability.READ_MANUSCRIPT);
+        return SceneResponse.fromEntity(accessible.scene(), accessible.access());
     }
 
     @Transactional
     public SceneResponse create(UUID chapterId, SceneRequest request) {
-        Chapter chapter = chapterService.getChapter(chapterId);
+        Chapter chapter = chapterService.getChapterForStructureMutation(chapterId);
         UUID bookId = chapter.getBook().getId();
-        Book lockedBook = bookAccessService.requireBookEditAccessForUpdate(bookId);
+        BookAccessService.AccessibleBook accessibleBook = bookAccessService.requireAccessibleBookForUpdate(
+                bookId,
+                BookCapability.MUTATE_MANUSCRIPT_STRUCTURE
+        );
+        Book lockedBook = accessibleBook.book();
+        BookAccessContext access = accessibleBook.access();
         UUID operationId = request.operationId() == null ? UUID.randomUUID() : request.operationId();
         String requestFingerprint = WordCountRequestFingerprint.sceneCreate(
                 currentUserProvider.userId(),
@@ -122,7 +145,7 @@ public class SceneService {
                 request.contentJson(),
                 request.contentText()
         );
-        SceneResponse idempotentCreateResponse = idempotentCreateRetryResponse(bookId, operationId, requestFingerprint);
+        SceneResponse idempotentCreateResponse = idempotentCreateRetryResponse(bookId, operationId, requestFingerprint, access);
         if (idempotentCreateResponse != null) {
             return idempotentCreateResponse;
         }
@@ -164,12 +187,14 @@ public class SceneService {
             ));
         }
 
-        return SceneResponse.fromEntity(savedScene);
+        return SceneResponse.fromEntity(savedScene, access);
     }
 
     @Transactional
     public SceneResponse update(UUID sceneId, SceneUpdateRequest request) {
-        Scene scene = getSceneForEdit(sceneId);
+        LockedScene locked = requireSceneForStructureMutation(sceneId);
+        Scene scene = locked.scene();
+        BookAccessContext access = locked.access();
         RequestValidation.rejectBlankWhenPresent("title", request.title());
 
         if (request.title() != null) {
@@ -189,7 +214,7 @@ public class SceneService {
             scene.setSortOrder(request.sortOrder());
         }
 
-        return SceneResponse.fromEntity(scene);
+        return SceneResponse.fromEntity(scene, access);
     }
 
     /*
@@ -237,9 +262,12 @@ public class SceneService {
             SceneContentRequest request,
             BusinessTelemetry.Operation telemetry
     ) {
-        Scene scene = getSceneForUpdate(sceneId);
+        UUID sceneBookId = requireContentSaveEligibility(sceneId);
         rejectMissingOperationId(request.operationId());
-        Book lockedBook = bookAccessService.requireBookEditAccessForUpdate(scene.getBook().getId());
+        LockedScene locked = requireSceneContentAuthority(sceneId, sceneBookId);
+        Scene scene = locked.scene();
+        Book lockedBook = locked.book();
+        BookAccessContext access = locked.access();
         SceneVersionSource source = contentSource(request.source());
         telemetry.attribute(BusinessTelemetry.SCENE_SOURCE, telemetrySource(source));
         telemetry.attribute(
@@ -255,7 +283,7 @@ public class SceneService {
                 request.contentJson(),
                 request.contentText()
         );
-        SceneResponse idempotentRetryResponse = idempotentRetryResponse(scene, request.operationId(), requestFingerprint);
+        SceneResponse idempotentRetryResponse = idempotentRetryResponse(scene, request.operationId(), requestFingerprint, access);
         if (idempotentRetryResponse != null) {
             telemetry.result(BusinessTelemetry.RESULT_IDEMPOTENT_RETRY)
                     .attribute(BusinessTelemetry.SCENE_CONTENT_CHANGED, false);
@@ -281,7 +309,7 @@ public class SceneService {
                     requestFingerprint,
                     Math.toIntExact(sceneRepository.sumWordCountByBookId(lockedBook.getId()))
             ));
-            return SceneResponse.fromEntity(scene);
+            return SceneResponse.fromEntity(scene, access);
         }
 
         telemetry.attribute(BusinessTelemetry.SCENE_CONTENT_CHANGED, true);
@@ -316,14 +344,16 @@ public class SceneService {
                 totalBefore + wordCountDelta
         ));
 
-        return SceneResponse.fromEntity(scene);
+        return SceneResponse.fromEntity(scene, access);
     }
 
     @Transactional
     public SceneResponse restoreVersion(UUID sceneId, UUID versionId, SceneVersionRestoreRequest request) {
-        Scene scene = getSceneForUpdate(sceneId);
+        UUID sceneBookId = requireLegacySceneBookId(sceneId);
         rejectMissingOperationId(request.operationId());
-        Book lockedBook = bookAccessService.requireBookEditAccessForUpdate(scene.getBook().getId());
+        Book lockedBook = bookAccessService.requireBookEditAccessForUpdate(sceneBookId);
+        Scene scene = lockScene(sceneId, sceneBookId);
+        BookAccessContext access = bookAccessService.resolveAccessContext(sceneBookId);
         SceneVersion version = sceneVersionService.getCurrentSceneVersion(sceneId, versionId);
         String requestFingerprint = WordCountRequestFingerprint.versionRestore(
                 currentUserProvider.userId(),
@@ -332,14 +362,14 @@ public class SceneService {
                 versionId,
                 request.expectedContentRevision()
         );
-        SceneResponse idempotentRetryResponse = idempotentRestoreRetryResponse(scene, request.operationId(), requestFingerprint);
+        SceneResponse idempotentRetryResponse = idempotentRestoreRetryResponse(scene, request.operationId(), requestFingerprint, access);
         if (idempotentRetryResponse != null) {
             return idempotentRetryResponse;
         }
         rejectStaleContentRevision(scene, request.expectedContentRevision());
 
         if (sameContent(scene, version.getContentJson(), version.getContentText())) {
-            return SceneResponse.fromEntity(scene);
+            return SceneResponse.fromEntity(scene, access);
         }
 
         UUID bookId = lockedBook.getId();
@@ -370,13 +400,14 @@ public class SceneService {
                 totalBefore + manuscriptWordDelta
         ));
 
-        return SceneResponse.fromEntity(scene);
+        return SceneResponse.fromEntity(scene, access);
     }
 
     @Transactional
     public SceneResponse updatePlanning(UUID sceneId, ScenePlanningRequest request) {
-        Scene scene = getSceneForEdit(sceneId);
+        Scene scene = getSceneForLegacyEdit(sceneId);
         UUID bookId = scene.getBook().getId();
+        BookAccessContext access = bookAccessService.resolveAccessContext(bookId);
         List<String> gapsBefore = scene.getStatus() == SceneStatus.PLANNED
                 ? planningCompletenessService.planningGaps(scene)
                 : List.of();
@@ -397,53 +428,175 @@ public class SceneService {
             rejectIntroducedPlanningGaps(scene, gapsBefore);
         }
 
-        return SceneResponse.fromEntity(scene);
+        return SceneResponse.fromEntity(scene, access);
     }
 
     @Transactional
     public void delete(UUID sceneId) {
-        Scene scene = getSceneForUpdate(sceneId);
-        Book lockedBook = bookAccessService.requireBookEditAccessForUpdate(scene.getBook().getId());
-        sceneDeletionLedgerService.prepareSceneDelete(scene, lockedBook);
-        sceneRepository.delete(scene);
+        LockedScene locked = requireSceneForStructureMutation(sceneId);
+        sceneDeletionLedgerService.prepareSceneDelete(locked.scene(), locked.book());
+        sceneRepository.delete(locked.scene());
     }
 
     @Transactional
     public void reorder(UUID chapterId, ReorderRequest request) {
-        chapterService.getChapter(chapterId);
+        chapterService.getChapterForStructureMutationUnderLock(chapterId);
         List<Scene> scenes = sceneRepository.findByChapterIdOrderBySortOrderAsc(chapterId);
         applyReorder(scenes, request.orderedIds(), Scene::getId, Scene::setSortOrder, "scenes");
     }
 
+    /** Reads a Scene the current User may read the Manuscript of. */
     @Transactional(readOnly = true)
     public Scene getScene(UUID sceneId) {
+        return requireScene(sceneId, BookCapability.READ_MANUSCRIPT);
+    }
+
+    /**
+     * Resolves a Scene by tenant and then proves the capability on its Book.
+     *
+     * <p>A Scene of another Workspace, of a Book with no relationship, and one whose Book denies the
+     * capability all raise the same {@code Scene not found}: a Scene identifier must not become a way
+     * to learn that a Scene, a Chapter or a Book exists.
+     */
+    private Scene requireScene(UUID sceneId, BookCapability capability) {
+        return requireAccessibleScene(sceneId, capability).scene();
+    }
+
+    /**
+     * Same proof as {@link #requireScene(UUID, BookCapability)}, paired with the effective access it
+     * resolved, for a caller that also projects that access back into its response.
+     */
+    private AccessibleScene requireAccessibleScene(UUID sceneId, BookCapability capability) {
         Scene scene = sceneRepository.findByIdAndTenantId(sceneId, currentUserProvider.tenantId())
                 .orElseThrow(() -> sceneNotFound(sceneId));
-        requireSceneBookAccess(scene, sceneId, false);
-        return scene;
+        return new AccessibleScene(scene, requireSceneBookCapability(scene, sceneId, capability));
     }
 
-    private Scene getSceneForUpdate(UUID sceneId) {
-        Scene scene = sceneRepository.findByIdAndTenantIdForUpdate(sceneId, currentUserProvider.tenantId())
-                .orElseThrow(() -> sceneNotFound(sceneId));
-        requireSceneBookAccess(scene, sceneId, true);
-        return scene;
-    }
-
-    private Scene getSceneForEdit(UUID sceneId) {
-        Scene scene = sceneRepository.findByIdAndTenantId(sceneId, currentUserProvider.tenantId())
-                .orElseThrow(() -> sceneNotFound(sceneId));
-        requireSceneBookAccess(scene, sceneId, true);
-        return scene;
-    }
-
-    private void requireSceneBookAccess(Scene scene, UUID sceneId, boolean edit) {
+    /**
+     * Same proof as {@link #requireAccessibleScene(UUID, BookCapability)} for a Manuscript Structure
+     * Mutation, with the capability re-proven under the Book row lock before the caller writes.
+     *
+     * <p>A structure mutation that trusted only the unlocked proof would straddle a revocation
+     * committing right after it, and the reproven access is also what the response projects, so the
+     * Scene is never described with an authority that has already been taken away.
+     *
+     * <p>The Scene itself is resolved twice on purpose. Only its Book is needed to prove the
+     * capability, so the row is read for the first time under the lock: a Scene loaded before the lock
+     * would be written back at flush with whatever it held before the caller queued, discarding a
+     * content save that committed while this transaction waited.
+     */
+    private LockedScene requireSceneForStructureMutation(UUID sceneId) {
+        UUID bookId = requireSceneBookId(sceneId);
+        BookAccessService.AccessibleBook reproven;
         try {
-            if (edit) {
-                bookAccessService.requireBookEditAccess(scene.getBook().getId());
-            } else {
-                bookAccessService.requireBookReadAccess(scene.getBook().getId());
-            }
+            reproven = bookAccessService.requireAccessibleBookForUpdate(
+                    bookId,
+                    BookCapability.MUTATE_MANUSCRIPT_STRUCTURE
+            );
+        } catch (ResourceNotFoundException exception) {
+            throw sceneNotFound(sceneId);
+        }
+        return new LockedScene(lockScene(sceneId, bookId), reproven.book(), reproven.access());
+    }
+
+    /** A Scene together with the effective Book access that was proven to reach it. */
+    private record AccessibleScene(Scene scene, BookAccessContext access) {
+    }
+
+    /** A Scene row locked under the Book row whose access authorized reaching it. */
+    private record LockedScene(Scene scene, Book book, BookAccessContext access) {
+    }
+
+    /**
+     * Proves Book-scoped eligibility for {@code EDIT_AUTHORED_CONTRIBUTION} and answers which Book the
+     * canonical save will have to lock. Eligibility alone authorizes nothing: the caller must still
+     * pass {@link #requireSceneContentAuthority(UUID, UUID)} before the content is touched.
+     */
+    private UUID requireContentSaveEligibility(UUID sceneId) {
+        UUID bookId = requireSceneBookId(sceneId);
+        try {
+            bookAccessService.requireCapabilityEligibility(bookId, BookCapability.EDIT_AUTHORED_CONTRIBUTION);
+        } catch (ResourceNotFoundException exception) {
+            throw sceneNotFound(sceneId);
+        }
+        return bookId;
+    }
+
+    /**
+     * Takes the Book lock for the content save, re-proves eligibility under it, evaluates the
+     * resource-scoped predicate that {@code EDIT_AUTHORED_CONTRIBUTION} still requires, and only then
+     * locks the Scene row.
+     *
+     * <p>A User who is merely eligible is refused with the same {@code Scene not found} as one who
+     * cannot see the Scene at all, so the refusal never reports which half of the rule failed. The
+     * Scene row is taken last so this save queues behind a Manuscript Structure Mutation instead of
+     * closing a cycle with one, and so the text it edits is the text that mutation left behind.
+     */
+    private LockedScene requireSceneContentAuthority(UUID sceneId, UUID bookId) {
+        BookAccessService.AccessibleBook accessible;
+        try {
+            accessible = bookAccessService.requireCapabilityEligibilityForUpdate(
+                    bookId,
+                    BookCapability.EDIT_AUTHORED_CONTRIBUTION
+            );
+        } catch (ResourceNotFoundException exception) {
+            throw sceneNotFound(sceneId);
+        }
+        if (!SceneContentAuthority.canEditSceneContent(accessible.access())) {
+            throw sceneNotFound(sceneId);
+        }
+        return new LockedScene(lockScene(sceneId, bookId), accessible.book(), accessible.access());
+    }
+
+    /** Resolves the Book a Scene belongs to, collapsing an unreachable Scene into the same not-found. */
+    private UUID requireSceneBookId(UUID sceneId) {
+        return sceneRepository.findBookIdByIdAndTenantId(sceneId, currentUserProvider.tenantId())
+                .orElseThrow(() -> sceneNotFound(sceneId));
+    }
+
+    /**
+     * Takes the Scene row lock of an already locked Book. A Scene deleted while this transaction waited
+     * for the Book lock is simply gone, and answers the same not-found as one that never existed.
+     */
+    private Scene lockScene(UUID sceneId, UUID bookId) {
+        return sceneRepository.findByIdAndBookIdForUpdate(sceneId, bookId)
+                .orElseThrow(() -> sceneNotFound(sceneId));
+    }
+
+    private BookAccessContext requireSceneBookCapability(Scene scene, UUID sceneId, BookCapability capability) {
+        try {
+            return bookAccessService.requireAccessibleBook(scene.getBook().getId(), capability).access();
+        } catch (ResourceNotFoundException exception) {
+            throw sceneNotFound(sceneId);
+        }
+    }
+
+    /**
+     * Pre-migration guard kept for the Scene Version restore surface of #210. Its capability is still
+     * the legacy generic one; only the order in which it takes its two row locks is shared with the
+     * migrated surfaces, so the restore cannot close a cycle with a Manuscript Structure Mutation.
+     */
+    private UUID requireLegacySceneBookId(UUID sceneId) {
+        UUID bookId = requireSceneBookId(sceneId);
+        try {
+            bookAccessService.requireBookEditAccess(bookId);
+        } catch (ResourceNotFoundException exception) {
+            throw sceneNotFound(sceneId);
+        }
+        return bookId;
+    }
+
+    /** Pre-migration guard kept for the Scene planning surface of #209. */
+    private Scene getSceneForLegacyEdit(UUID sceneId) {
+        Scene scene = sceneRepository.findByIdAndTenantId(sceneId, currentUserProvider.tenantId())
+                .orElseThrow(() -> sceneNotFound(sceneId));
+        requireSceneBookLegacyEditAccess(scene, sceneId);
+        return scene;
+    }
+
+    private void requireSceneBookLegacyEditAccess(Scene scene, UUID sceneId) {
+        try {
+            bookAccessService.requireBookEditAccess(scene.getBook().getId());
         } catch (ResourceNotFoundException exception) {
             throw sceneNotFound(sceneId);
         }
@@ -589,7 +742,12 @@ public class SceneService {
                 && normalized(scene.getContentText()).equals(normalized(contentText));
     }
 
-    private SceneResponse idempotentCreateRetryResponse(UUID bookId, UUID idempotencyKey, String requestFingerprint) {
+    private SceneResponse idempotentCreateRetryResponse(
+            UUID bookId,
+            UUID idempotencyKey,
+            String requestFingerprint,
+            BookAccessContext access
+    ) {
         return wordCountEventRepository.findByBookIdAndIdempotencyKey(bookId, idempotencyKey)
                 .map(event -> {
                     requireMatchingFingerprint(
@@ -600,12 +758,17 @@ public class SceneService {
                     if (event.getScene() == null) {
                         throw new ResourceNotFoundException("Scene not found for idempotent create retry.");
                     }
-                    return SceneResponse.fromEntity(event.getScene());
+                    return SceneResponse.fromEntity(event.getScene(), access);
                 })
                 .orElse(null);
     }
 
-    private SceneResponse idempotentRetryResponse(Scene scene, UUID idempotencyKey, String requestFingerprint) {
+    private SceneResponse idempotentRetryResponse(
+            Scene scene,
+            UUID idempotencyKey,
+            String requestFingerprint,
+            BookAccessContext access
+    ) {
         return wordCountEventRepository.findByBookIdAndIdempotencyKey(scene.getBook().getId(), idempotencyKey)
                 .map(event -> {
                     requireMatchingFingerprint(
@@ -613,7 +776,7 @@ public class SceneService {
                             requestFingerprint,
                             "Idempotency key was already used for a different scene content update."
                     );
-                    return SceneResponse.fromEntity(scene);
+                    return SceneResponse.fromEntity(scene, access);
                 })
                 .orElse(null);
     }
@@ -621,7 +784,8 @@ public class SceneService {
     private SceneResponse idempotentRestoreRetryResponse(
             Scene scene,
             UUID idempotencyKey,
-            String requestFingerprint
+            String requestFingerprint,
+            BookAccessContext access
     ) {
         return wordCountEventRepository.findByBookIdAndIdempotencyKey(scene.getBook().getId(), idempotencyKey)
                 .map(event -> {
@@ -630,7 +794,7 @@ public class SceneService {
                             requestFingerprint,
                             "Idempotency key was already used for a different scene version restore."
                     );
-                    return SceneResponse.fromEntity(scene);
+                    return SceneResponse.fromEntity(scene, access);
                 })
                 .orElse(null);
     }

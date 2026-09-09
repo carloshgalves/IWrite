@@ -74,10 +74,20 @@ public class BookAccessService {
      */
     @Transactional(readOnly = true)
     public Book requireCapability(UUID bookId, BookCapability capability) {
+        return requireAccessibleBook(bookId, capability).book();
+    }
+
+    /**
+     * Same guard as {@link #requireCapability(UUID, BookCapability)}, paired with the access it
+     * resolved, for a read that also projects the effective access back to the caller. The projection
+     * reuses the proof instead of resolving the relationship a second time.
+     */
+    @Transactional(readOnly = true)
+    public AccessibleBook requireAccessibleBook(UUID bookId, BookCapability capability) {
         UUID userId = currentUserMembershipService.requireCurrentUserMemberId();
         AccessibleBook accessible = accessibleBook(bookId, currentUserProvider.tenantId(), userId);
         requireGranted(accessible.access(), capability, bookId);
-        return accessible.book();
+        return accessible;
     }
 
     /**
@@ -121,25 +131,45 @@ public class BookAccessService {
     @Transactional(readOnly = true)
     public BookAccessContext requireCapabilityEligibility(UUID bookId, BookCapability capability) {
         BookAccessContext context = resolveAccessContext(bookId);
-        if (!context.isEligible(capability)) {
-            throw bookNotFound(bookId);
-        }
+        requireEligible(context, capability, bookId);
         return context;
     }
 
     /**
+     * Mutation variant of {@link #requireCapabilityEligibility(UUID, BookCapability)}: proves the
+     * eligibility, takes the Book row lock, and proves it again under the lock, exactly as
+     * {@link #requireCapabilityForUpdate(UUID, BookCapability)} does for a granted capability.
+     *
+     * <p>Eligibility still authorizes nothing on its own. The caller receives the reproven access so it
+     * can evaluate its own resource-scoped predicate while holding the lock, which is what keeps the
+     * predicate and the mutation from straddling a concurrent revocation.
+     */
+    @Transactional
+    public AccessibleBook requireCapabilityEligibilityForUpdate(UUID bookId, BookCapability capability) {
+        UUID userId = currentUserMembershipService.requireCurrentUserMemberId();
+        UUID tenantId = currentUserProvider.tenantId();
+        requireEligible(accessibleBook(bookId, tenantId, userId).access(), capability, bookId);
+
+        Book lockedBook = bookRepository.findByIdAndTenantIdForUpdate(bookId, tenantId)
+                .orElseThrow(() -> bookNotFound(bookId));
+        AccessibleBook reproven = accessibleBook(bookId, tenantId, userId);
+        requireEligible(reproven.access(), capability, bookId);
+        return new AccessibleBook(lockedBook, reproven.access());
+    }
+
+    /**
      * Legacy generic read guard. It still answers "is this Book accessible at all" and remains in place
-     * only while the surfaces it protects are migrated to their minimum capability (#206 to #212).
+     * only while the surfaces it protects are migrated to their minimum capability (#208 to #212).
      */
     @Transactional(readOnly = true)
     public Book requireBookReadAccess(UUID bookId) {
-        return requireAccessibleBook(bookId);
+        return requireAnyAccessibleBook(bookId);
     }
 
     /** Legacy generic edit guard, semantically equivalent to the read guard until the same migration. */
     @Transactional(readOnly = true)
     public Book requireBookEditAccess(UUID bookId) {
-        return requireAccessibleBook(bookId);
+        return requireAnyAccessibleBook(bookId);
     }
 
     /**
@@ -193,7 +223,13 @@ public class BookAccessService {
         }
     }
 
-    private Book requireAccessibleBook(UUID bookId) {
+    private void requireEligible(BookAccessContext context, BookCapability capability, UUID bookId) {
+        if (!context.isEligible(capability)) {
+            throw bookNotFound(bookId);
+        }
+    }
+
+    private Book requireAnyAccessibleBook(UUID bookId) {
         UUID userId = currentUserMembershipService.requireCurrentUserMemberId();
         return accessibleBook(bookId, currentUserProvider.tenantId(), userId).book();
     }

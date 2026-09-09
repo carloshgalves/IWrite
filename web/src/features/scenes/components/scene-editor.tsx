@@ -16,6 +16,7 @@ import { SceneEmptyState } from "@/features/scenes/components/scene-empty-state"
 import { SceneMetadataForm } from "@/features/scenes/components/scene-metadata-form";
 import { ScenePlanningPanel } from "@/features/scenes/components/scene-planning-panel";
 import { SceneVersionHistoryPanel, type SceneVersionRestoreMode } from "@/features/scenes/components/scene-version-history-panel";
+import { applySceneMutationResponse, updateSceneProjection } from "@/features/scenes/cache/apply-scene-mutation-response";
 import type { Scene, SceneStatus, SceneVersionSource } from "@/features/scenes/types";
 import { trackEvent } from "@/lib/analytics/analytics";
 import { queryKeys } from "@/lib/query/keys";
@@ -29,6 +30,11 @@ const PLANNING_PANEL_STORAGE_KEY = "iwrite.scenePlanningPanelOpen";
 type SceneEditorProps = {
   bookId: string;
   sceneId: string | null;
+  /**
+   * MUTATE_MANUSCRIPT_STRUCTURE for this book. Scene metadata and deletion are structure mutations,
+   * so without it the header and the metadata form are read-only.
+   */
+  canMutateStructure: boolean;
   isFocusMode?: boolean;
   isFullscreenAvailable?: boolean;
   isFullscreenActive?: boolean;
@@ -73,6 +79,7 @@ export type PlanningPanelOpenIntent = {
 export function SceneEditor({
   bookId,
   sceneId,
+  canMutateStructure,
   isFocusMode = false,
   isFullscreenAvailable = false,
   isFullscreenActive = false,
@@ -118,6 +125,29 @@ export function SceneEditor({
     enabled: Boolean(sceneId),
   });
 
+  /**
+   * The effective authority over this scene's canonical text, as the backend resolved it with the same
+   * rule its save applies. Deriving it here from book-scoped eligibility would duplicate the server's
+   * resource-scoped decision in the browser and offer an editor for a save that is always refused.
+   *
+   * Only a currently successful projection answers: a failed refetch keeps the previous `data` in the
+   * cache, and that stale grant is no longer something the server has confirmed. Read-only until the
+   * loaded scene is this scene: a control that turns out to be unauthorized is worse than one that
+   * appears a moment late, and the server authorizes every request again anyway.
+   */
+  const projectedScene = sceneQuery.isSuccess ? sceneQuery.data : undefined;
+  const canEditContent = projectedScene?.id === sceneId && projectedScene.canEditContent === true;
+
+  /**
+   * Content, revision and authority do not share a clock, so every writer of this cache applies the
+   * same rule: a mutation response reconciles the text it just wrote and may narrow the authority,
+   * never widen one a newer projection has withdrawn.
+   */
+  const applyMutationResponse = useCallback(
+    (savedScene: Scene) => applySceneMutationResponse(queryClient, savedScene),
+    [queryClient]
+  );
+
   const metadataMutation = useMutation({
     mutationFn: () =>
       updateScene(sceneId as string, {
@@ -126,7 +156,7 @@ export function SceneEditor({
         status,
       }),
     onSuccess: (scene) => {
-      void queryClient.setQueryData(queryKeys.scene(scene.id), scene);
+      applyMutationResponse(scene);
       void queryClient.invalidateQueries({ queryKey: queryKeys.outline(bookId) });
     },
   });
@@ -175,6 +205,19 @@ export function SceneEditor({
     autosaveGenerationRef.current += 1;
     clearPendingAutosave();
   }, [clearPendingAutosave]);
+
+  /**
+   * The authority as currently projected, read from the same query the surface reads. A save dispatched
+   * from a timer must ask again here instead of trusting the closure that scheduled it or the last
+   * render: the withdrawal can land after the timer was armed and before React re-renders.
+   */
+  const hasCurrentContentAuthority = useCallback(
+    (targetSceneId: string) => {
+      const queryState = queryClient.getQueryState<Scene>(queryKeys.scene(targetSceneId));
+      return queryState?.status === "success" && queryState.data?.id === targetSceneId && queryState.data.canEditContent === true;
+    },
+    [queryClient]
+  );
 
   const hasPendingNewerRemoteContent = useCallback((targetSceneId: string) => {
     const pendingSnapshot = pendingRemoteContentRef.current;
@@ -247,7 +290,12 @@ export function SceneEditor({
     }
 
     acceptContentRevision(pendingSnapshot.contentRevision);
-    queryClient.setQueryData<Scene>(queryKeys.scene(pendingSnapshot.sceneId), (cachedScene) => {
+    // Reconciling text is not a permission refresh, so this write obeys the same rule every other
+    // writer of the shared cache does: while the projection is not currently successful it is
+    // refused, instead of returning the query to success on a grant nothing has confirmed since.
+    // The revision the surface accepted above is kept either way, so refusing the write costs the
+    // ordering nothing and the next successful fetch carries the same text back.
+    updateSceneProjection(queryClient, pendingSnapshot.sceneId, (cachedScene) => {
       const sceneToUpdate = cachedScene ?? pendingSnapshot.sourceScene;
       if (sceneToUpdate.id !== pendingSnapshot.sceneId || sceneToUpdate.contentRevision > pendingSnapshot.contentRevision) {
         return sceneToUpdate;
@@ -302,6 +350,16 @@ export function SceneEditor({
   }, [planningPanelOpenIntent, sceneId]);
 
   useEffect(() => clearPendingAutosave, [clearPendingAutosave]);
+
+  /**
+   * Losing the projected authority invalidates whatever was scheduled under it. A timer armed while
+   * the user could still write would otherwise outlive the permission and dispatch the save anyway.
+   */
+  useEffect(() => {
+    if (!canEditContent) {
+      cancelQueuedAutosaves();
+    }
+  }, [canEditContent, cancelQueuedAutosaves]);
 
   useEffect(() => {
     cancelQueuedAutosaves();
@@ -387,7 +445,7 @@ export function SceneEditor({
 
   function handleMetadataSubmit(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
-    if (!sceneId || !title.trim()) {
+    if (!sceneId || !canMutateStructure || !title.trim()) {
       return;
     }
 
@@ -417,7 +475,7 @@ export function SceneEditor({
     try {
       const savedScene = await savePromise;
       trackEvent({ name: "scene_saved", data: { source: source === "AUTO_SAVE" ? "AUTO_SAVE" : "MANUAL_SAVE" } });
-      void queryClient.setQueryData(queryKeys.scene(savedScene.id), savedScene);
+      applyMutationResponse(savedScene);
       void queryClient.invalidateQueries({ queryKey: queryKeys.outline(bookId) });
 
       if (activeSceneIdRef.current !== targetSceneId || savedScene.id !== targetSceneId) {
@@ -456,12 +514,17 @@ export function SceneEditor({
   }
 
   function handleSaveContent(targetSceneId: string) {
+    if (!canEditContent || !hasCurrentContentAuthority(targetSceneId)) {
+      return;
+    }
+
     cancelQueuedAutosaves();
     void saveSceneContent(targetSceneId, currentContentJsonRef.current, currentContentTextRef.current, "MANUAL_SAVE");
   }
 
   function scheduleAutosave(targetSceneId: string, nextContentJson: string, nextContentText: string) {
     if (
+      !canEditContent ||
       !targetSceneId ||
       targetSceneId !== activeSceneIdRef.current ||
       loadedSceneIdRef.current !== targetSceneId ||
@@ -481,6 +544,11 @@ export function SceneEditor({
       autosaveTimerRef.current = null;
 
       if (scheduledGeneration !== autosaveGenerationRef.current) {
+        return;
+      }
+
+      // The authority is proved again here, not read from the closure that scheduled the save.
+      if (!hasCurrentContentAuthority(targetSceneId)) {
         return;
       }
 
@@ -589,14 +657,14 @@ export function SceneEditor({
     setEditorContentVersion((version) => version + 1);
     setIsHistoryOpen(false);
     setRestoreError(null);
-    void queryClient.setQueryData(queryKeys.scene(restoredScene.id), restoredScene);
+    applyMutationResponse(restoredScene);
     void queryClient.invalidateQueries({ queryKey: queryKeys.sceneVersions(restoredScene.id) });
     void queryClient.invalidateQueries({ queryKey: queryKeys.outline(bookId) });
     void queryClient.invalidateQueries({ queryKey: queryKeys.bookDashboard(bookId) });
   }
 
   function handleDeleteScene(sceneTitle: string) {
-    if (!sceneId) {
+    if (!sceneId || !canMutateStructure) {
       return;
     }
 
@@ -692,6 +760,8 @@ export function SceneEditor({
           scene={scene}
           metadataFormId={METADATA_FORM_ID}
           title={title}
+          canMutateStructure={canMutateStructure}
+          canEditContent={canEditContent}
           contentSaveStatus={contentSaveStatus}
           metadataPending={metadataMutation.isPending}
           contentPending={contentMutation.isPending}
@@ -713,6 +783,7 @@ export function SceneEditor({
 
         <SceneMetadataForm
           formId={METADATA_FORM_ID}
+          readOnly={!canMutateStructure}
           title={title}
           summary={summary}
           status={status}
@@ -787,6 +858,7 @@ export function SceneEditor({
             sourceSceneId={scene.id}
             contentJson={contentJson}
             contentText={contentText}
+            readOnly={!canEditContent}
             wordCount={scene.wordCount}
             isSuccess={contentMutation.isSuccess}
             isError={contentMutation.isError}

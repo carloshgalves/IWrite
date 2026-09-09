@@ -2,6 +2,7 @@ import { fireEvent, screen, waitFor } from "@testing-library/react";
 import React from "react";
 import { afterEach, beforeEach, describe, expect, test, vi } from "vitest";
 import { BookWorkspace } from "@/features/workspace/components/book-workspace";
+import type { Book } from "@/features/books/types";
 import type { BookOutline } from "@/features/outline/types";
 import { sceneForPlanning } from "@/test/fixtures";
 import { renderWithClient } from "@/test/test-utils";
@@ -43,8 +44,46 @@ const outline: BookOutline = {
   ],
 };
 
+/** The workspace reads the effective access from the book projection, so every test states one. */
+const ownedBook: Book = {
+  id: "book-1",
+  title: "Livro de teste",
+  subtitle: null,
+  description: null,
+  status: "WRITING",
+  targetWordCount: null,
+  relationship: "OWNER",
+  role: null,
+  capabilities: ["READ_MANUSCRIPT", "MUTATE_MANUSCRIPT_STRUCTURE"],
+  contextualCapabilities: ["EDIT_AUTHORED_CONTRIBUTION"],
+  createdAt: "2026-05-14T12:00:00Z",
+  updatedAt: "2026-05-14T12:00:00Z",
+};
+
+/** An editor reads the manuscript and changes nothing in it. */
+const editorBook: Book = {
+  ...ownedBook,
+  relationship: "COLLABORATOR",
+  role: "EDITOR",
+  capabilities: ["READ_MANUSCRIPT"],
+  contextualCapabilities: [],
+};
+
+/**
+ * An author is eligible for EDIT_AUTHORED_CONTRIBUTION at book scope and still holds no authority
+ * over a given scene until #184. Book-scoped eligibility is not permission to edit.
+ */
+const authorBook: Book = {
+  ...ownedBook,
+  relationship: "COLLABORATOR",
+  role: "AUTHOR",
+  capabilities: ["READ_MANUSCRIPT"],
+  contextualCapabilities: ["EDIT_AUTHORED_CONTRIBUTION"],
+};
+
 const mocks = vi.hoisted(() => ({
   getOutline: vi.fn(),
+  getBook: vi.fn(),
   getScene: vi.fn(),
   updateScene: vi.fn(),
   updateSceneContent: vi.fn(),
@@ -123,6 +162,10 @@ vi.mock("@/features/dashboard/components/book-dashboard", () => ({
       </button>
     </div>
   ),
+}));
+
+vi.mock("@/features/books/api/books-api", () => ({
+  getBook: mocks.getBook,
 }));
 
 vi.mock("@/features/outline/api/outline-api", async () => {
@@ -237,6 +280,7 @@ describe("BookWorkspace focus mode", () => {
       value: exitFullscreen,
     });
     mocks.getOutline.mockResolvedValue(outline);
+    mocks.getBook.mockResolvedValue(ownedBook);
     mocks.getScene.mockResolvedValue(sceneForPlanning);
     mocks.updateScene.mockResolvedValue(sceneForPlanning);
     mocks.updateSceneContent.mockResolvedValue(sceneForPlanning);
@@ -373,6 +417,7 @@ describe("BookWorkspace initial scene selection", () => {
     mocks.searchParams = new URLSearchParams();
     window.localStorage.clear();
     mocks.getOutline.mockResolvedValue(outline);
+    mocks.getBook.mockResolvedValue(ownedBook);
     mocks.getScene.mockResolvedValue(sceneForPlanning);
     mocks.updateScene.mockResolvedValue(sceneForPlanning);
     mocks.updateSceneContent.mockResolvedValue(sceneForPlanning);
@@ -654,8 +699,149 @@ describe("BookWorkspace initial scene selection", () => {
   });
 });
 
+describe("BookWorkspace sem capabilities de estrutura e conteudo", () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+    mocks.searchParams = new URLSearchParams();
+    window.localStorage.clear();
+    mocks.getOutline.mockResolvedValue(outline);
+    mocks.getBook.mockResolvedValue(editorBook);
+    mocks.getScene.mockResolvedValue({ ...sceneForPlanning, canEditContent: false });
+    mocks.updateScene.mockResolvedValue(sceneForPlanning);
+    mocks.updateSceneContent.mockResolvedValue(sceneForPlanning);
+    mocks.deleteScene.mockResolvedValue(undefined);
+  });
+
+  test("o outline vira leitura sem acoes de estrutura", async () => {
+    renderWithClient(<BookWorkspace bookId="book-1" />);
+
+    expect(await screen.findByText("Livro")).toBeInTheDocument();
+    expect(screen.getByText(sceneForPlanning.title)).toBeInTheDocument();
+
+    expect(screen.getByText(/Somente leitura: voc. n.o altera a estrutura deste livro/)).toBeInTheDocument();
+    expect(screen.queryByRole("textbox", { name: "Nova seção" })).not.toBeInTheDocument();
+    expect(screen.queryByRole("textbox", { name: /Novo cap.tulo/ })).not.toBeInTheDocument();
+    expect(screen.queryByRole("textbox", { name: /Nova cena/ })).not.toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "Editar" })).not.toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "Excluir" })).not.toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: /Reordenar se..o/ })).not.toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: /Reordenar cena/ })).not.toBeInTheDocument();
+  });
+
+  test("o editor da cena abre somente leitura e sem acoes proibidas", async () => {
+    renderWithClient(<BookWorkspace bookId="book-1" />);
+
+    expect(await screen.findByText("Livro")).toBeInTheDocument();
+    selectScene();
+
+    expect(await screen.findByRole("heading", { name: sceneForPlanning.title })).toBeInTheDocument();
+    expect(screen.getAllByText("Somente leitura").length).toBeGreaterThan(0);
+    expect(screen.getByText(/n.o autoriza voc. a alterar o conte.do desta cena/)).toBeInTheDocument();
+
+    expect(screen.queryByRole("button", { name: /Salvar conte.do/ })).not.toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "Salvar cena" })).not.toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "Excluir cena" })).not.toBeInTheDocument();
+
+    // The metadata still shows; it is the writing that is withheld, not the reading.
+    expect(screen.getByLabelText("Título")).toHaveAttribute("readonly");
+    expect(screen.getByLabelText("Status")).toBeDisabled();
+  });
+});
+
 function selectScene() {
   const sceneRow = screen.getByText(sceneForPlanning.title).closest("button");
   expect(sceneRow).not.toBeNull();
   fireEvent.click(sceneRow as HTMLButtonElement);
 }
+
+describe("BookWorkspace com elegibilidade de conteudo sem autoridade sobre a cena", () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+    mocks.searchParams = new URLSearchParams();
+    window.localStorage.clear();
+    mocks.getOutline.mockResolvedValue(outline);
+    mocks.getBook.mockResolvedValue(authorBook);
+    mocks.updateScene.mockResolvedValue(sceneForPlanning);
+    mocks.updateSceneContent.mockResolvedValue(sceneForPlanning);
+    mocks.deleteScene.mockResolvedValue(undefined);
+  });
+
+  test("a cena que o servidor projeta como nao editavel abre somente leitura", async () => {
+    mocks.getScene.mockResolvedValue({ ...sceneForPlanning, canEditContent: false });
+
+    renderWithClient(<BookWorkspace bookId="book-1" />);
+
+    expect(await screen.findByText("Livro")).toBeInTheDocument();
+    selectScene();
+
+    expect(await screen.findByRole("heading", { name: sceneForPlanning.title })).toBeInTheDocument();
+    // The browser must not read the book-scoped eligibility as permission and offer a save the
+    // backend always refuses.
+    expect(screen.queryByRole("button", { name: /Salvar conte.do/ })).not.toBeInTheDocument();
+    expect(screen.getByText(/n.o autoriza voc. a alterar o conte.do desta cena/)).toBeInTheDocument();
+  });
+
+  // Control: the decision follows the server for the very same role, so it is the projection being
+  // read and not the role being guessed at.
+  test("a mesma cena projetada como editavel abre para escrita", async () => {
+    mocks.getScene.mockResolvedValue({ ...sceneForPlanning, canEditContent: true });
+
+    renderWithClient(<BookWorkspace bookId="book-1" />);
+
+    expect(await screen.findByText("Livro")).toBeInTheDocument();
+    selectScene();
+
+    expect(await screen.findByRole("heading", { name: sceneForPlanning.title })).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: /Salvar conte.do/ })).toBeInTheDocument();
+  });
+});
+
+describe("BookWorkspace quando as capabilities nao carregam", () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+    mocks.searchParams = new URLSearchParams();
+    window.localStorage.clear();
+    mocks.getOutline.mockResolvedValue(outline);
+    mocks.getScene.mockResolvedValue(sceneForPlanning);
+  });
+
+  test("uma falha de getBook aparece como erro com nova tentativa, nao como negacao de acesso", async () => {
+    mocks.getBook.mockRejectedValue(new Error("network down"));
+
+    renderWithClient(<BookWorkspace bookId="book-1" />);
+
+    expect(await screen.findByText("Livro")).toBeInTheDocument();
+
+    // A failure is not an answer about what this user may do: saying "you do not change this book"
+    // would report a transport problem as an authorization decision.
+    const alert = await screen.findByRole("alert");
+    expect(alert).toHaveTextContent(/n.o foi poss.vel carregar suas permiss.es/i);
+    expect(screen.getByRole("button", { name: /Tentar novamente/ })).toBeInTheDocument();
+    expect(screen.queryByText(/Somente leitura: voc. n.o altera a estrutura deste livro/)).not.toBeInTheDocument();
+    // Still conservative while it is unknown: no structure control is offered.
+    expect(screen.queryByRole("textbox", { name: "Nova seção" })).not.toBeInTheDocument();
+  });
+
+  test("a nova tentativa recarrega as capabilities e devolve os controles", async () => {
+    mocks.getBook.mockRejectedValueOnce(new Error("network down")).mockResolvedValue(ownedBook);
+
+    renderWithClient(<BookWorkspace bookId="book-1" />);
+
+    fireEvent.click(await screen.findByRole("button", { name: /Tentar novamente/ }));
+
+    expect(await screen.findByRole("textbox", { name: "Nova seção" })).toBeInTheDocument();
+    await waitFor(() => expect(screen.queryByRole("alert")).not.toBeInTheDocument());
+  });
+
+  // Control: while the answer is merely on its way, the surface stays quiet and conservative instead
+  // of announcing a failure that has not happened.
+  test("enquanto as capabilities carregam nao ha erro nem controles de estrutura", async () => {
+    mocks.getBook.mockImplementation(() => new Promise(() => undefined));
+
+    renderWithClient(<BookWorkspace bookId="book-1" />);
+
+    expect(await screen.findByText("Livro")).toBeInTheDocument();
+    expect(screen.queryByRole("alert")).not.toBeInTheDocument();
+    expect(screen.queryByRole("textbox", { name: "Nova seção" })).not.toBeInTheDocument();
+  });
+});

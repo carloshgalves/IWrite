@@ -7,6 +7,8 @@ type SceneContentEditorProps = {
   sourceSceneId: string;
   contentJson: string;
   contentText: string;
+  /** True when the backend grants no path to a content save; the editor then only displays the text. */
+  readOnly: boolean;
   wordCount: number;
   isSuccess: boolean;
   isError: boolean;
@@ -34,6 +36,7 @@ export function SceneContentEditor({
   sourceSceneId,
   contentJson,
   contentText,
+  readOnly,
   wordCount,
   isSuccess,
   isError,
@@ -47,13 +50,19 @@ export function SceneContentEditor({
         <div className="flex flex-wrap items-center justify-between gap-3">
           <div>
             <h2 className="text-sm font-semibold text-zinc-950">Conteúdo textual</h2>
-            <p className="text-xs text-zinc-500">Salvamento manual. O contador é atualizado com o retorno do backend.</p>
+            <p className="text-xs text-zinc-500">
+              {readOnly
+                ? "Somente leitura: este livro não autoriza você a alterar o conteúdo desta cena."
+                : "Salvamento manual. O contador é atualizado com o retorno do backend."}
+            </p>
           </div>
           <div className="flex flex-wrap items-center gap-2">
             <span className="text-sm text-zinc-600">Word count oficial: {wordCount}</span>
-            <span className={`rounded-full border px-2.5 py-1 text-xs font-medium ${saveStatusClasses[saveStatus]}`}>
-              {saveStatusLabels[saveStatus]}
-            </span>
+            {readOnly ? null : (
+              <span className={`rounded-full border px-2.5 py-1 text-xs font-medium ${saveStatusClasses[saveStatus]}`}>
+                {saveStatusLabels[saveStatus]}
+              </span>
+            )}
           </div>
         </div>
 
@@ -62,6 +71,7 @@ export function SceneContentEditor({
           contentKey={contentKey}
           initialContentJson={contentJson}
           initialContentText={contentText}
+          readOnly={readOnly}
           onChange={(nextContentJson, nextContentText) =>
             onContentChange(sourceSceneId, JSON.stringify(nextContentJson), nextContentText)
           }
