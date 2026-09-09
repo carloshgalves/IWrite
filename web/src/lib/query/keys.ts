@@ -1,4 +1,5 @@
 export const queryKeys = {
+  profile: ["profile"] as const,
   books: ["books"] as const,
   book: (bookId: string) => ["books", bookId] as const,
   characters: (bookId: string) => ["books", bookId, "characters"] as const,

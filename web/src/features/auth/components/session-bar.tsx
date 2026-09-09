@@ -1,5 +1,6 @@
 "use client";
 
+import Link from "next/link";
 import { Button } from "@/components/ui/button";
 import type { AuthenticatedSession } from "@/features/auth/api/auth-api";
 import { useLogout } from "@/features/auth/session";
@@ -18,14 +19,22 @@ export function SessionBar({ session }: { session: AuthenticatedSession }) {
         <span className="px-2 text-zinc-300">/</span>
         <span>{session.activeWorkspace.name}</span>
       </p>
-      <Button
-        variant="secondary"
-        size="sm"
-        onClick={() => logout.mutate()}
-        disabled={logout.isPending}
-      >
-        {logout.isPending ? "Saindo…" : "Sair"}
-      </Button>
+      <div className="flex items-center gap-2">
+        <Link
+          href="/settings"
+          className="inline-flex min-h-8 items-center justify-center rounded-md border border-zinc-300 bg-white px-2 py-1 text-sm font-medium text-zinc-900 transition hover:bg-zinc-100"
+        >
+          Configurações
+        </Link>
+        <Button
+          variant="secondary"
+          size="sm"
+          onClick={() => logout.mutate()}
+          disabled={logout.isPending}
+        >
+          {logout.isPending ? "Saindo…" : "Sair"}
+        </Button>
+      </div>
     </div>
   );
 }

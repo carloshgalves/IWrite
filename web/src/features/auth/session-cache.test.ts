@@ -1,6 +1,12 @@
 import { QueryClient, type Mutation } from "@tanstack/react-query";
 import { describe, expect, test } from "vitest";
-import { isStaleMutation, markReconciliationStart, stampMutationGeneration } from "@/features/auth/session-cache";
+import {
+  captureSessionGeneration,
+  isSessionGenerationCurrent,
+  isStaleMutation,
+  markReconciliationStart,
+  stampMutationGeneration,
+} from "@/features/auth/session-cache";
 
 /**
  * Covers the mutation-staleness edge case directly, with no rendering and no timers: the previous
@@ -17,6 +23,15 @@ function fakeMutation() {
 }
 
 describe("session-cache — geração de reconciliação", () => {
+  test("um token capturado deixa de ser atual quando a reconciliação começa", () => {
+    const client = new QueryClient();
+    const generation = captureSessionGeneration(client);
+
+    expect(isSessionGenerationCurrent(client, generation)).toBe(true);
+    markReconciliationStart(client);
+    expect(isSessionGenerationCurrent(client, generation)).toBe(false);
+  });
+
   test("uma mutation carimbada antes de uma reconciliação é tratada como obsoleta assim que a reconciliação começa", () => {
     const client = new QueryClient();
     const mutation = fakeMutation();
