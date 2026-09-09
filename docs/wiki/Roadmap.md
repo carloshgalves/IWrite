@@ -21,7 +21,10 @@ Esta página descreve **o backlog versionado/rastreado no GitHub**, não substit
 - isolamento progressivo dos domínios;
 - ownership explícito do livro e colaboração base (#54);
 - ledger de palavras com idempotência, fingerprint, locking e rollback;
-- fundação segura de convites (#55).
+- fundação segura de convites (#55);
+- Book Roles persistidos e `BookCapabilityPolicy` centralizada (#205);
+- shared Book settings separados de Personal Book Writing Goal (#206);
+- Manuscript corrente, outline e hierarchy de Section/Chapter/Scene sob capabilities (#207).
 
 ### Identidade
 
@@ -52,12 +55,23 @@ Roadmap canônica: #142.
 Estado:
 
 - [x] #143 — cadastro público e workspace pessoal;
-- [ ] #144 — completar perfil e múltiplas personas;
-- [ ] #145 — papéis/capabilities granulares por livro;
+- [ ] #144 — completar perfil e múltiplas personas. A PR #162 contém trabalho parcial, mas está stale e precisa de rework sobre o `master` atual antes de voltar a ser candidata a merge;
+- [ ] #145 — papéis/capabilities granulares por livro, em execução por fatias:
+  - [x] #205 — persistir Book Roles e centralizar Book Capability Policy;
+  - [x] #206 — separar shared Book settings de Personal Book Writing Goal;
+  - [x] #207 — aplicar capabilities ao Manuscript corrente e à hierarquia;
+  - [ ] #208 — separar capabilities de exportação, Scene AI e MCP — **ready**;
+  - [ ] #209 — aplicar capabilities ao Canonical Planning e Notebook — **ready**;
+  - [ ] #210 — restringir consulta e restauração de Scene Versions — **ready**;
+  - [ ] #211 — entregar Book Contributor Progress quantitativo e privado — **ready**;
+  - [ ] #212 — garantir revogação imediata sob concorrência e reconciliar caches — bloqueada por #208–#211;
+  - [ ] #213 — concluir cutover de grants e convites role-aware — bloqueada por #212;
 - [ ] #146 — múltiplos workspaces e troca segura;
 - [ ] #147 — aceite de convites e biblioteca compartilhada;
-- [ ] #148 — UX específica para editor, revisor e leitor beta;
+- [ ] #148 — experiências específicas de Editor/Reader e workflows editoriais associados;
 - [ ] #57 — entrega/reenvio de convites por email, independente de provedor.
+
+Papéis atribuíveis canônicos de Book são `AUTHOR`, `EDITOR` e `READER`. `LEGACY_COLLABORATOR` é somente compatibilidade de migração e não pode ser oferecido em novos fluxos. Persona, Workspace Role e Book Role permanecem conceitos distintos.
 
 Issues antigas #56 e #58 foram absorvidas pela #147. A #64 foi substituída pela #145.
 
