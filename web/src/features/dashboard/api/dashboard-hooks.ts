@@ -35,6 +35,5 @@ export function useBookContributions(
     queryKey: [...queryKeys.bookContributions(bookId), progressPeriod, contributorId ?? "all"],
     queryFn: () => getBookContributions(bookId, progressPeriod, contributorId),
     enabled: Boolean(bookId),
-    placeholderData: keepPreviousData,
   });
 }

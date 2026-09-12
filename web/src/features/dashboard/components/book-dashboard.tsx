@@ -101,6 +101,7 @@ function DashboardContent({
   // letting a stale draft survive and later save against the wrong Book.
   const canManageOwnGoal = dashboard.capabilities.includes("MANAGE_OWN_PERSONAL_WRITING_GOAL");
   const canEditBookSettings = dashboard.capabilities.includes("EDIT_BOOK_SETTINGS");
+  const canViewContributorProgress = dashboard.capabilities.includes("VIEW_BOOK_CONTRIBUTOR_PROGRESS");
   // The backend omits the whole personal projection for a role that may not keep a writing goal, so
   // there is nothing personal to render — not a routine, not a per-day target snapshot.
   const myWriting = dashboard.myWriting;
@@ -154,7 +155,9 @@ function DashboardContent({
           />
         </>
       ) : null}
-      <BookContributionCard key={dashboard.bookId} bookId={dashboard.bookId} progressPeriod={progressPeriod} />
+      {canViewContributorProgress ? (
+        <BookContributionCard key={dashboard.bookId} bookId={dashboard.bookId} progressPeriod={progressPeriod} />
+      ) : null}
 
       <Card className="p-4 transition-[transform,background-color,box-shadow] duration-150 ease-out hover:scale-[1.01] hover:bg-white hover:shadow-sm hover:shadow-zinc-200/70">
         <div className="flex flex-wrap items-end justify-between gap-3">
@@ -657,7 +660,7 @@ function BookContributionCard({
       <div className="flex flex-wrap items-start justify-between gap-3">
         <SectionHeader
           title="Contribuição da equipe"
-          description="Palavras produtivas registradas por contribuidores deste livro no período selecionado."
+          description="Atividade autenticada e registrada neste livro, sem pontuação ou comparação entre contribuidores."
         />
         {contributions?.availableContributors.length ? (
           <label className="grid gap-1 text-xs font-medium text-zinc-600">
@@ -687,12 +690,16 @@ function BookContributionCard({
         </FeedbackMessage>
       ) : null}
       {contributions ? (
-        <div className="mt-4 grid gap-3 sm:grid-cols-4">
+        <div className="mt-4 grid gap-3 sm:grid-cols-2 xl:grid-cols-5">
           <DashboardMetricCard label="Palavras produtivas" value={formatSignedNumber(contributions.summary.productiveWords)} />
           <DashboardMetricCard label="Ajustes do manuscrito" value={formatSignedNumber(contributions.summary.manuscriptAdjustments)} />
           <DashboardMetricCard label="Dias com escrita" value={formatNumber(contributions.summary.writingDays)} />
-          <DashboardMetricCard label="Contribuidores" value={formatNumber(contributions.summary.contributorsCount)} />
-          <div className="sm:col-span-4">
+          <DashboardMetricCard label="Cenas distintas" value={formatNumber(contributions.summary.distinctScenes)} />
+          <DashboardMetricCard label="Capítulos distintos" value={formatNumber(contributions.summary.distinctChapters)} />
+          {contributions.scope === "ALL_CONTRIBUTORS" ? (
+            <DashboardMetricCard label="Contribuidores" value={formatNumber(contributions.summary.contributorsCount)} />
+          ) : null}
+          <div className="sm:col-span-2 xl:col-span-5">
             <MiniWritingSeries
               entries={contributions.dailySeries.map((day) => ({
                 date: day.date,
@@ -701,6 +708,33 @@ function BookContributionCard({
               }))}
             />
           </div>
+          {contributions.origins.length ? (
+            <div className="sm:col-span-2 xl:col-span-5 rounded-md border border-zinc-200 bg-zinc-50 p-3">
+              <p className="text-sm font-medium text-zinc-900">Origens no período</p>
+              <ol className="mt-3 grid gap-2">
+                {contributions.origins.map((origin) => (
+                  <li
+                    key={`${origin.sceneId}:${origin.chapterId ?? "chapter-unavailable"}`}
+                    className="flex flex-wrap items-start justify-between gap-2 rounded-md bg-white px-3 py-2 text-sm"
+                  >
+                    <span>
+                      <span className="font-medium text-zinc-950">{origin.sceneTitle}</span>
+                      <span className="block text-xs text-zinc-500">{origin.chapterTitle ?? "Capítulo indisponível"}</span>
+                    </span>
+                    <span className="text-right text-zinc-700">
+                      {formatSignedNumber(origin.productiveWords)} produtivas
+                      {origin.manuscriptAdjustments !== 0
+                        ? ` · ${formatSignedNumber(origin.manuscriptAdjustments)} ajustes`
+                        : ""}
+                      <span className="block text-xs text-zinc-500">
+                        {formatNumber(origin.writingDays)} {origin.writingDays === 1 ? "dia com escrita" : "dias com escrita"}
+                      </span>
+                    </span>
+                  </li>
+                ))}
+              </ol>
+            </div>
+          ) : null}
         </div>
       ) : null}
     </Card>

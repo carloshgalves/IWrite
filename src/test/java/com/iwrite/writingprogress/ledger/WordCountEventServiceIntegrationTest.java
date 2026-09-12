@@ -448,6 +448,8 @@ class WordCountEventServiceIntegrationTest extends PostgresIntegrationTest {
                 scene.id(),
                 scene.id(),
                 scene.title(),
+                scene.chapterId(),
+                null,
                 eventType,
                 productiveWordDelta,
                 manuscriptWordDelta,

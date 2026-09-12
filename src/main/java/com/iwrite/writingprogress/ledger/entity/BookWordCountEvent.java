@@ -17,6 +17,7 @@ import jakarta.persistence.PrePersist;
 import jakarta.persistence.Table;
 import jakarta.persistence.UniqueConstraint;
 
+import java.time.LocalDate;
 import java.time.OffsetDateTime;
 import java.util.UUID;
 
@@ -50,6 +51,14 @@ public class BookWordCountEvent {
 
     @Column(length = 255)
     private String sceneTitleSnapshot;
+
+    @Column(nullable = false)
+    private LocalDate progressDate;
+
+    private UUID originalChapterId;
+
+    @Column(length = 255)
+    private String chapterTitleSnapshot;
 
     @Enumerated(EnumType.STRING)
     @Column(nullable = false, length = 40)
@@ -121,6 +130,30 @@ public class BookWordCountEvent {
 
     public String getSceneTitleSnapshot() {
         return sceneTitleSnapshot;
+    }
+
+    public LocalDate getProgressDate() {
+        return progressDate;
+    }
+
+    public void setProgressDate(LocalDate progressDate) {
+        this.progressDate = progressDate;
+    }
+
+    public UUID getOriginalChapterId() {
+        return originalChapterId;
+    }
+
+    public void setOriginalChapterId(UUID originalChapterId) {
+        this.originalChapterId = originalChapterId;
+    }
+
+    public String getChapterTitleSnapshot() {
+        return chapterTitleSnapshot;
+    }
+
+    public void setChapterTitleSnapshot(String chapterTitleSnapshot) {
+        this.chapterTitleSnapshot = chapterTitleSnapshot;
     }
 
     public void setSceneTitleSnapshot(String sceneTitleSnapshot) {

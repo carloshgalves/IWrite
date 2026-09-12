@@ -1,10 +1,13 @@
 package com.iwrite.dashboard.service;
 
+import com.iwrite.book.authorization.BookCapability;
 import com.iwrite.book.entity.Book;
+import com.iwrite.book.entity.BookRole;
 import com.iwrite.book.service.BookAccessService;
 import com.iwrite.common.exception.ResourceNotFoundException;
 import com.iwrite.dashboard.dto.BookContributionDashboardResponse;
 import com.iwrite.dashboard.dto.ContributionDailyWritingResponse;
+import com.iwrite.dashboard.dto.ContributionOriginResponse;
 import com.iwrite.dashboard.dto.ContributionSummaryResponse;
 import com.iwrite.dashboard.dto.ContributorSummaryResponse;
 import com.iwrite.dashboard.dto.UserBookContributionResponse;
@@ -17,6 +20,8 @@ import com.iwrite.user.context.CurrentUserProvider;
 import com.iwrite.user.entity.User;
 import com.iwrite.user.repository.UserRepository;
 import com.iwrite.writingprogress.entity.DailyWritingProgress;
+import com.iwrite.writingprogress.ledger.entity.BookWordCountEvent;
+import com.iwrite.writingprogress.ledger.repository.BookWordCountEventRepository;
 import com.iwrite.writingprogress.repository.DailyWritingProgressRepository;
 import com.iwrite.writingprogress.service.WritingDayResolver;
 import com.iwrite.writingprogress.service.WritingProgressPeriod;
@@ -44,6 +49,7 @@ public class UserDashboardService {
     private final CurrentUserProvider currentUserProvider;
     private final CurrentUserMembershipService currentUserMembershipService;
     private final DailyWritingProgressRepository progressRepository;
+    private final BookWordCountEventRepository eventRepository;
     private final WritingDayResolver writingDayResolver;
     private final BookAccessService bookAccessService;
     private final UserRepository userRepository;
@@ -52,6 +58,7 @@ public class UserDashboardService {
             CurrentUserProvider currentUserProvider,
             CurrentUserMembershipService currentUserMembershipService,
             DailyWritingProgressRepository progressRepository,
+            BookWordCountEventRepository eventRepository,
             WritingDayResolver writingDayResolver,
             BookAccessService bookAccessService,
             UserRepository userRepository
@@ -59,6 +66,7 @@ public class UserDashboardService {
         this.currentUserProvider = currentUserProvider;
         this.currentUserMembershipService = currentUserMembershipService;
         this.progressRepository = progressRepository;
+        this.eventRepository = eventRepository;
         this.writingDayResolver = writingDayResolver;
         this.bookAccessService = bookAccessService;
         this.userRepository = userRepository;
@@ -94,14 +102,10 @@ public class UserDashboardService {
             WritingProgressPeriod progressPeriod,
             UUID contributorId
     ) {
-        Book book = bookAccessService.requireBookReadAccess(bookId);
-        UUID currentUserId = currentUserMembershipService.requireCurrentUserMemberId();
+        Book book = bookAccessService.requireCapability(bookId, BookCapability.VIEW_BOOK_CONTRIBUTOR_PROGRESS);
         LocalDate today = writingDayResolver.currentWritingDate();
         LocalDate startDate = progressPeriod.startDateInclusive(today);
-        List<User> contributors = progressRepository.findRecordedContributorsForBook(book.getId())
-                .stream()
-                .sorted(Comparator.comparing(User::getDisplayName).thenComparing(User::getId))
-                .toList();
+        List<User> contributors = userRepository.findBookContributorCandidates(book.getId(), BookRole.READER);
         Map<UUID, User> contributorsById = contributors.stream()
                 .collect(Collectors.toMap(User::getId, Function.identity(), (left, right) -> left, LinkedHashMap::new));
         List<ContributorSummaryResponse> contributorSummaries = contributors.stream()
@@ -114,23 +118,23 @@ public class UserDashboardService {
                     startDate,
                     today
             );
+            List<ContributionOriginResponse> origins = contributionOrigins(
+                    eventRepository.findBookContributionEventsBetween(book.getId(), startDate, today)
+            );
             return new BookContributionDashboardResponse(
                     period(progressPeriod, startDate, today),
                     ALL_CONTRIBUTORS_SCOPE,
                     null,
                     contributorSummaries,
-                    contributionSummary(progressRows),
-                    contributionDailySeries(startDate, today, progressRows)
+                    contributionSummary(progressRows, origins),
+                    contributionDailySeries(startDate, today, progressRows),
+                    origins
             );
         }
 
         User selectedContributor = contributorsById.get(contributorId);
         if (selectedContributor == null) {
-            if (!contributorId.equals(currentUserId)) {
-                throw new ResourceNotFoundException("Recorded contributor not found for book: " + book.getId());
-            }
-            selectedContributor = userRepository.findById(currentUserId)
-                    .orElseThrow(() -> new ResourceNotFoundException("Current user not found: " + currentUserId));
+            throw new ResourceNotFoundException("Recorded contributor not found for book: " + book.getId());
         }
 
         List<DailyWritingProgress> progressRows = progressRepository.findBookContributorProgressBetweenWithUsers(
@@ -139,13 +143,17 @@ public class UserDashboardService {
                 startDate,
                 today
         );
+        List<ContributionOriginResponse> origins = contributionOrigins(
+                eventRepository.findBookContributorEventsBetween(book.getId(), contributorId, startDate, today)
+        );
         return new BookContributionDashboardResponse(
                 period(progressPeriod, startDate, today),
                 SINGLE_CONTRIBUTOR_SCOPE,
                 toContributorSummary(selectedContributor),
                 contributorSummaries,
-                contributionSummary(progressRows),
-                contributionDailySeries(startDate, today, progressRows)
+                contributionSummary(progressRows, origins),
+                contributionDailySeries(startDate, today, progressRows),
+                origins
         );
     }
 
@@ -229,7 +237,10 @@ public class UserDashboardService {
                 .toList();
     }
 
-    private ContributionSummaryResponse contributionSummary(List<DailyWritingProgress> progressRows) {
+    private ContributionSummaryResponse contributionSummary(
+            List<DailyWritingProgress> progressRows,
+            List<ContributionOriginResponse> origins
+    ) {
         long productiveWords = progressRows.stream().mapToLong(DailyWritingProgress::getProductiveWordCountChange).sum();
         long manuscriptAdjustments = progressRows.stream().mapToLong(DailyWritingProgress::getManuscriptAdjustmentWordCount).sum();
         long writingDays = progressRows.stream()
@@ -243,7 +254,46 @@ public class UserDashboardService {
                 .distinct()
                 .count();
 
-        return new ContributionSummaryResponse(productiveWords, manuscriptAdjustments, writingDays, contributorsCount);
+        long distinctScenes = origins.stream().map(ContributionOriginResponse::sceneId).distinct().count();
+        long distinctChapters = origins.stream()
+                .map(ContributionOriginResponse::chapterId)
+                .filter(java.util.Objects::nonNull)
+                .distinct()
+                .count();
+
+        return new ContributionSummaryResponse(
+                productiveWords,
+                manuscriptAdjustments,
+                writingDays,
+                contributorsCount,
+                distinctScenes,
+                distinctChapters
+        );
+    }
+
+    private List<ContributionOriginResponse> contributionOrigins(List<BookWordCountEvent> events) {
+        Map<ContributionOriginKey, ContributionOriginTotals> totalsByOrigin = new LinkedHashMap<>();
+        for (BookWordCountEvent event : events) {
+            if (event.getOriginalSceneId() == null) {
+                continue;
+            }
+            ContributionOriginKey key = new ContributionOriginKey(
+                    event.getOriginalSceneId(),
+                    event.getOriginalChapterId()
+            );
+            totalsByOrigin.computeIfAbsent(key, ignored -> new ContributionOriginTotals(key)).add(event);
+        }
+
+        Comparator<String> nullableText = Comparator.nullsLast(String.CASE_INSENSITIVE_ORDER);
+        Comparator<ContributionOriginResponse> byOrigin = Comparator
+                .comparing(ContributionOriginResponse::chapterTitle, nullableText)
+                .thenComparing(ContributionOriginResponse::sceneTitle, nullableText)
+                .thenComparing(ContributionOriginResponse::chapterId, Comparator.nullsLast(Comparator.naturalOrder()))
+                .thenComparing(ContributionOriginResponse::sceneId);
+        return totalsByOrigin.values().stream()
+                .map(ContributionOriginTotals::response)
+                .sorted(byOrigin)
+                .toList();
     }
 
     private List<ContributionDailyWritingResponse> contributionDailySeries(
@@ -332,6 +382,44 @@ public class UserDashboardService {
 
         boolean hasRecordedContribution() {
             return recordedContribution;
+        }
+    }
+
+    private record ContributionOriginKey(UUID sceneId, UUID chapterId) {
+    }
+
+    private static class ContributionOriginTotals {
+        private final ContributionOriginKey key;
+        private final Set<LocalDate> productiveDates = new HashSet<>();
+        private String sceneTitle;
+        private String chapterTitle;
+        private long productiveWords;
+        private long manuscriptAdjustments;
+
+        ContributionOriginTotals(ContributionOriginKey key) {
+            this.key = key;
+        }
+
+        void add(BookWordCountEvent event) {
+            sceneTitle = event.getSceneTitleSnapshot();
+            chapterTitle = event.getChapterTitleSnapshot();
+            productiveWords += event.getProductiveWordDelta();
+            manuscriptAdjustments += event.getManuscriptWordDelta() - event.getProductiveWordDelta();
+            if (event.getProductiveWordDelta() > 0) {
+                productiveDates.add(event.getProgressDate());
+            }
+        }
+
+        ContributionOriginResponse response() {
+            return new ContributionOriginResponse(
+                    key.sceneId(),
+                    sceneTitle,
+                    key.chapterId(),
+                    chapterTitle,
+                    productiveWords,
+                    manuscriptAdjustments,
+                    productiveDates.size()
+            );
         }
     }
 }

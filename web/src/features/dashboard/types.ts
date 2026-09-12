@@ -153,12 +153,24 @@ export type ContributionSummaryResponse = {
   manuscriptAdjustments: number;
   writingDays: number;
   contributorsCount: number;
+  distinctScenes: number;
+  distinctChapters: number;
 };
 
 export type ContributionDailyWritingResponse = {
   date: string;
   productiveWords: number;
   manuscriptAdjustments: number;
+};
+
+export type ContributionOriginResponse = {
+  sceneId: string;
+  sceneTitle: string;
+  chapterId: string | null;
+  chapterTitle: string | null;
+  productiveWords: number;
+  manuscriptAdjustments: number;
+  writingDays: number;
 };
 
 export type BookContributionDashboardResponse = {
@@ -168,6 +180,7 @@ export type BookContributionDashboardResponse = {
   availableContributors: ContributorSummaryResponse[];
   summary: ContributionSummaryResponse;
   dailySeries: ContributionDailyWritingResponse[];
+  origins: ContributionOriginResponse[];
 };
 
 /**

@@ -6,7 +6,9 @@ import org.springframework.data.jpa.repository.Modifying;
 import org.springframework.data.jpa.repository.Query;
 import org.springframework.data.repository.query.Param;
 
+import java.time.LocalDate;
 import java.time.OffsetDateTime;
+import java.util.List;
 import java.util.Optional;
 import java.util.UUID;
 
@@ -18,6 +20,36 @@ public interface BookWordCountEventRepository extends JpaRepository<BookWordCoun
 
     long countByBookId(UUID bookId);
 
+    @Query("""
+            select event
+            from BookWordCountEvent event
+            where event.book.id = :bookId
+              and event.progressDate between :startDate and :endDate
+              and (event.productiveWordDelta <> 0 or event.manuscriptWordDelta <> 0)
+            order by event.createdAt asc, event.id asc
+            """)
+    List<BookWordCountEvent> findBookContributionEventsBetween(
+            @Param("bookId") UUID bookId,
+            @Param("startDate") LocalDate startDate,
+            @Param("endDate") LocalDate endDate
+    );
+
+    @Query("""
+            select event
+            from BookWordCountEvent event
+            where event.book.id = :bookId
+              and event.actorUser.id = :actorUserId
+              and event.progressDate between :startDate and :endDate
+              and (event.productiveWordDelta <> 0 or event.manuscriptWordDelta <> 0)
+            order by event.createdAt asc, event.id asc
+            """)
+    List<BookWordCountEvent> findBookContributorEventsBetween(
+            @Param("bookId") UUID bookId,
+            @Param("actorUserId") UUID actorUserId,
+            @Param("startDate") LocalDate startDate,
+            @Param("endDate") LocalDate endDate
+    );
+
     @Modifying
     @Query(value = """
             insert into book_word_count_events (
@@ -27,6 +59,9 @@ public interface BookWordCountEventRepository extends JpaRepository<BookWordCoun
                 actor_user_id,
                 original_scene_id,
                 scene_title_snapshot,
+                progress_date,
+                original_chapter_id,
+                chapter_title_snapshot,
                 event_type,
                 productive_word_delta,
                 manuscript_word_delta,
@@ -44,6 +79,9 @@ public interface BookWordCountEventRepository extends JpaRepository<BookWordCoun
                 :actorUserId,
                 :originalSceneId,
                 :sceneTitleSnapshot,
+                :progressDate,
+                :originalChapterId,
+                :chapterTitleSnapshot,
                 :eventType,
                 :productiveWordDelta,
                 :manuscriptWordDelta,
@@ -63,6 +101,9 @@ public interface BookWordCountEventRepository extends JpaRepository<BookWordCoun
             @Param("actorUserId") UUID actorUserId,
             @Param("originalSceneId") UUID originalSceneId,
             @Param("sceneTitleSnapshot") String sceneTitleSnapshot,
+            @Param("progressDate") LocalDate progressDate,
+            @Param("originalChapterId") UUID originalChapterId,
+            @Param("chapterTitleSnapshot") String chapterTitleSnapshot,
             @Param("eventType") String eventType,
             @Param("productiveWordDelta") int productiveWordDelta,
             @Param("manuscriptWordDelta") int manuscriptWordDelta,

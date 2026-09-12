@@ -65,6 +65,8 @@ public class SceneDeletionLedgerService {
                     deletedScene.sceneId(),
                     deletedScene.sceneId(),
                     deletedScene.sceneTitle(),
+                    deletedScene.chapterId(),
+                    deletedScene.chapterTitle(),
                     BookWordCountEventType.SCENE_DELETE,
                     0,
                     -sceneWordCount,
@@ -89,6 +91,8 @@ public class SceneDeletionLedgerService {
             UUID bookId,
             UUID sceneId,
             String sceneTitle,
+            UUID chapterId,
+            String chapterTitle,
             int wordCount,
             Long contentRevision
     ) {
@@ -98,6 +102,8 @@ public class SceneDeletionLedgerService {
                     scene.getBook().getId(),
                     scene.getId(),
                     scene.getTitle(),
+                    scene.getChapter().getId(),
+                    scene.getChapter().getTitle(),
                     scene.getWordCount() == null ? 0 : scene.getWordCount(),
                     scene.getContentRevision()
             );
