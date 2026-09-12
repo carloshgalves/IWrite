@@ -153,9 +153,12 @@ class BookContributorProgressIntegrationTest extends PostgresIntegrationTest {
         var secondChapter = createChapter(section, "Second chapter");
         var firstScene = createScene(firstChapter, "Shared opening", com.iwrite.scene.entity.SceneStatus.DRAFT, 0, wordText(10));
         var secondScene = createScene(secondChapter, "Shared ending", com.iwrite.scene.entity.SceneStatus.DRAFT, 0, wordText(7));
-        UUID authorId = grantRole(book.id(), "Attributed author", BookRole.AUTHOR);
+        // Until #184 attributes Scene text, AUTHOR is only CONTEXTUALLY eligible to edit canonical
+        // content and SceneContentAuthority resolves that to the Owner alone; the legacy compatibility
+        // role is the collaborator identity that still holds EDIT_AUTHORED_CONTRIBUTION outright (#207).
+        UUID contributorId = grantRole(book.id(), "Attributed contributor", BookRole.LEGACY_COLLABORATOR);
 
-        switchTo(authorId);
+        switchTo(contributorId);
         sceneService.updateContent(firstScene.id(), new SceneContentRequest(
                 "{}", wordText(12), SceneVersionSource.MANUAL_SAVE, firstScene.contentRevision()
         ));
@@ -169,11 +172,11 @@ class BookContributorProgressIntegrationTest extends PostgresIntegrationTest {
         entityManager.clear();
 
         var progress = dashboardService.getBookContributions(
-                book.id(), WritingProgressPeriod.SEVEN_DAYS, authorId
+                book.id(), WritingProgressPeriod.SEVEN_DAYS, contributorId
         );
 
-        // The Author added 2 + 3 words. The pre-existing 10 + 7 words in these shared Scenes belong
-        // to the Owner's authenticated events and must never be copied into this Author's metrics.
+        // The contributor added 2 + 3 words. The pre-existing 10 + 7 words in these shared Scenes
+        // belong to the Owner's authenticated events and must never be copied into this contributor's metrics.
         assertThat(progress.summary().productiveWords()).isEqualTo(5);
         assertThat(progress.summary().distinctScenes()).isEqualTo(2);
         assertThat(progress.summary().distinctChapters()).isEqualTo(2);
