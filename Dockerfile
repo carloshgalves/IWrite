@@ -9,7 +9,7 @@ COPY src src
 RUN mvn -s .mvn/local-settings.xml -DskipTests package
 
 
-FROM node:24-alpine@sha256:e67514e5d0f6c46656005e1b693b2ec9d52e80b641307de684d4a015ba7a4eaf AS frontend-deps
+FROM node:24-alpine@sha256:50c8e8ca1d27439048670df5883f32d57cf81cff6233222c893fd0d9884cbd81 AS frontend-deps
 
 WORKDIR /frontend
 
@@ -18,7 +18,7 @@ COPY web/package.json web/package-lock.json ./
 RUN npm ci
 
 
-FROM node:24-alpine@sha256:e67514e5d0f6c46656005e1b693b2ec9d52e80b641307de684d4a015ba7a4eaf AS frontend-build
+FROM node:24-alpine@sha256:50c8e8ca1d27439048670df5883f32d57cf81cff6233222c893fd0d9884cbd81 AS frontend-build
 
 WORKDIR /frontend
 
@@ -35,7 +35,7 @@ COPY web/ .
 RUN npm run build
 
 
-FROM node:24-alpine@sha256:e67514e5d0f6c46656005e1b693b2ec9d52e80b641307de684d4a015ba7a4eaf AS runtime
+FROM node:24-alpine@sha256:50c8e8ca1d27439048670df5883f32d57cf81cff6233222c893fd0d9884cbd81 AS runtime
 
 RUN apk add --no-cache openjdk21-jre
 
