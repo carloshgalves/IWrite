@@ -14,6 +14,9 @@ import com.iwrite.tenant.entity.TenantMembership;
 import com.iwrite.tenant.entity.TenantMembershipRole;
 import com.iwrite.user.entity.User;
 import com.iwrite.writingprogress.entity.DailyWritingProgress;
+import com.iwrite.writingprogress.ledger.entity.BookWordCountEvent;
+import com.iwrite.writingprogress.ledger.entity.BookWordCountEventType;
+import com.iwrite.writingprogress.ledger.repository.BookWordCountEventRepository;
 import com.iwrite.writingprogress.repository.DailyWritingProgressRepository;
 import com.iwrite.writingprogress.service.WritingProgressPeriod;
 import jakarta.persistence.EntityManager;
@@ -59,6 +62,9 @@ class BookContributorProgressIntegrationTest extends PostgresIntegrationTest {
 
     @Autowired
     private DailyWritingProgressRepository progressRepository;
+
+    @Autowired
+    private BookWordCountEventRepository eventRepository;
 
     @Autowired
     private SwitchableCurrentUserProvider currentUserProvider;
@@ -178,6 +184,7 @@ class BookContributorProgressIntegrationTest extends PostgresIntegrationTest {
         // The contributor added 2 + 3 words. The pre-existing 10 + 7 words in these shared Scenes
         // belong to the Owner's authenticated events and must never be copied into this contributor's metrics.
         assertThat(progress.summary().productiveWords()).isEqualTo(5);
+        assertThat(progress.summary().writingDays()).isEqualTo(1);
         assertThat(progress.summary().distinctScenes()).isEqualTo(2);
         assertThat(progress.summary().distinctChapters()).isEqualTo(2);
         assertThat(progress.origins())
@@ -189,10 +196,153 @@ class BookContributorProgressIntegrationTest extends PostgresIntegrationTest {
         assertThat(progress.origins())
                 .extracting(origin -> origin.productiveWords())
                 .containsExactly(2L, 3L);
+        assertThat(progress.origins())
+                .extracting(origin -> origin.writingDays())
+                .containsExactly(1L, 1L);
         assertThat(progress.dailySeries())
                 .filteredOn(day -> day.date().equals(java.time.LocalDate.of(2026, 6, 24)))
                 .singleElement()
                 .satisfies(day -> assertThat(day.productiveWords()).isEqualTo(5));
+    }
+
+    @Test
+    void ledgerOnlyEventsKeepSummaryDailySeriesAndOriginsConsistent() {
+        Book book = bookService.getBook(createBook("Legacy ledger-only contribution").id());
+        UUID sceneId = UUID.randomUUID();
+        UUID chapterId = UUID.randomUUID();
+
+        BookWordCountEvent event = new BookWordCountEvent();
+        event.setBook(book);
+        event.setActorUser(entityManager.getReference(User.class, DEFAULT_USER_ID));
+        event.setOriginalSceneId(sceneId);
+        event.setSceneTitleSnapshot("Legacy scene");
+        event.setProgressDate(java.time.LocalDate.of(2026, 6, 24));
+        event.setOriginalChapterId(chapterId);
+        event.setChapterTitleSnapshot("Legacy chapter");
+        event.setEventType(BookWordCountEventType.CONTENT_SAVE);
+        event.setProductiveWordDelta(7);
+        event.setManuscriptWordDelta(4);
+        event.setOperationId(UUID.randomUUID());
+        event.setIdempotencyKey(UUID.randomUUID());
+        eventRepository.saveAndFlush(event);
+        entityManager.clear();
+
+        var progress = dashboardService.getBookContributions(
+                book.getId(), WritingProgressPeriod.SEVEN_DAYS, null
+        );
+
+        assertThat(progress.summary().productiveWords()).isEqualTo(7);
+        assertThat(progress.summary().manuscriptAdjustments()).isEqualTo(-3);
+        assertThat(progress.summary().writingDays()).isEqualTo(1);
+        assertThat(progress.summary().contributorsCount()).isEqualTo(1);
+        assertThat(progress.summary().distinctScenes()).isEqualTo(1);
+        assertThat(progress.summary().distinctChapters()).isEqualTo(1);
+        assertThat(progress.dailySeries())
+                .filteredOn(day -> day.date().equals(java.time.LocalDate.of(2026, 6, 24)))
+                .singleElement()
+                .satisfies(day -> {
+                    assertThat(day.productiveWords()).isEqualTo(7);
+                    assertThat(day.manuscriptAdjustments()).isEqualTo(-3);
+                });
+        assertThat(progress.origins()).singleElement().satisfies(origin -> {
+            assertThat(origin.sceneId()).isEqualTo(sceneId);
+            assertThat(origin.productiveWords()).isEqualTo(7);
+            assertThat(origin.manuscriptAdjustments()).isEqualTo(-3);
+            assertThat(origin.writingDays()).isEqualTo(1);
+        });
+    }
+
+    @Test
+    void originWritingDaysUseContributorOriginDailyNet() {
+        Book book = bookService.getBook(createBook("Origin writing-day net").id());
+        UUID sceneId = UUID.randomUUID();
+        UUID chapterId = UUID.randomUUID();
+        java.time.LocalDate progressDate = java.time.LocalDate.of(2026, 6, 24);
+
+        saveLedgerEvent(book, DEFAULT_USER_ID, sceneId, chapterId, progressDate, 10);
+        saveLedgerEvent(book, DEFAULT_USER_ID, sceneId, chapterId, progressDate, -10);
+        entityManager.clear();
+
+        var progress = dashboardService.getBookContributions(
+                book.getId(), WritingProgressPeriod.SEVEN_DAYS, DEFAULT_USER_ID
+        );
+
+        assertThat(progress.summary().productiveWords()).isZero();
+        assertThat(progress.summary().writingDays()).isZero();
+        assertThat(progress.origins()).singleElement().satisfies(origin -> {
+            assertThat(origin.sceneId()).isEqualTo(sceneId);
+            assertThat(origin.productiveWords()).isZero();
+            assertThat(origin.writingDays()).isZero();
+        });
+    }
+
+    @Test
+    void originWritingDaysKeepPositiveNetsSeparatedByContributorAndOrigin() {
+        Book book = bookService.getBook(createBook("Separated origin writing days").id());
+        UUID otherContributorId = grantRole(book.getId(), "Other origin contributor", BookRole.LEGACY_COLLABORATOR);
+        UUID chapterId = UUID.randomUUID();
+        UUID netPositiveSceneId = UUID.randomUUID();
+        UUID crossContributorSceneId = UUID.randomUUID();
+        UUID negativeSceneId = UUID.randomUUID();
+        java.time.LocalDate progressDate = java.time.LocalDate.of(2026, 6, 24);
+
+        saveLedgerEvent(book, DEFAULT_USER_ID, netPositiveSceneId, chapterId, progressDate, 10);
+        saveLedgerEvent(book, DEFAULT_USER_ID, netPositiveSceneId, chapterId, progressDate, -3);
+        saveLedgerEvent(book, DEFAULT_USER_ID, crossContributorSceneId, chapterId, progressDate, 10);
+        saveLedgerEvent(book, otherContributorId, crossContributorSceneId, chapterId, progressDate, -10);
+        saveLedgerEvent(book, DEFAULT_USER_ID, negativeSceneId, chapterId, progressDate, -10);
+        entityManager.clear();
+
+        var progress = dashboardService.getBookContributions(
+                book.getId(), WritingProgressPeriod.SEVEN_DAYS, null
+        );
+
+        assertThat(progress.summary().writingDays()).isEqualTo(1);
+        assertThat(progress.origins())
+                .filteredOn(origin -> origin.sceneId().equals(netPositiveSceneId))
+                .singleElement()
+                .satisfies(origin -> {
+                    assertThat(origin.productiveWords()).isEqualTo(7);
+                    assertThat(origin.writingDays()).isEqualTo(1);
+                });
+        assertThat(progress.origins())
+                .filteredOn(origin -> origin.sceneId().equals(crossContributorSceneId))
+                .singleElement()
+                .satisfies(origin -> {
+                    assertThat(origin.productiveWords()).isZero();
+                    assertThat(origin.writingDays()).isEqualTo(1);
+                });
+        assertThat(progress.origins())
+                .filteredOn(origin -> origin.sceneId().equals(negativeSceneId))
+                .singleElement()
+                .satisfies(origin -> {
+                    assertThat(origin.productiveWords()).isEqualTo(-10);
+                    assertThat(origin.writingDays()).isZero();
+                });
+    }
+
+    private void saveLedgerEvent(
+            Book book,
+            UUID contributorId,
+            UUID sceneId,
+            UUID chapterId,
+            java.time.LocalDate progressDate,
+            int productiveWordDelta
+    ) {
+        BookWordCountEvent event = new BookWordCountEvent();
+        event.setBook(book);
+        event.setActorUser(entityManager.getReference(User.class, contributorId));
+        event.setOriginalSceneId(sceneId);
+        event.setSceneTitleSnapshot("Scene " + sceneId);
+        event.setProgressDate(progressDate);
+        event.setOriginalChapterId(chapterId);
+        event.setChapterTitleSnapshot("Chapter " + chapterId);
+        event.setEventType(BookWordCountEventType.CONTENT_SAVE);
+        event.setProductiveWordDelta(productiveWordDelta);
+        event.setManuscriptWordDelta(productiveWordDelta);
+        event.setOperationId(UUID.randomUUID());
+        event.setIdempotencyKey(UUID.randomUUID());
+        eventRepository.saveAndFlush(event);
     }
 
     private UUID grantRole(UUID bookId, String displayName, BookRole role) {

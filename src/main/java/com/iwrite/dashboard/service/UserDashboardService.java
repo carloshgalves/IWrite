@@ -118,16 +118,18 @@ public class UserDashboardService {
                     startDate,
                     today
             );
-            List<ContributionOriginResponse> origins = contributionOrigins(
-                    eventRepository.findBookContributionEventsBetween(book.getId(), startDate, today)
+            List<BookWordCountEvent> events = eventRepository.findBookContributionEventsBetween(
+                    book.getId(), startDate, today
             );
+            List<ContributionOriginResponse> origins = contributionOrigins(events);
+            List<ContributionProgressTotals> progressTotals = reconcileContributionProgress(progressRows, events);
             return new BookContributionDashboardResponse(
                     period(progressPeriod, startDate, today),
                     ALL_CONTRIBUTORS_SCOPE,
                     null,
                     contributorSummaries,
-                    contributionSummary(progressRows, origins),
-                    contributionDailySeries(startDate, today, progressRows),
+                    contributionSummary(progressTotals, origins),
+                    contributionDailySeries(startDate, today, progressTotals),
                     origins
             );
         }
@@ -143,16 +145,18 @@ public class UserDashboardService {
                 startDate,
                 today
         );
-        List<ContributionOriginResponse> origins = contributionOrigins(
-                eventRepository.findBookContributorEventsBetween(book.getId(), contributorId, startDate, today)
+        List<BookWordCountEvent> events = eventRepository.findBookContributorEventsBetween(
+                book.getId(), contributorId, startDate, today
         );
+        List<ContributionOriginResponse> origins = contributionOrigins(events);
+        List<ContributionProgressTotals> progressTotals = reconcileContributionProgress(progressRows, events);
         return new BookContributionDashboardResponse(
                 period(progressPeriod, startDate, today),
                 SINGLE_CONTRIBUTOR_SCOPE,
                 toContributorSummary(selectedContributor),
                 contributorSummaries,
-                contributionSummary(progressRows, origins),
-                contributionDailySeries(startDate, today, progressRows),
+                contributionSummary(progressTotals, origins),
+                contributionDailySeries(startDate, today, progressTotals),
                 origins
         );
     }
@@ -238,19 +242,19 @@ public class UserDashboardService {
     }
 
     private ContributionSummaryResponse contributionSummary(
-            List<DailyWritingProgress> progressRows,
+            List<ContributionProgressTotals> progressTotals,
             List<ContributionOriginResponse> origins
     ) {
-        long productiveWords = progressRows.stream().mapToLong(DailyWritingProgress::getProductiveWordCountChange).sum();
-        long manuscriptAdjustments = progressRows.stream().mapToLong(DailyWritingProgress::getManuscriptAdjustmentWordCount).sum();
-        long writingDays = progressRows.stream()
-                .filter(progress -> progress.getProductiveWordCountChange() > 0)
-                .map(DailyWritingProgress::getProgressDate)
+        long productiveWords = progressTotals.stream().mapToLong(totals -> totals.productiveWords).sum();
+        long manuscriptAdjustments = progressTotals.stream().mapToLong(totals -> totals.manuscriptAdjustments).sum();
+        long writingDays = progressTotals.stream()
+                .filter(totals -> totals.productiveWords > 0)
+                .map(totals -> totals.key.progressDate())
                 .distinct()
                 .count();
-        long contributorsCount = progressRows.stream()
-                .filter(UserDashboardService::hasRecordedContribution)
-                .map(progress -> progress.getUser().getId())
+        long contributorsCount = progressTotals.stream()
+                .filter(ContributionProgressTotals::hasRecordedContribution)
+                .map(totals -> totals.key.contributorId())
                 .distinct()
                 .count();
 
@@ -269,6 +273,33 @@ public class UserDashboardService {
                 distinctScenes,
                 distinctChapters
         );
+    }
+
+    private List<ContributionProgressTotals> reconcileContributionProgress(
+            List<DailyWritingProgress> progressRows,
+            List<BookWordCountEvent> events
+    ) {
+        Map<ContributionProgressKey, ContributionProgressTotals> totalsByContributorDate = new LinkedHashMap<>();
+        Set<ContributionProgressKey> rollupKeys = new HashSet<>();
+
+        for (DailyWritingProgress progress : progressRows) {
+            ContributionProgressKey key = new ContributionProgressKey(
+                    progress.getUser().getId(), progress.getProgressDate()
+            );
+            rollupKeys.add(key);
+            totalsByContributorDate.computeIfAbsent(key, ContributionProgressTotals::new).add(progress);
+        }
+
+        for (BookWordCountEvent event : events) {
+            ContributionProgressKey key = new ContributionProgressKey(
+                    event.getActorUser().getId(), event.getProgressDate()
+            );
+            if (!rollupKeys.contains(key)) {
+                totalsByContributorDate.computeIfAbsent(key, ContributionProgressTotals::new).add(event);
+            }
+        }
+
+        return List.copyOf(totalsByContributorDate.values());
     }
 
     private List<ContributionOriginResponse> contributionOrigins(List<BookWordCountEvent> events) {
@@ -299,13 +330,13 @@ public class UserDashboardService {
     private List<ContributionDailyWritingResponse> contributionDailySeries(
             LocalDate startDate,
             LocalDate endDate,
-            List<DailyWritingProgress> progressRows
+            List<ContributionProgressTotals> progressTotals
     ) {
         Map<LocalDate, ProgressTotals> totalsByDate = new HashMap<>();
-        for (DailyWritingProgress progress : progressRows) {
+        for (ContributionProgressTotals contributorTotals : progressTotals) {
             totalsByDate
-                    .computeIfAbsent(progress.getProgressDate(), ignored -> new ProgressTotals())
-                    .add(progress);
+                    .computeIfAbsent(contributorTotals.key.progressDate(), ignored -> new ProgressTotals())
+                    .add(contributorTotals.productiveWords, contributorTotals.manuscriptAdjustments);
         }
 
         return startDate.datesUntil(endDate.plusDays(1))
@@ -353,8 +384,12 @@ public class UserDashboardService {
         private long manuscriptAdjustments;
 
         void add(DailyWritingProgress progress) {
-            productiveWords += progress.getProductiveWordCountChange();
-            manuscriptAdjustments += progress.getManuscriptAdjustmentWordCount();
+            add(progress.getProductiveWordCountChange(), progress.getManuscriptAdjustmentWordCount());
+        }
+
+        void add(long productiveWordDelta, long manuscriptAdjustmentDelta) {
+            productiveWords += productiveWordDelta;
+            manuscriptAdjustments += manuscriptAdjustmentDelta;
         }
     }
 
@@ -388,9 +423,36 @@ public class UserDashboardService {
     private record ContributionOriginKey(UUID sceneId, UUID chapterId) {
     }
 
+    private record ContributionProgressKey(UUID contributorId, LocalDate progressDate) {
+    }
+
+    private static class ContributionProgressTotals {
+        private final ContributionProgressKey key;
+        private long productiveWords;
+        private long manuscriptAdjustments;
+
+        ContributionProgressTotals(ContributionProgressKey key) {
+            this.key = key;
+        }
+
+        void add(DailyWritingProgress progress) {
+            productiveWords += progress.getProductiveWordCountChange();
+            manuscriptAdjustments += progress.getManuscriptAdjustmentWordCount();
+        }
+
+        void add(BookWordCountEvent event) {
+            productiveWords += event.getProductiveWordDelta();
+            manuscriptAdjustments += event.getManuscriptWordDelta() - event.getProductiveWordDelta();
+        }
+
+        boolean hasRecordedContribution() {
+            return productiveWords != 0 || manuscriptAdjustments != 0;
+        }
+    }
+
     private static class ContributionOriginTotals {
         private final ContributionOriginKey key;
-        private final Set<LocalDate> productiveDates = new HashSet<>();
+        private final Map<ContributionProgressKey, Long> productiveWordsByContributorDate = new HashMap<>();
         private String sceneTitle;
         private String chapterTitle;
         private long productiveWords;
@@ -405,12 +467,20 @@ public class UserDashboardService {
             chapterTitle = event.getChapterTitleSnapshot();
             productiveWords += event.getProductiveWordDelta();
             manuscriptAdjustments += event.getManuscriptWordDelta() - event.getProductiveWordDelta();
-            if (event.getProductiveWordDelta() > 0) {
-                productiveDates.add(event.getProgressDate());
-            }
+            ContributionProgressKey contributorDate = new ContributionProgressKey(
+                    event.getActorUser().getId(), event.getProgressDate()
+            );
+            productiveWordsByContributorDate.merge(
+                    contributorDate, event.getProductiveWordDelta().longValue(), Long::sum
+            );
         }
 
         ContributionOriginResponse response() {
+            long writingDays = productiveWordsByContributorDate.entrySet().stream()
+                    .filter(entry -> entry.getValue() > 0)
+                    .map(entry -> entry.getKey().progressDate())
+                    .distinct()
+                    .count();
             return new ContributionOriginResponse(
                     key.sceneId(),
                     sceneTitle,
@@ -418,7 +488,7 @@ public class UserDashboardService {
                     chapterTitle,
                     productiveWords,
                     manuscriptAdjustments,
-                    productiveDates.size()
+                    writingDays
             );
         }
     }
