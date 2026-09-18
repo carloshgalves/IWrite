@@ -142,6 +142,12 @@ function DashboardContent({
 
       <SectionHeader title="Progresso do manuscrito" description="Estado compartilhado do livro, independente do contribuidor." />
       <WordTargetCard key={`book-target:${dashboard.bookId}:${canEditBookSettings}`} dashboard={dashboard} />
+      {myWriting || canViewContributorProgress ? (
+        <WritingProgressPeriodSelector
+          progressPeriod={progressPeriod}
+          onProgressPeriodChange={onProgressPeriodChange}
+        />
+      ) : null}
       {myWriting ? (
         <>
           <SectionHeader title="Meu progresso" description="Sua rotina, metas e escrita registrada para este livro." />
@@ -151,7 +157,6 @@ function DashboardContent({
             myWriting={myWriting}
             progressPeriod={progressPeriod}
             isProgressRefetching={isProgressRefetching}
-            onProgressPeriodChange={onProgressPeriodChange}
           />
         </>
       ) : null}
@@ -276,13 +281,11 @@ function DailyWritingGoalCard({
   myWriting,
   progressPeriod,
   isProgressRefetching,
-  onProgressPeriodChange,
 }: {
   dashboard: BookDashboardResponse;
   myWriting: BookMyWritingResponse;
   progressPeriod: WritingProgressPeriod;
   isProgressRefetching: boolean;
-  onProgressPeriodChange: (period: WritingProgressPeriod) => void;
 }) {
   const queryClient = useQueryClient();
   const today = myWriting.progress.today;
@@ -633,7 +636,6 @@ function DailyWritingGoalCard({
         dailyTargetWordCount={effectiveDailyTargetWordCount}
         progressPeriod={progressPeriod}
         isRefetching={isProgressRefetching}
-        onProgressPeriodChange={onProgressPeriodChange}
       />
 
       {validationMessage ? <FeedbackMessage variant="error" className="mt-3">{validationMessage}</FeedbackMessage> : null}
@@ -641,6 +643,39 @@ function DailyWritingGoalCard({
       {scheduleErrorMessage ? <FeedbackMessage variant="error" className="mt-3">{scheduleErrorMessage}</FeedbackMessage> : null}
       {successMessage ? <FeedbackMessage variant="success" className="mt-3">{successMessage}</FeedbackMessage> : null}
     </Card>
+  );
+}
+
+function WritingProgressPeriodSelector({
+  progressPeriod,
+  onProgressPeriodChange,
+}: {
+  progressPeriod: WritingProgressPeriod;
+  onProgressPeriodChange: (period: WritingProgressPeriod) => void;
+}) {
+  return (
+    <div className="flex flex-wrap items-center justify-between gap-3 rounded-lg border border-zinc-200 bg-white p-3 shadow-sm shadow-zinc-200/60">
+      <div>
+        <p className="text-sm font-semibold text-zinc-950">Período das métricas de escrita</p>
+        <p className="mt-1 text-xs text-zinc-500">Aplica-se ao progresso pessoal disponível e às contribuições deste livro.</p>
+      </div>
+      <div
+        className="flex flex-wrap gap-1 rounded-md border border-zinc-200 bg-zinc-50 p-1"
+        aria-label="Período das métricas de escrita"
+      >
+        {WRITING_PROGRESS_PERIODS.map((period) => (
+          <Button
+            key={period.value}
+            type="button"
+            variant={period.value === progressPeriod ? "primary" : "secondary"}
+            size="sm"
+            onClick={() => onProgressPeriodChange(period.value)}
+          >
+            {period.label}
+          </Button>
+        ))}
+      </div>
+    </div>
   );
 }
 
@@ -747,14 +782,12 @@ function DailyProgressChart({
   dailyTargetWordCount,
   progressPeriod,
   isRefetching,
-  onProgressPeriodChange,
 }: {
   todayDate: string;
   recentDays: BookMyWritingResponse["progress"]["recentDays"];
   dailyTargetWordCount: number | null;
   progressPeriod: WritingProgressPeriod;
   isRefetching: boolean;
-  onProgressPeriodChange: (period: WritingProgressPeriod) => void;
 }) {
   const selectedPeriod = WRITING_PROGRESS_PERIODS.find((period) => period.value === progressPeriod) ?? WRITING_PROGRESS_PERIODS[0];
   const chartEntries = buildWritingProgressChartEntries(todayDate, recentDays, progressPeriod);
@@ -786,7 +819,7 @@ function DailyProgressChart({
 
   return (
     <section className="mt-4 rounded-md border border-zinc-200 bg-white p-3">
-      <div className="flex flex-wrap items-start justify-between gap-3 border-b border-zinc-100 pb-3">
+      <div className="border-b border-zinc-100 pb-3">
         <div>
           <h3 className="text-sm font-semibold text-zinc-950">Escrita no período</h3>
           <p className="mt-1 text-xs text-zinc-500">{periodLabel}</p>
@@ -794,19 +827,6 @@ function DailyProgressChart({
             <p className="mt-1 text-xs text-zinc-500">Meta diária: {formatNumber(dailyTargetWordCount)} palavras</p>
           ) : null}
           {isRefetching ? <p className="mt-1 text-xs text-emerald-700">Atualizando período...</p> : null}
-        </div>
-        <div className="flex flex-wrap gap-1 rounded-md border border-zinc-200 bg-zinc-50 p-1" aria-label="Período do progresso diário">
-          {WRITING_PROGRESS_PERIODS.map((period) => (
-            <Button
-              key={period.value}
-              type="button"
-              variant={period.value === progressPeriod ? "primary" : "secondary"}
-              size="sm"
-              onClick={() => onProgressPeriodChange(period.value)}
-            >
-              {period.label}
-            </Button>
-          ))}
         </div>
       </div>
 

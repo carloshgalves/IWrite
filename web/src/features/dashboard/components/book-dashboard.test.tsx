@@ -188,6 +188,7 @@ describe("BookDashboard", () => {
       isError: false,
       data: {
         ...dashboardWithScenes,
+        myWriting: null,
         capabilities: dashboardWithScenes.capabilities.filter(
           (capability) => capability !== "VIEW_BOOK_CONTRIBUTOR_PROGRESS",
         ),
@@ -197,7 +198,28 @@ describe("BookDashboard", () => {
     renderWithClient(<BookDashboard bookId="book-1" />);
 
     expect(screen.queryByText("Contribuição da equipe")).not.toBeInTheDocument();
+    expect(screen.queryByText("Período das métricas de escrita")).not.toBeInTheDocument();
     expect(mocks.useBookContributions).not.toHaveBeenCalled();
+  });
+
+  test("editor troca o periodo das contribuicoes sem depender do painel pessoal", async () => {
+    mocks.useBookDashboard.mockReturnValue({
+      isLoading: false,
+      isFetching: false,
+      isError: false,
+      data: {
+        ...dashboardWithScenes,
+        myWriting: null,
+      },
+    });
+
+    renderWithClient(<BookDashboard bookId="book-1" />);
+
+    expect(screen.queryByText("Meu progresso")).not.toBeInTheDocument();
+    expect(screen.getByText("Contribuição da equipe")).toBeInTheDocument();
+    fireEvent.click(screen.getByRole("button", { name: "30 dias" }));
+
+    await waitFor(() => expect(mocks.useBookContributions).toHaveBeenLastCalledWith("book-1", "30d", undefined));
   });
 
   test("selecionar contribuidor passa o id para o hook e renderiza os dados retornados", async () => {
@@ -416,6 +438,7 @@ describe("BookDashboard", () => {
     fireEvent.click(screen.getByRole("button", { name: "30 dias" }));
 
     await waitFor(() => expect(mocks.useBookDashboard).toHaveBeenLastCalledWith("book-1", "30d"));
+    expect(mocks.useBookContributions).toHaveBeenLastCalledWith("book-1", "30d", undefined);
     expect(screen.queryByText("Carregando visão geral...")).not.toBeInTheDocument();
     expect(screen.getByRole("img", { name: /30 dias/ })).toBeInTheDocument();
     expect(screen.getByText("Atualizando período...")).toBeInTheDocument();
