@@ -253,6 +253,31 @@ class BookContributorProgressIntegrationTest extends PostgresIntegrationTest {
     }
 
     @Test
+    void contributionEventQueryAggregatesAutosavesByContributorOriginAndDate() {
+        Book book = bookService.getBook(createBook("Aggregated contribution events").id());
+        UUID sceneId = UUID.randomUUID();
+        UUID chapterId = UUID.randomUUID();
+        java.time.LocalDate progressDate = java.time.LocalDate.of(2026, 6, 24);
+
+        saveLedgerEvent(book, DEFAULT_USER_ID, sceneId, chapterId, progressDate, 10);
+        saveLedgerEvent(book, DEFAULT_USER_ID, sceneId, chapterId, progressDate, -3);
+        entityManager.clear();
+
+        var aggregates = eventRepository.findBookContributionEventAggregatesBetween(
+                book.getId(), progressDate, progressDate
+        );
+
+        assertThat(aggregates).singleElement().satisfies(aggregate -> {
+            assertThat(aggregate.getActorUserId()).isEqualTo(DEFAULT_USER_ID);
+            assertThat(aggregate.getProgressDate()).isEqualTo(progressDate);
+            assertThat(aggregate.getOriginalSceneId()).isEqualTo(sceneId);
+            assertThat(aggregate.getOriginalChapterId()).isEqualTo(chapterId);
+            assertThat(aggregate.getProductiveWordDelta()).isEqualTo(7);
+            assertThat(aggregate.getManuscriptWordDelta()).isEqualTo(7);
+        });
+    }
+
+    @Test
     void originWritingDaysUseContributorOriginDailyNet() {
         Book book = bookService.getBook(createBook("Origin writing-day net").id());
         UUID sceneId = UUID.randomUUID();

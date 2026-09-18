@@ -20,7 +20,7 @@ import com.iwrite.user.context.CurrentUserProvider;
 import com.iwrite.user.entity.User;
 import com.iwrite.user.repository.UserRepository;
 import com.iwrite.writingprogress.entity.DailyWritingProgress;
-import com.iwrite.writingprogress.ledger.entity.BookWordCountEvent;
+import com.iwrite.writingprogress.ledger.repository.BookContributionEventAggregate;
 import com.iwrite.writingprogress.ledger.repository.BookWordCountEventRepository;
 import com.iwrite.writingprogress.repository.DailyWritingProgressRepository;
 import com.iwrite.writingprogress.service.WritingDayResolver;
@@ -118,7 +118,7 @@ public class UserDashboardService {
                     startDate,
                     today
             );
-            List<BookWordCountEvent> events = eventRepository.findBookContributionEventsBetween(
+            List<BookContributionEventAggregate> events = eventRepository.findBookContributionEventAggregatesBetween(
                     book.getId(), startDate, today
             );
             List<ContributionOriginResponse> origins = contributionOrigins(events);
@@ -145,7 +145,7 @@ public class UserDashboardService {
                 startDate,
                 today
         );
-        List<BookWordCountEvent> events = eventRepository.findBookContributorEventsBetween(
+        List<BookContributionEventAggregate> events = eventRepository.findBookContributorEventAggregatesBetween(
                 book.getId(), contributorId, startDate, today
         );
         List<ContributionOriginResponse> origins = contributionOrigins(events);
@@ -277,7 +277,7 @@ public class UserDashboardService {
 
     private List<ContributionProgressTotals> reconcileContributionProgress(
             List<DailyWritingProgress> progressRows,
-            List<BookWordCountEvent> events
+            List<BookContributionEventAggregate> events
     ) {
         Map<ContributionProgressKey, ContributionProgressTotals> totalsByContributorDate = new LinkedHashMap<>();
         Set<ContributionProgressKey> rollupKeys = new HashSet<>();
@@ -290,9 +290,9 @@ public class UserDashboardService {
             totalsByContributorDate.computeIfAbsent(key, ContributionProgressTotals::new).add(progress);
         }
 
-        for (BookWordCountEvent event : events) {
+        for (BookContributionEventAggregate event : events) {
             ContributionProgressKey key = new ContributionProgressKey(
-                    event.getActorUser().getId(), event.getProgressDate()
+                    event.getActorUserId(), event.getProgressDate()
             );
             if (!rollupKeys.contains(key)) {
                 totalsByContributorDate.computeIfAbsent(key, ContributionProgressTotals::new).add(event);
@@ -302,9 +302,9 @@ public class UserDashboardService {
         return List.copyOf(totalsByContributorDate.values());
     }
 
-    private List<ContributionOriginResponse> contributionOrigins(List<BookWordCountEvent> events) {
+    private List<ContributionOriginResponse> contributionOrigins(List<BookContributionEventAggregate> events) {
         Map<ContributionOriginKey, ContributionOriginTotals> totalsByOrigin = new LinkedHashMap<>();
-        for (BookWordCountEvent event : events) {
+        for (BookContributionEventAggregate event : events) {
             if (event.getOriginalSceneId() == null) {
                 continue;
             }
@@ -440,7 +440,7 @@ public class UserDashboardService {
             manuscriptAdjustments += progress.getManuscriptAdjustmentWordCount();
         }
 
-        void add(BookWordCountEvent event) {
+        void add(BookContributionEventAggregate event) {
             productiveWords += event.getProductiveWordDelta();
             manuscriptAdjustments += event.getManuscriptWordDelta() - event.getProductiveWordDelta();
         }
@@ -462,16 +462,16 @@ public class UserDashboardService {
             this.key = key;
         }
 
-        void add(BookWordCountEvent event) {
+        void add(BookContributionEventAggregate event) {
             sceneTitle = event.getSceneTitleSnapshot();
             chapterTitle = event.getChapterTitleSnapshot();
             productiveWords += event.getProductiveWordDelta();
             manuscriptAdjustments += event.getManuscriptWordDelta() - event.getProductiveWordDelta();
             ContributionProgressKey contributorDate = new ContributionProgressKey(
-                    event.getActorUser().getId(), event.getProgressDate()
+                    event.getActorUserId(), event.getProgressDate()
             );
             productiveWordsByContributorDate.merge(
-                    contributorDate, event.getProductiveWordDelta().longValue(), Long::sum
+                    contributorDate, event.getProductiveWordDelta(), Long::sum
             );
         }
 
