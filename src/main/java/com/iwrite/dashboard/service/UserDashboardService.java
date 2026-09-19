@@ -294,8 +294,13 @@ public class UserDashboardService {
             ContributionProgressKey key = new ContributionProgressKey(
                     event.getActorUserId(), event.getProgressDate()
             );
-            if (!rollupKeys.contains(key)) {
-                totalsByContributorDate.computeIfAbsent(key, ContributionProgressTotals::new).add(event);
+            ContributionProgressTotals totals = totalsByContributorDate.computeIfAbsent(
+                    key, ContributionProgressTotals::new
+            );
+            if (rollupKeys.contains(key)) {
+                totals.recordContribution();
+            } else {
+                totals.add(event);
             }
         }
 
@@ -428,6 +433,7 @@ public class UserDashboardService {
 
     private static class ContributionProgressTotals {
         private final ContributionProgressKey key;
+        private boolean recordedContribution;
         private long productiveWords;
         private long manuscriptAdjustments;
 
@@ -438,15 +444,23 @@ public class UserDashboardService {
         void add(DailyWritingProgress progress) {
             productiveWords += progress.getProductiveWordCountChange();
             manuscriptAdjustments += progress.getManuscriptAdjustmentWordCount();
+            if (UserDashboardService.hasRecordedContribution(progress)) {
+                recordContribution();
+            }
         }
 
         void add(BookContributionEventAggregate event) {
             productiveWords += event.getProductiveWordDelta();
             manuscriptAdjustments += event.getManuscriptWordDelta() - event.getProductiveWordDelta();
+            recordContribution();
+        }
+
+        void recordContribution() {
+            recordedContribution = true;
         }
 
         boolean hasRecordedContribution() {
-            return productiveWords != 0 || manuscriptAdjustments != 0;
+            return recordedContribution;
         }
     }
 

@@ -302,6 +302,44 @@ class BookContributorProgressIntegrationTest extends PostgresIntegrationTest {
     }
 
     @Test
+    void contributorCountPreservesRecordedActivityWhenEventDeltasNetToZero() {
+        Book book = bookService.getBook(createBook("Net-zero contributor activity").id());
+        UUID activeContributorId = grantRole(
+                book.getId(), "Positive contributor", BookRole.LEGACY_COLLABORATOR
+        );
+        UUID inactiveContributorId = grantRole(
+                book.getId(), "Contributor without activity", BookRole.AUTHOR
+        );
+        UUID chapterId = UUID.randomUUID();
+        java.time.LocalDate progressDate = java.time.LocalDate.of(2026, 6, 24);
+
+        saveLedgerEvent(book, DEFAULT_USER_ID, UUID.randomUUID(), chapterId, progressDate, 10);
+        saveLedgerEvent(book, DEFAULT_USER_ID, UUID.randomUUID(), chapterId, progressDate, -10);
+        saveLedgerEvent(book, activeContributorId, UUID.randomUUID(), chapterId, progressDate, 5);
+        saveProgress(book, DEFAULT_USER_ID, 0, 0);
+        entityManager.clear();
+
+        var allContributors = dashboardService.getBookContributions(
+                book.getId(), WritingProgressPeriod.SEVEN_DAYS, null
+        );
+        var netZeroContributor = dashboardService.getBookContributions(
+                book.getId(), WritingProgressPeriod.SEVEN_DAYS, DEFAULT_USER_ID
+        );
+        var inactiveContributor = dashboardService.getBookContributions(
+                book.getId(), WritingProgressPeriod.SEVEN_DAYS, inactiveContributorId
+        );
+
+        assertThat(allContributors.summary().contributorsCount()).isEqualTo(2);
+        assertThat(allContributors.summary().productiveWords()).isEqualTo(5);
+        assertThat(allContributors.summary().writingDays()).isEqualTo(1);
+        assertThat(netZeroContributor.summary().contributorsCount()).isEqualTo(1);
+        assertThat(netZeroContributor.summary().productiveWords()).isZero();
+        assertThat(netZeroContributor.summary().writingDays()).isZero();
+        assertThat(netZeroContributor.origins()).hasSize(2);
+        assertThat(inactiveContributor.summary().contributorsCount()).isZero();
+    }
+
+    @Test
     void originWritingDaysKeepPositiveNetsSeparatedByContributorAndOrigin() {
         Book book = bookService.getBook(createBook("Separated origin writing days").id());
         UUID otherContributorId = grantRole(book.getId(), "Other origin contributor", BookRole.LEGACY_COLLABORATOR);
