@@ -25,6 +25,7 @@ import { DashboardStatusCard } from "@/features/dashboard/components/dashboard-s
 import type {
   BookDashboardResponse,
   BookMyWritingResponse,
+  ContributorSummaryResponse,
   EntityUsageResponse,
   PovStatsResponse,
 } from "@/features/dashboard/types";
@@ -689,6 +690,25 @@ function BookContributionCard({
   const [contributorId, setContributorId] = useState<string>("");
   const contributionsQuery = useBookContributions(bookId, progressPeriod, contributorId || undefined);
   const contributions = contributionsQuery.data;
+  const allScopeContributors = contributions?.scope === "ALL_CONTRIBUTORS"
+    ? contributions.availableContributors
+    : null;
+  const [availableContributors, setAvailableContributors] = useState<ContributorSummaryResponse[]>(
+    () => allScopeContributors ?? [],
+  );
+
+  // Filtering changes the query key, so its metrics intentionally have no placeholder data. Keep
+  // only the all-scope option list stable: it is navigation back to a valid query, never authority
+  // for the selected contributor's metrics. The Book-scoped card is re-keyed when the Book changes.
+  useEffect(() => {
+    if (!allScopeContributors) {
+      return;
+    }
+
+    setAvailableContributors((current) => contributorsMatch(current, allScopeContributors)
+      ? current
+      : allScopeContributors);
+  }, [allScopeContributors]);
 
   return (
     <Card className="p-4">
@@ -697,7 +717,7 @@ function BookContributionCard({
           title="Contribuição da equipe"
           description="Atividade autenticada e registrada neste livro, sem pontuação ou comparação entre contribuidores."
         />
-        {contributions?.availableContributors.length ? (
+        {availableContributors.length ? (
           <label className="grid gap-1 text-xs font-medium text-zinc-600">
             Contribuidor
             <select
@@ -706,7 +726,7 @@ function BookContributionCard({
               className="rounded-md border border-zinc-300 bg-white px-3 py-2 text-sm text-zinc-900"
             >
               <option value="">Todos os contribuidores</option>
-              {contributions.availableContributors.map((contributor) => (
+              {availableContributors.map((contributor) => (
                 <option key={contributor.userId} value={contributor.userId}>
                   {contributor.displayName}
                 </option>
@@ -774,6 +794,16 @@ function BookContributionCard({
       ) : null}
     </Card>
   );
+}
+
+function contributorsMatch(
+  current: ContributorSummaryResponse[],
+  next: ContributorSummaryResponse[],
+) {
+  return current.length === next.length && current.every((contributor, index) => (
+    contributor.userId === next[index]?.userId
+    && contributor.displayName === next[index]?.displayName
+  ));
 }
 
 function DailyProgressChart({

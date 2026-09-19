@@ -289,6 +289,57 @@ describe("BookDashboard", () => {
     expect(screen.queryByText("Contribuidores")).not.toBeInTheDocument();
   });
 
+  test("mantem o seletor para voltar a todos quando o contribuidor selecionado deixa de ser elegivel", async () => {
+    mocks.useBookDashboard.mockReturnValue({ isLoading: false, isError: false, data: dashboardWithScenes });
+    mocks.useBookContributions.mockImplementation((_bookId: string, _period: string, contributorId?: string) => {
+      if (contributorId === "user-2") {
+        return {
+          isLoading: false,
+          isError: true,
+          data: undefined,
+        };
+      }
+
+      return {
+        isLoading: false,
+        isError: false,
+        data: {
+          period: { value: "7d", startDate: "2026-05-08", endDate: "2026-05-14" },
+          scope: "ALL_CONTRIBUTORS",
+          selectedContributor: null,
+          availableContributors: [
+            { userId: "user-1", displayName: "Carlos" },
+            { userId: "user-2", displayName: "Bruna" },
+          ],
+          summary: {
+            productiveWords: 30,
+            manuscriptAdjustments: 0,
+            writingDays: 2,
+            contributorsCount: 2,
+            distinctScenes: 2,
+            distinctChapters: 1,
+          },
+          dailySeries: [{ date: "2026-05-14", productiveWords: 30, manuscriptAdjustments: 0 }],
+          origins: [],
+        },
+      };
+    });
+
+    renderWithClient(<BookDashboard bookId="book-1" />);
+
+    fireEvent.change(screen.getByLabelText("Contribuidor"), { target: { value: "user-2" } });
+
+    await waitFor(() => expect(mocks.useBookContributions).toHaveBeenLastCalledWith("book-1", "7d", "user-2"));
+    expect(screen.getByText("Não foi possível carregar as contribuições registradas.")).toBeInTheDocument();
+    expect(screen.queryByText("Palavras produtivas")).not.toBeInTheDocument();
+
+    fireEvent.change(screen.getByLabelText("Contribuidor"), { target: { value: "" } });
+
+    await waitFor(() => expect(mocks.useBookContributions).toHaveBeenLastCalledWith("book-1", "7d", undefined));
+    expect(screen.queryByText("Não foi possível carregar as contribuições registradas.")).not.toBeInTheDocument();
+    expect(screen.getByText("Palavras produtivas")).toBeInTheDocument();
+  });
+
   test("contribuicoes vazias exibem estado vazio", () => {
     mocks.useBookDashboard.mockImplementation((bookId: string) => ({
       isLoading: false,
