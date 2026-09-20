@@ -25,6 +25,7 @@ import { DashboardStatusCard } from "@/features/dashboard/components/dashboard-s
 import type {
   BookDashboardResponse,
   BookMyWritingResponse,
+  ContributorSummaryResponse,
   EntityUsageResponse,
   PovStatsResponse,
 } from "@/features/dashboard/types";
@@ -101,6 +102,7 @@ function DashboardContent({
   // letting a stale draft survive and later save against the wrong Book.
   const canManageOwnGoal = dashboard.capabilities.includes("MANAGE_OWN_PERSONAL_WRITING_GOAL");
   const canEditBookSettings = dashboard.capabilities.includes("EDIT_BOOK_SETTINGS");
+  const canViewContributorProgress = dashboard.capabilities.includes("VIEW_BOOK_CONTRIBUTOR_PROGRESS");
   // The backend omits the whole personal projection for a role that may not keep a writing goal, so
   // there is nothing personal to render — not a routine, not a per-day target snapshot.
   const myWriting = dashboard.myWriting;
@@ -141,6 +143,12 @@ function DashboardContent({
 
       <SectionHeader title="Progresso do manuscrito" description="Estado compartilhado do livro, independente do contribuidor." />
       <WordTargetCard key={`book-target:${dashboard.bookId}:${canEditBookSettings}`} dashboard={dashboard} />
+      {myWriting || canViewContributorProgress ? (
+        <WritingProgressPeriodSelector
+          progressPeriod={progressPeriod}
+          onProgressPeriodChange={onProgressPeriodChange}
+        />
+      ) : null}
       {myWriting ? (
         <>
           <SectionHeader title="Meu progresso" description="Sua rotina, metas e escrita registrada para este livro." />
@@ -150,11 +158,12 @@ function DashboardContent({
             myWriting={myWriting}
             progressPeriod={progressPeriod}
             isProgressRefetching={isProgressRefetching}
-            onProgressPeriodChange={onProgressPeriodChange}
           />
         </>
       ) : null}
-      <BookContributionCard key={dashboard.bookId} bookId={dashboard.bookId} progressPeriod={progressPeriod} />
+      {canViewContributorProgress ? (
+        <BookContributionCard key={dashboard.bookId} bookId={dashboard.bookId} progressPeriod={progressPeriod} />
+      ) : null}
 
       <Card className="p-4 transition-[transform,background-color,box-shadow] duration-150 ease-out hover:scale-[1.01] hover:bg-white hover:shadow-sm hover:shadow-zinc-200/70">
         <div className="flex flex-wrap items-end justify-between gap-3">
@@ -273,13 +282,11 @@ function DailyWritingGoalCard({
   myWriting,
   progressPeriod,
   isProgressRefetching,
-  onProgressPeriodChange,
 }: {
   dashboard: BookDashboardResponse;
   myWriting: BookMyWritingResponse;
   progressPeriod: WritingProgressPeriod;
   isProgressRefetching: boolean;
-  onProgressPeriodChange: (period: WritingProgressPeriod) => void;
 }) {
   const queryClient = useQueryClient();
   const today = myWriting.progress.today;
@@ -630,7 +637,6 @@ function DailyWritingGoalCard({
         dailyTargetWordCount={effectiveDailyTargetWordCount}
         progressPeriod={progressPeriod}
         isRefetching={isProgressRefetching}
-        onProgressPeriodChange={onProgressPeriodChange}
       />
 
       {validationMessage ? <FeedbackMessage variant="error" className="mt-3">{validationMessage}</FeedbackMessage> : null}
@@ -638,6 +644,39 @@ function DailyWritingGoalCard({
       {scheduleErrorMessage ? <FeedbackMessage variant="error" className="mt-3">{scheduleErrorMessage}</FeedbackMessage> : null}
       {successMessage ? <FeedbackMessage variant="success" className="mt-3">{successMessage}</FeedbackMessage> : null}
     </Card>
+  );
+}
+
+function WritingProgressPeriodSelector({
+  progressPeriod,
+  onProgressPeriodChange,
+}: {
+  progressPeriod: WritingProgressPeriod;
+  onProgressPeriodChange: (period: WritingProgressPeriod) => void;
+}) {
+  return (
+    <div className="flex flex-wrap items-center justify-between gap-3 rounded-lg border border-zinc-200 bg-white p-3 shadow-sm shadow-zinc-200/60">
+      <div>
+        <p className="text-sm font-semibold text-zinc-950">Período das métricas de escrita</p>
+        <p className="mt-1 text-xs text-zinc-500">Aplica-se ao progresso pessoal disponível e às contribuições deste livro.</p>
+      </div>
+      <div
+        className="flex flex-wrap gap-1 rounded-md border border-zinc-200 bg-zinc-50 p-1"
+        aria-label="Período das métricas de escrita"
+      >
+        {WRITING_PROGRESS_PERIODS.map((period) => (
+          <Button
+            key={period.value}
+            type="button"
+            variant={period.value === progressPeriod ? "primary" : "secondary"}
+            size="sm"
+            onClick={() => onProgressPeriodChange(period.value)}
+          >
+            {period.label}
+          </Button>
+        ))}
+      </div>
+    </div>
   );
 }
 
@@ -651,15 +690,34 @@ function BookContributionCard({
   const [contributorId, setContributorId] = useState<string>("");
   const contributionsQuery = useBookContributions(bookId, progressPeriod, contributorId || undefined);
   const contributions = contributionsQuery.data;
+  const allScopeContributors = contributions?.scope === "ALL_CONTRIBUTORS"
+    ? contributions.availableContributors
+    : null;
+  const [availableContributors, setAvailableContributors] = useState<ContributorSummaryResponse[]>(
+    () => allScopeContributors ?? [],
+  );
+
+  // Filtering changes the query key, so its metrics intentionally have no placeholder data. Keep
+  // only the all-scope option list stable: it is navigation back to a valid query, never authority
+  // for the selected contributor's metrics. The Book-scoped card is re-keyed when the Book changes.
+  useEffect(() => {
+    if (!allScopeContributors) {
+      return;
+    }
+
+    setAvailableContributors((current) => contributorsMatch(current, allScopeContributors)
+      ? current
+      : allScopeContributors);
+  }, [allScopeContributors]);
 
   return (
     <Card className="p-4">
       <div className="flex flex-wrap items-start justify-between gap-3">
         <SectionHeader
           title="Contribuição da equipe"
-          description="Palavras produtivas registradas por contribuidores deste livro no período selecionado."
+          description="Atividade autenticada e registrada neste livro, sem pontuação ou comparação entre contribuidores."
         />
-        {contributions?.availableContributors.length ? (
+        {availableContributors.length ? (
           <label className="grid gap-1 text-xs font-medium text-zinc-600">
             Contribuidor
             <select
@@ -668,7 +726,7 @@ function BookContributionCard({
               className="rounded-md border border-zinc-300 bg-white px-3 py-2 text-sm text-zinc-900"
             >
               <option value="">Todos os contribuidores</option>
-              {contributions.availableContributors.map((contributor) => (
+              {availableContributors.map((contributor) => (
                 <option key={contributor.userId} value={contributor.userId}>
                   {contributor.displayName}
                 </option>
@@ -687,12 +745,16 @@ function BookContributionCard({
         </FeedbackMessage>
       ) : null}
       {contributions ? (
-        <div className="mt-4 grid gap-3 sm:grid-cols-4">
+        <div className="mt-4 grid gap-3 sm:grid-cols-2 xl:grid-cols-5">
           <DashboardMetricCard label="Palavras produtivas" value={formatSignedNumber(contributions.summary.productiveWords)} />
           <DashboardMetricCard label="Ajustes do manuscrito" value={formatSignedNumber(contributions.summary.manuscriptAdjustments)} />
           <DashboardMetricCard label="Dias com escrita" value={formatNumber(contributions.summary.writingDays)} />
-          <DashboardMetricCard label="Contribuidores" value={formatNumber(contributions.summary.contributorsCount)} />
-          <div className="sm:col-span-4">
+          <DashboardMetricCard label="Cenas distintas" value={formatNumber(contributions.summary.distinctScenes)} />
+          <DashboardMetricCard label="Capítulos distintos" value={formatNumber(contributions.summary.distinctChapters)} />
+          {contributions.scope === "ALL_CONTRIBUTORS" ? (
+            <DashboardMetricCard label="Contribuidores" value={formatNumber(contributions.summary.contributorsCount)} />
+          ) : null}
+          <div className="sm:col-span-2 xl:col-span-5">
             <MiniWritingSeries
               entries={contributions.dailySeries.map((day) => ({
                 date: day.date,
@@ -701,10 +763,47 @@ function BookContributionCard({
               }))}
             />
           </div>
+          {contributions.origins.length ? (
+            <div className="sm:col-span-2 xl:col-span-5 rounded-md border border-zinc-200 bg-zinc-50 p-3">
+              <p className="text-sm font-medium text-zinc-900">Origens no período</p>
+              <ol className="mt-3 grid gap-2">
+                {contributions.origins.map((origin) => (
+                  <li
+                    key={`${origin.sceneId}:${origin.chapterId ?? "chapter-unavailable"}`}
+                    className="flex flex-wrap items-start justify-between gap-2 rounded-md bg-white px-3 py-2 text-sm"
+                  >
+                    <span>
+                      <span className="font-medium text-zinc-950">{origin.sceneTitle}</span>
+                      <span className="block text-xs text-zinc-500">{origin.chapterTitle ?? "Capítulo indisponível"}</span>
+                    </span>
+                    <span className="text-right text-zinc-700">
+                      {formatSignedNumber(origin.productiveWords)} produtivas
+                      {origin.manuscriptAdjustments !== 0
+                        ? ` · ${formatSignedNumber(origin.manuscriptAdjustments)} ajustes`
+                        : ""}
+                      <span className="block text-xs text-zinc-500">
+                        {formatNumber(origin.writingDays)} {origin.writingDays === 1 ? "dia com escrita" : "dias com escrita"}
+                      </span>
+                    </span>
+                  </li>
+                ))}
+              </ol>
+            </div>
+          ) : null}
         </div>
       ) : null}
     </Card>
   );
+}
+
+function contributorsMatch(
+  current: ContributorSummaryResponse[],
+  next: ContributorSummaryResponse[],
+) {
+  return current.length === next.length && current.every((contributor, index) => (
+    contributor.userId === next[index]?.userId
+    && contributor.displayName === next[index]?.displayName
+  ));
 }
 
 function DailyProgressChart({
@@ -713,14 +812,12 @@ function DailyProgressChart({
   dailyTargetWordCount,
   progressPeriod,
   isRefetching,
-  onProgressPeriodChange,
 }: {
   todayDate: string;
   recentDays: BookMyWritingResponse["progress"]["recentDays"];
   dailyTargetWordCount: number | null;
   progressPeriod: WritingProgressPeriod;
   isRefetching: boolean;
-  onProgressPeriodChange: (period: WritingProgressPeriod) => void;
 }) {
   const selectedPeriod = WRITING_PROGRESS_PERIODS.find((period) => period.value === progressPeriod) ?? WRITING_PROGRESS_PERIODS[0];
   const chartEntries = buildWritingProgressChartEntries(todayDate, recentDays, progressPeriod);
@@ -752,7 +849,7 @@ function DailyProgressChart({
 
   return (
     <section className="mt-4 rounded-md border border-zinc-200 bg-white p-3">
-      <div className="flex flex-wrap items-start justify-between gap-3 border-b border-zinc-100 pb-3">
+      <div className="border-b border-zinc-100 pb-3">
         <div>
           <h3 className="text-sm font-semibold text-zinc-950">Escrita no período</h3>
           <p className="mt-1 text-xs text-zinc-500">{periodLabel}</p>
@@ -760,19 +857,6 @@ function DailyProgressChart({
             <p className="mt-1 text-xs text-zinc-500">Meta diária: {formatNumber(dailyTargetWordCount)} palavras</p>
           ) : null}
           {isRefetching ? <p className="mt-1 text-xs text-emerald-700">Atualizando período...</p> : null}
-        </div>
-        <div className="flex flex-wrap gap-1 rounded-md border border-zinc-200 bg-zinc-50 p-1" aria-label="Período do progresso diário">
-          {WRITING_PROGRESS_PERIODS.map((period) => (
-            <Button
-              key={period.value}
-              type="button"
-              variant={period.value === progressPeriod ? "primary" : "secondary"}
-              size="sm"
-              onClick={() => onProgressPeriodChange(period.value)}
-            >
-              {period.label}
-            </Button>
-          ))}
         </div>
       </div>
 

@@ -1,6 +1,6 @@
 # Migrations e evolução do banco
 
-O IWrite usa Flyway e PostgreSQL. O migration head atual é **V36**.
+O IWrite usa Flyway e PostgreSQL. O migration head atual é **V37**.
 
 ## Regras
 
@@ -189,12 +189,34 @@ Separa a meta diária pessoal dos settings compartilhados do Book (#206):
 
 A remoção da coluna é deliberadamente incompatível com versões anteriores da aplicação: uma instância pré-V36 ainda seleciona `books.daily_target_word_count` e passa a falhar em toda leitura de Book assim que a migration roda. O deploy desta versão é, portanto, parada e substituição, não rolling — o que é adequado à topologia de backend único, mas precisa ser respeitado por qualquer ambiente que execute mais de uma instância.
 
+### V37 — origem histórica do Book Contributor Progress
+
+`V37__add_book_contributor_progress_event_origin.sql`
+
+Completa o ledger necessário ao progresso quantitativo e privado por contribuidor (#211):
+
+- persiste em cada evento a `progress_date` já resolvida no instante autenticado da mutation, impedindo que uma mudança posterior de timezone reinterprete o período histórico;
+- preserva `original_chapter_id` e `chapter_title_snapshot` junto da origem de Scene, sem FK para o capítulo histórico, de modo que exclusões futuras não apaguem a proveniência Book-scoped;
+- recupera a data dos eventos legados a partir de um único agregado diário autoritativo correspondente; quando schemas anteriores deixaram um evento isolado ou a evidência é ambígua, usa a data UTC imutável do próprio evento como fallback compatível e estável, nunca o timezone atual mutável do User;
+- não inventa o Chapter de eventos legados a partir da posição atual da Scene, que pode ter mudado; esses eventos preservam a origem de Scene já existente e passam a expor Chapter desconhecido, enquanto eventos novos gravam o snapshot exato;
+- adiciona o índice `book_id + progress_date + actor_user_id` para as leituras de período do Book e do contribuidor.
+
+V37 também é um cutover de parada e substituição, coerente com a topologia de backend único já
+exigida por V36. A migration adiciona colunas, atualiza todo o ledger, torna `progress_date`
+obrigatória e cria o índice na mesma transação Flyway; o lock obtido pelo `ALTER TABLE` permanece
+até o commit, e o tempo de indisponibilidade cresce com `book_word_count_events`. Uma instância
+pré-V37 não pode coexistir depois do cutover porque ainda tentaria inserir eventos sem
+`progress_date`. Se a migration falhar, a transação inteira é revertida: corrija a causa e repita o
+deploy antes de iniciar a aplicação; depois que V37 for publicada, qualquer correção de dados ou
+schema deve entrar em nova migration forward-only.
+
 ## Estado atual
 
-- migration head: **V36**;
+- migration head: **V37**;
 - tenant e ownership de livro persistidos;
 - colaboradores persistidos com Book Role explícito e revogável;
 - metas diárias pessoais persistidas por User + Book em `book_personal_writing_goals`;
+- eventos de word count preservam data de progresso e origem de Scene/Chapter para métricas atribuíveis;
 - convites seguros persistidos;
 - auditoria de domínio e LLM persistidas;
 - credenciais reais persistidas separadamente;

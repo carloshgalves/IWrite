@@ -4,6 +4,8 @@ public record ContributionSummaryResponse(
         long productiveWords,
         long manuscriptAdjustments,
         long writingDays,
-        long contributorsCount
+        long contributorsCount,
+        long distinctScenes,
+        long distinctChapters
 ) {
 }

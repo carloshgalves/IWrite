@@ -8,6 +8,7 @@ public record BookContributionDashboardResponse(
         ContributorSummaryResponse selectedContributor,
         List<ContributorSummaryResponse> availableContributors,
         ContributionSummaryResponse summary,
-        List<ContributionDailyWritingResponse> dailySeries
+        List<ContributionDailyWritingResponse> dailySeries,
+        List<ContributionOriginResponse> origins
 ) {
 }

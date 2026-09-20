@@ -9,6 +9,8 @@ public record WordCountEventCommand(
         UUID sceneId,
         UUID originalSceneId,
         String sceneTitleSnapshot,
+        UUID originalChapterId,
+        String chapterTitleSnapshot,
         BookWordCountEventType eventType,
         int productiveWordDelta,
         int manuscriptWordDelta,

@@ -61,9 +61,22 @@ describe("BookDashboard", () => {
           manuscriptAdjustments: 100,
           writingDays: 1,
           contributorsCount: 1,
+          distinctScenes: 1,
+          distinctChapters: 1,
         },
         dailySeries: [
           { date: "2026-05-14", productiveWords: 300, manuscriptAdjustments: 100 },
+        ],
+        origins: [
+          {
+            sceneId: "scene-1",
+            sceneTitle: "A chave aparece",
+            chapterId: "chapter-1",
+            chapterTitle: "Capitulo 1",
+            productiveWords: 300,
+            manuscriptAdjustments: 100,
+            writingDays: 1,
+          },
         ],
       },
     });
@@ -165,6 +178,48 @@ describe("BookDashboard", () => {
     expect(mocks.useBookContributions).toHaveBeenLastCalledWith("book-1", "7d", undefined);
     expect(screen.getByText("Contribuição da equipe")).toBeInTheDocument();
     expect(screen.getByText("Contribuidores")).toBeInTheDocument();
+    expect(screen.getByText("Cenas distintas")).toBeInTheDocument();
+    expect(screen.getByText("Capítulos distintos")).toBeInTheDocument();
+  });
+
+  test("nao consulta nem exibe contribuicoes sem a capability privada", () => {
+    mocks.useBookDashboard.mockReturnValue({
+      isLoading: false,
+      isError: false,
+      data: {
+        ...dashboardWithScenes,
+        myWriting: null,
+        capabilities: dashboardWithScenes.capabilities.filter(
+          (capability) => capability !== "VIEW_BOOK_CONTRIBUTOR_PROGRESS",
+        ),
+      },
+    });
+
+    renderWithClient(<BookDashboard bookId="book-1" />);
+
+    expect(screen.queryByText("Contribuição da equipe")).not.toBeInTheDocument();
+    expect(screen.queryByText("Período das métricas de escrita")).not.toBeInTheDocument();
+    expect(mocks.useBookContributions).not.toHaveBeenCalled();
+  });
+
+  test("editor troca o periodo das contribuicoes sem depender do painel pessoal", async () => {
+    mocks.useBookDashboard.mockReturnValue({
+      isLoading: false,
+      isFetching: false,
+      isError: false,
+      data: {
+        ...dashboardWithScenes,
+        myWriting: null,
+      },
+    });
+
+    renderWithClient(<BookDashboard bookId="book-1" />);
+
+    expect(screen.queryByText("Meu progresso")).not.toBeInTheDocument();
+    expect(screen.getByText("Contribuição da equipe")).toBeInTheDocument();
+    fireEvent.click(screen.getByRole("button", { name: "30 dias" }));
+
+    await waitFor(() => expect(mocks.useBookContributions).toHaveBeenLastCalledWith("book-1", "30d", undefined));
   });
 
   test("selecionar contribuidor passa o id para o hook e renderiza os dados retornados", async () => {
@@ -181,8 +236,26 @@ describe("BookDashboard", () => {
               { userId: "user-1", displayName: "Carlos" },
               { userId: "user-2", displayName: "Bruna" },
             ],
-            summary: { productiveWords: 7, manuscriptAdjustments: -2, writingDays: 1, contributorsCount: 1 },
+            summary: {
+              productiveWords: 7,
+              manuscriptAdjustments: -2,
+              writingDays: 1,
+              contributorsCount: 1,
+              distinctScenes: 1,
+              distinctChapters: 1,
+            },
             dailySeries: [{ date: "2026-05-14", productiveWords: 7, manuscriptAdjustments: -2 }],
+            origins: [
+              {
+                sceneId: "scene-2",
+                sceneTitle: "A carta",
+                chapterId: "chapter-2",
+                chapterTitle: "Capitulo 2",
+                productiveWords: 7,
+                manuscriptAdjustments: -2,
+                writingDays: 1,
+              },
+            ],
           }
         : {
             period: { value: "7d", startDate: "2026-05-08", endDate: "2026-05-14" },
@@ -192,8 +265,16 @@ describe("BookDashboard", () => {
               { userId: "user-1", displayName: "Carlos" },
               { userId: "user-2", displayName: "Bruna" },
             ],
-            summary: { productiveWords: 30, manuscriptAdjustments: 0, writingDays: 2, contributorsCount: 2 },
+            summary: {
+              productiveWords: 30,
+              manuscriptAdjustments: 0,
+              writingDays: 2,
+              contributorsCount: 2,
+              distinctScenes: 2,
+              distinctChapters: 1,
+            },
             dailySeries: [{ date: "2026-05-14", productiveWords: 30, manuscriptAdjustments: 0 }],
+            origins: [],
           },
     }));
 
@@ -202,7 +283,61 @@ describe("BookDashboard", () => {
     fireEvent.change(screen.getByLabelText("Contribuidor"), { target: { value: "user-2" } });
 
     await waitFor(() => expect(mocks.useBookContributions).toHaveBeenLastCalledWith("book-1", "7d", "user-2"));
-    expect(screen.getByText("7 produtivas · -2 ajustes")).toBeInTheDocument();
+    expect(screen.getAllByText("7 produtivas · -2 ajustes")).toHaveLength(2);
+    expect(screen.getByText("A carta")).toBeInTheDocument();
+    expect(screen.getByText("Capitulo 2")).toBeInTheDocument();
+    expect(screen.queryByText("Contribuidores")).not.toBeInTheDocument();
+  });
+
+  test("mantem o seletor para voltar a todos quando o contribuidor selecionado deixa de ser elegivel", async () => {
+    mocks.useBookDashboard.mockReturnValue({ isLoading: false, isError: false, data: dashboardWithScenes });
+    mocks.useBookContributions.mockImplementation((_bookId: string, _period: string, contributorId?: string) => {
+      if (contributorId === "user-2") {
+        return {
+          isLoading: false,
+          isError: true,
+          data: undefined,
+        };
+      }
+
+      return {
+        isLoading: false,
+        isError: false,
+        data: {
+          period: { value: "7d", startDate: "2026-05-08", endDate: "2026-05-14" },
+          scope: "ALL_CONTRIBUTORS",
+          selectedContributor: null,
+          availableContributors: [
+            { userId: "user-1", displayName: "Carlos" },
+            { userId: "user-2", displayName: "Bruna" },
+          ],
+          summary: {
+            productiveWords: 30,
+            manuscriptAdjustments: 0,
+            writingDays: 2,
+            contributorsCount: 2,
+            distinctScenes: 2,
+            distinctChapters: 1,
+          },
+          dailySeries: [{ date: "2026-05-14", productiveWords: 30, manuscriptAdjustments: 0 }],
+          origins: [],
+        },
+      };
+    });
+
+    renderWithClient(<BookDashboard bookId="book-1" />);
+
+    fireEvent.change(screen.getByLabelText("Contribuidor"), { target: { value: "user-2" } });
+
+    await waitFor(() => expect(mocks.useBookContributions).toHaveBeenLastCalledWith("book-1", "7d", "user-2"));
+    expect(screen.getByText("Não foi possível carregar as contribuições registradas.")).toBeInTheDocument();
+    expect(screen.queryByText("Palavras produtivas")).not.toBeInTheDocument();
+
+    fireEvent.change(screen.getByLabelText("Contribuidor"), { target: { value: "" } });
+
+    await waitFor(() => expect(mocks.useBookContributions).toHaveBeenLastCalledWith("book-1", "7d", undefined));
+    expect(screen.queryByText("Não foi possível carregar as contribuições registradas.")).not.toBeInTheDocument();
+    expect(screen.getByText("Palavras produtivas")).toBeInTheDocument();
   });
 
   test("contribuicoes vazias exibem estado vazio", () => {
@@ -219,8 +354,16 @@ describe("BookDashboard", () => {
         scope: "SINGLE_CONTRIBUTOR",
         selectedContributor: { userId: "user-1", displayName: "Carlos" },
         availableContributors: [],
-        summary: { productiveWords: 0, manuscriptAdjustments: 0, writingDays: 0, contributorsCount: 0 },
+        summary: {
+          productiveWords: 0,
+          manuscriptAdjustments: 0,
+          writingDays: 0,
+          contributorsCount: 0,
+          distinctScenes: 0,
+          distinctChapters: 0,
+        },
         dailySeries: [],
+        origins: [],
       },
     });
 
@@ -246,8 +389,16 @@ describe("BookDashboard", () => {
           { userId: "user-1", displayName: "Carlos" },
           { userId: "user-2", displayName: "Bruna" },
         ],
-        summary: { productiveWords: 30, manuscriptAdjustments: 0, writingDays: 2, contributorsCount: 2 },
+        summary: {
+          productiveWords: 30,
+          manuscriptAdjustments: 0,
+          writingDays: 2,
+          contributorsCount: 2,
+          distinctScenes: 2,
+          distinctChapters: 1,
+        },
         dailySeries: [{ date: "2026-05-14", productiveWords: 30, manuscriptAdjustments: 0 }],
+        origins: [],
       },
     });
 
@@ -338,6 +489,7 @@ describe("BookDashboard", () => {
     fireEvent.click(screen.getByRole("button", { name: "30 dias" }));
 
     await waitFor(() => expect(mocks.useBookDashboard).toHaveBeenLastCalledWith("book-1", "30d"));
+    expect(mocks.useBookContributions).toHaveBeenLastCalledWith("book-1", "30d", undefined);
     expect(screen.queryByText("Carregando visão geral...")).not.toBeInTheDocument();
     expect(screen.getByRole("img", { name: /30 dias/ })).toBeInTheDocument();
     expect(screen.getByText("Atualizando período...")).toBeInTheDocument();

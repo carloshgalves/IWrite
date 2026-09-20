@@ -80,7 +80,7 @@ class V22WritingOwnershipMigrationIntegrationTest extends PostgresIntegrationTes
                         "insert into book_writing_schedules (id, user_id, book_id, effective_from, created_at, updated_at) values ('21000000-0000-0000-0000-000000000011', '" + SECOND_USER_ID + "', '" + BOOK_ID + "', date '2026-06-01', current_timestamp, current_timestamp)");
 
                 assertSqlState(connection, schema, "23505",
-                        "insert into book_word_count_events (id, actor_user_id, book_id, event_type, productive_word_delta, manuscript_word_delta, idempotency_key, created_at) values ('21000000-0000-0000-0000-000000000012', '" + SECOND_USER_ID + "', '" + BOOK_ID + "', 'CONTENT_SAVE', 1, 1, '" + IDEMPOTENCY_KEY + "', current_timestamp)");
+                        "insert into book_word_count_events (id, actor_user_id, book_id, event_type, productive_word_delta, manuscript_word_delta, idempotency_key, progress_date, created_at) values ('21000000-0000-0000-0000-000000000012', '" + SECOND_USER_ID + "', '" + BOOK_ID + "', 'CONTENT_SAVE', 1, 1, '" + IDEMPOTENCY_KEY + "', date '2026-06-01', current_timestamp)");
             }
         } finally {
             dropSchema(schema);

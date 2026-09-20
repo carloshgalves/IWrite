@@ -97,9 +97,9 @@ class V23WordCountEventRequestFingerprintMigrationIntegrationTest extends Postgr
                 assertTrue(persistedFingerprint.matches("[0-9a-f]{64}"));
 
                 assertSqlState(connection, schema, "23505",
-                        "insert into book_word_count_events (id, actor_user_id, book_id, event_type, productive_word_delta, manuscript_word_delta, idempotency_key, request_fingerprint, created_at) values ('"
+                        "insert into book_word_count_events (id, actor_user_id, book_id, event_type, productive_word_delta, manuscript_word_delta, idempotency_key, request_fingerprint, progress_date, created_at) values ('"
                                 + DUPLICATE_EVENT_ID + "', '" + USER_ID + "', '" + BOOK_ID + "', 'CONTENT_SAVE', 1, 1, '"
-                                + NEW_IDEMPOTENCY_KEY + "', '" + "f".repeat(64) + "', current_timestamp)");
+                                + NEW_IDEMPOTENCY_KEY + "', '" + "f".repeat(64) + "', current_date, current_timestamp)");
             }
         } finally {
             dropSchema(schema);
@@ -146,8 +146,8 @@ class V23WordCountEventRequestFingerprintMigrationIntegrationTest extends Postgr
 
     private void insertNewEvent(Connection connection, String schema, String fingerprint) throws SQLException {
         executeUpdate(connection, schema,
-                "insert into book_word_count_events (id, actor_user_id, book_id, scene_id, original_scene_id, event_type, productive_word_delta, manuscript_word_delta, idempotency_key, content_revision_before, content_revision_after, request_fingerprint, created_at) values ('"
-                        + NEW_EVENT_ID + "', '" + USER_ID + "', '" + BOOK_ID + "', null, '" + SCENE_ID + "', 'CONTENT_SAVE', 3, 3, '" + NEW_IDEMPOTENCY_KEY + "', 0, 1, '" + fingerprint + "', current_timestamp)");
+                "insert into book_word_count_events (id, actor_user_id, book_id, scene_id, original_scene_id, event_type, productive_word_delta, manuscript_word_delta, idempotency_key, content_revision_before, content_revision_after, request_fingerprint, progress_date, created_at) values ('"
+                        + NEW_EVENT_ID + "', '" + USER_ID + "', '" + BOOK_ID + "', null, '" + SCENE_ID + "', 'CONTENT_SAVE', 3, 3, '" + NEW_IDEMPOTENCY_KEY + "', 0, 1, '" + fingerprint + "', current_date, current_timestamp)");
     }
 
     private boolean columnExists(Connection connection, String schema, String columnName) throws SQLException {
