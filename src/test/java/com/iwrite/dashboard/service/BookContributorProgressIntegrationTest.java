@@ -5,9 +5,11 @@ import com.iwrite.book.entity.BookCollaborator;
 import com.iwrite.book.entity.BookRole;
 import com.iwrite.book.repository.BookCollaboratorRepository;
 import com.iwrite.common.exception.ResourceNotFoundException;
+import com.iwrite.dashboard.dto.BookContributionDashboardResponse;
 import com.iwrite.scene.dto.SceneContentRequest;
 import com.iwrite.sceneversion.entity.SceneVersionSource;
 import com.iwrite.support.PostgresIntegrationTest;
+import com.iwrite.support.SqlStatementRecorder;
 import com.iwrite.support.SwitchableCurrentUserProvider;
 import com.iwrite.tenant.entity.Tenant;
 import com.iwrite.tenant.entity.TenantMembership;
@@ -21,9 +23,11 @@ import com.iwrite.writingprogress.repository.DailyWritingProgressRepository;
 import com.iwrite.writingprogress.service.WritingProgressPeriod;
 import jakarta.persistence.EntityManager;
 import jakarta.persistence.PersistenceContext;
+import org.hibernate.cfg.AvailableSettings;
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
+import org.springframework.boot.autoconfigure.orm.jpa.HibernatePropertiesCustomizer;
 import org.springframework.boot.test.autoconfigure.web.servlet.AutoConfigureMockMvc;
 import org.springframework.boot.test.context.TestConfiguration;
 import org.springframework.context.annotation.Bean;
@@ -35,7 +39,10 @@ import java.time.Clock;
 import java.time.Instant;
 import java.time.ZoneId;
 import java.time.ZoneOffset;
+import java.util.List;
+import java.util.Locale;
 import java.util.UUID;
+import java.util.concurrent.atomic.AtomicReference;
 
 import static com.iwrite.support.SwitchableCurrentUserProvider.DEFAULT_TENANT_ID;
 import static com.iwrite.support.SwitchableCurrentUserProvider.DEFAULT_USER_ID;
@@ -69,12 +76,16 @@ class BookContributorProgressIntegrationTest extends PostgresIntegrationTest {
     @Autowired
     private SwitchableCurrentUserProvider currentUserProvider;
 
+    @Autowired
+    private SqlStatementRecorder sqlStatementRecorder;
+
     @PersistenceContext
     private EntityManager entityManager;
 
     @AfterEach
     void resetCurrentUser() {
         currentUserProvider.reset();
+        sqlStatementRecorder.reset();
     }
 
     @Test
@@ -111,6 +122,9 @@ class BookContributorProgressIntegrationTest extends PostgresIntegrationTest {
         UUID historicalContributor = grantRole(book.getId(), "Historical writer", BookRole.EDITOR);
         UUID unrelatedMember = createMember("Unrelated member");
         Book otherBook = bookService.getBook(createBook("Other contribution book").id());
+        for (int index = 0; index < 24; index++) {
+            createMember("Unrelated installation user " + index);
+        }
 
         saveProgress(book, historicalContributor, 12, -2);
         saveProgress(otherBook, unrelatedMember, 99, 0);
@@ -120,12 +134,30 @@ class BookContributorProgressIntegrationTest extends PostgresIntegrationTest {
         collaboratorRepository.flush();
         entityManager.clear();
 
-        var all = dashboardService.getBookContributions(book.getId(), WritingProgressPeriod.SEVEN_DAYS, null);
+        AtomicReference<BookContributionDashboardResponse> response = new AtomicReference<>();
+        List<String> statements = sqlStatementRecorder.recordStatementsOf(() -> response.set(
+                dashboardService.getBookContributions(book.getId(), WritingProgressPeriod.SEVEN_DAYS, null)
+        ));
+        var all = response.get();
 
         assertThat(all.availableContributors())
                 .extracting(contributor -> contributor.userId())
                 .containsExactlyInAnyOrder(DEFAULT_USER_ID, currentWithoutActivity, historicalContributor)
                 .doesNotContain(readOnlyWithoutActivity, unrelatedMember);
+
+        assertThat(statements.stream()
+                .map(statement -> statement.toLowerCase(Locale.ROOT))
+                .map(statement -> statement.replaceAll("\\s+", " ").trim())
+                .filter(statement -> statement.contains("book_daily_writing_progress")
+                        && statement.contains("book_word_count_events")
+                        && statement.contains("book_collaborators"))
+                .toList())
+                .singleElement()
+                .satisfies(candidateDiscovery -> {
+                    assertThat(candidateDiscovery.stripLeading()).startsWith("with candidate_ids as");
+                    assertThat(candidateDiscovery).contains(" union ", " join users ");
+                    assertThat(candidateDiscovery).doesNotContain("from users");
+                });
 
         var currentZero = dashboardService.getBookContributions(
                 book.getId(), WritingProgressPeriod.SEVEN_DAYS, currentWithoutActivity
@@ -467,6 +499,16 @@ class BookContributorProgressIntegrationTest extends PostgresIntegrationTest {
         @Primary
         Clock fixedWritingProgressClock() {
             return Clock.fixed(FIXED_INSTANT, ZoneOffset.UTC);
+        }
+
+        @Bean
+        SqlStatementRecorder sqlStatementRecorder() {
+            return new SqlStatementRecorder();
+        }
+
+        @Bean
+        HibernatePropertiesCustomizer sqlStatementRecorderCustomizer(SqlStatementRecorder recorder) {
+            return properties -> properties.put(AvailableSettings.STATEMENT_INSPECTOR, recorder);
         }
     }
 }
