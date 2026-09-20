@@ -105,7 +105,7 @@ public class UserDashboardService {
         Book book = bookAccessService.requireCapability(bookId, BookCapability.VIEW_BOOK_CONTRIBUTOR_PROGRESS);
         LocalDate today = writingDayResolver.currentWritingDate();
         LocalDate startDate = progressPeriod.startDateInclusive(today);
-        List<User> contributors = userRepository.findBookContributorCandidates(book.getId(), BookRole.READER);
+        List<User> contributors = userRepository.findBookContributorCandidates(book.getId(), BookRole.READER.name());
         Map<UUID, User> contributorsById = contributors.stream()
                 .collect(Collectors.toMap(User::getId, Function.identity(), (left, right) -> left, LinkedHashMap::new));
         List<ContributorSummaryResponse> contributorSummaries = contributors.stream()
