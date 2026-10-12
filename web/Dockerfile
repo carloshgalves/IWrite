@@ -28,6 +28,10 @@ COPY . .
 
 RUN npm run build
 
+# Keep Vitest/Playwright and other build-only tools out of the production image.
+# The runtime receives this pruned node_modules tree, not the build dependencies.
+RUN npm prune --omit=dev --ignore-scripts
+
 FROM node:24-alpine@sha256:e67514e5d0f6c46656005e1b693b2ec9d52e80b641307de684d4a015ba7a4eaf AS runner
 
 WORKDIR /app
