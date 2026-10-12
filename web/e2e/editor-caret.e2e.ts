@@ -30,7 +30,8 @@ test("keeps the caret and editor scroll position during a mid-paragraph edit", a
       editor.evaluate((element) => {
         const selection = window.getSelection();
         const text = element.querySelector("p:nth-child(36)")?.firstChild;
-        return selection?.anchorNode === text ? selection.anchorOffset : -1;
+        if (!selection || !text) return -1;
+        return selection.anchorNode === text ? selection.anchorOffset : -1;
       })
     )
     .toBe(19);
