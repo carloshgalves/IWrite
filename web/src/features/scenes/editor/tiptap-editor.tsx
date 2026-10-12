@@ -8,7 +8,6 @@ import StarterKit from "@tiptap/starter-kit";
 import { handleTiptapTabKey } from "@/features/scenes/editor/tab-keymap";
 
 type TiptapEditorProps = {
-  contentKey: string;
   initialContentJson?: JSONContent | string | null;
   initialContentText?: string | null;
   /** Read-only mode: the document renders, the toolbar is inert and no edit reaches onChange. */
@@ -171,7 +170,6 @@ function TiptapToolbar({ editor }: { editor: Editor | null }) {
 }
 
 export function TiptapEditor({
-  contentKey,
   initialContentJson,
   initialContentText,
   readOnly = false,
@@ -200,14 +198,6 @@ export function TiptapEditor({
       onChange(updatedEditor.getJSON(), updatedEditor.getText());
     },
   });
-
-  useEffect(() => {
-    if (!editor) {
-      return;
-    }
-
-    editor.commands.setContent(initialContent, { emitUpdate: false });
-  }, [contentKey, editor, initialContent]);
 
   // The effective access arrives from the backend after the editor is created, so the editable flag
   // has to follow it rather than being fixed at construction time.

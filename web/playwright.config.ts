@@ -4,6 +4,8 @@ import { STORAGE_STATE } from "./e2e/storage-state";
 export default defineConfig({
   testDir: "./e2e",
   testMatch: "**/*.e2e.ts",
+  // This isolated fixture has its own web server and Playwright config.
+  testIgnore: "**/editor-caret.e2e.ts",
   fullyParallel: true,
   forbidOnly: Boolean(process.env.CI),
   retries: process.env.CI ? 2 : 0,

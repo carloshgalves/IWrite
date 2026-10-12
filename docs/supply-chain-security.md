@@ -103,6 +103,27 @@ hardening de containers, image scanning e SBOM).
   - `CVE-2026-59873` (pacote `tar` embutido no npm que vem dentro da
     imagem `node:24-alpine`): não é dependência do IWrite; aguardando o
     upstream publicar uma imagem com npm corrigido.
+- **CVE-2026-47884**, **CVE-2026-47890**, **CVE-2026-47892**
+  (Spring Framework 6.2.15, revisão até **2026-11-12**, tracking **#254**):
+  as dependências continuam em versão afetada, mas as condições de exploração
+  descritas nos advisories não foram identificadas no código atual.
+  A 47884 exige `XsltView` com rota catch-all que renderiza view sem nome
+  explícito; a 47890 exige SSE com fragmentos de views; a 47892 exige endpoints
+  funcionais WebFlux sob `DispatcherServlet`. O IWrite emprega controllers
+  REST/Spring MVC; busca estática em 12/10/2026 não encontrou `XsltView`,
+  `SseEmitter`, `ServerSentEvent`, `text/event-stream`,
+  `RouterFunction` ou `RouterFunctions` no código de produção.
+  A ausência de referências diretas não é uma prova formal de ausência de
+  exploração indireta. Estas são **exceções temporárias de aplicabilidade**,
+  não atualizações das bibliotecas nem alegação de CVEs corrigidas.
+  Os três registros permanecem no relatório completo e SBOM do Trivy; apenas
+  a política de bloqueio tem prazo de expiração. Reavaliar imediatamente se
+  o produto passar a renderizar views, emitir SSE com fragmentos ou expor
+  rotas funcionais WebFlux; caso contrário, revisar a dependência e o upgrade
+  para uma linha Spring corrigida antes de 12/11/2026.
+  Advisories: https://spring.io/security/cve-2026-47884/,
+  https://spring.io/security/cve-2026-47890/,
+  https://spring.io/security/cve-2026-47892/.
 - `CVE-2025-41232` (spring-security-core) **não** é mais uma exceção:
   corrigida via `spring-security.version=6.4.13` no `pom.xml` (patch dentro
   da própria linha 6.4.x já gerenciada pelo Spring Boot 3.4.1). Esse patch

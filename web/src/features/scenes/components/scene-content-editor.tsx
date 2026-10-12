@@ -68,7 +68,6 @@ export function SceneContentEditor({
 
         <TiptapEditor
           key={contentKey}
-          contentKey={contentKey}
           initialContentJson={contentJson}
           initialContentText={contentText}
           readOnly={readOnly}
