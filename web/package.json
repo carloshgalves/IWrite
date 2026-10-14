@@ -8,6 +8,7 @@
     "start": "node server.mjs",
     "lint": "eslint .",
     "test": "vitest run --coverage",
+    "test:docker-runtime": "bash ./scripts/docker-runtime-smoke.sh",
     "test:coverage": "vitest run --coverage",
     "test:watch": "vitest",
     "e2e": "playwright test",
