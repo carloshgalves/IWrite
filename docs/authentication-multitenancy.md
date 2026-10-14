@@ -100,7 +100,7 @@ de desenvolvimento não é sequer instanciado.
 ### Proxy de mesma origem
 
 O navegador só conversa com a origem que serviu a página. O Next reescreve `/api/*` para
-`BACKEND_ORIGIN` no servidor (`web/next.config.ts`), então nenhuma URL de backend vai para o bundle.
+`BACKEND_ORIGIN` no servidor (`web/next.config.mjs`), então nenhuma URL de backend vai para o bundle.
 
 ```
 navegador ──/api/...──► Next (3000) ──rewrite──► backend (8085)
@@ -115,7 +115,7 @@ O backend expõe seu probe público em `/ping`, fora de `/api`, então existe um
 depende de sessão.
 
 `NEXT_PUBLIC_API_URL` era a variável documentada e implantada antes de `BACKEND_ORIGIN` existir;
-`next.config.ts` ainda a lê, mas só como *fallback* quando `BACKEND_ORIGIN` está ausente, e ela é
+`next.config.mjs` ainda a lê, mas só como *fallback* quando `BACKEND_ORIGIN` está ausente, e ela é
 **legada/depreciada** — configuração nova deve usar `BACKEND_ORIGIN`. Se qualquer uma das duas
 estiver definida com um valor que não seja uma URL absoluta válida, o build falha alto em vez de
 cair silenciosamente no padrão local (`http://127.0.0.1:8085`): um erro de digitação em produção não

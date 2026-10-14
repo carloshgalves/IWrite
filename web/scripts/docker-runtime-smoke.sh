@@ -37,7 +37,9 @@ fail_with_logs() {
 
 assert_no_runtime_install() {
   local container="$1"
-  if docker logs "$container" 2>&1 | rg -i 'Installing TypeScript|Installing devDependencies|yarn add|npm (install|add)'; then
+  local logs
+  logs="$(docker logs "$container" 2>&1)"
+  if [[ "$logs" =~ Installing[[:space:]]TypeScript|Installing[[:space:]]devDependencies|yarn[[:space:]]+add|npm[[:space:]]+(install|add) ]]; then
     fail_with_logs "$container attempted a package installation during startup"
   fi
   if docker exec "$container" node -e "require.resolve('typescript', { paths: ['/app/frontend'] })" >/dev/null 2>&1; then
@@ -48,9 +50,11 @@ assert_no_runtime_install() {
 wait_for_ping() {
   local container="$1"
   local port="$2"
+  local logs
   local attempts=90
   for ((attempt = 1; attempt <= attempts; attempt++)); do
-    if docker logs "$container" 2>&1 | rg -i 'Installing TypeScript|Installing devDependencies|yarn add|npm (install|add)'; then
+    logs="$(docker logs "$container" 2>&1)"
+    if [[ "$logs" =~ Installing[[:space:]]TypeScript|Installing[[:space:]]devDependencies|yarn[[:space:]]+add|npm[[:space:]]+(install|add) ]]; then
       fail_with_logs "$container attempted a package installation during startup"
     fi
     if docker exec "$container" node -e \
