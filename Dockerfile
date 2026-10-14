@@ -25,7 +25,7 @@ WORKDIR /frontend
 
 # next build bakes the rewrite destination into .next/routes-manifest.json, so it has to be known
 # here at build time. This image runs frontend and backend in the same container, backend on
-# 127.0.0.1:8085 — the same value next.config.ts would fall back to anyway; set explicitly so the
+# 127.0.0.1:8085 — the same value next.config.mjs would fall back to anyway; set explicitly so the
 # intent does not depend on that default.
 ENV BACKEND_ORIGIN="http://127.0.0.1:8085"
 
@@ -59,7 +59,7 @@ COPY --from=backend-build \
     /app/backend/app.jar
 
 COPY --from=frontend-build /frontend/package.json /app/frontend/package.json
-COPY --from=frontend-build /frontend/next.config.ts /app/frontend/next.config.ts
+COPY --from=frontend-build /frontend/next.config.mjs /app/frontend/next.config.mjs
 # The same custom server web/Dockerfile runs, not `next start`: it strips the forwarding headers a
 # client sends and derives X-Forwarded-For from the socket peer. Without it every login inside this
 # image would reach the backend as 127.0.0.1 and share a single rate-limit bucket. It resolves the

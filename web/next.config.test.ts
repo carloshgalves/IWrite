@@ -1,5 +1,5 @@
-import { afterEach, describe, expect, it } from "vitest";
-import { resolveBackendOrigin } from "./next.config";
+import { afterEach, describe, expect, it, vi } from "vitest";
+import { resolveBackendOrigin } from "./next.config.mjs";
 
 const LOCAL_FALLBACK = "http://127.0.0.1:8085";
 
@@ -7,6 +7,7 @@ describe("resolveBackendOrigin", () => {
   afterEach(() => {
     delete process.env.BACKEND_ORIGIN;
     delete process.env.NEXT_PUBLIC_API_URL;
+    vi.resetModules();
   });
 
   it("falls back to the local default when neither variable is set", () => {
@@ -32,5 +33,21 @@ describe("resolveBackendOrigin", () => {
   it("throws instead of silently falling back when the legacy variable is set but invalid", () => {
     process.env.NEXT_PUBLIC_API_URL = "not-a-url";
     expect(() => resolveBackendOrigin()).toThrow(/NEXT_PUBLIC_API_URL/);
+  });
+
+  it("rewrites ping and API requests through the same backend origin", async () => {
+    process.env.BACKEND_ORIGIN = "https://backend.example.com/base-path";
+    const { default: config } = await import("./next.config.mjs");
+
+    await expect(config.rewrites()).resolves.toEqual([
+      {
+        source: "/api/ping",
+        destination: "https://backend.example.com/ping",
+      },
+      {
+        source: "/api/:path*",
+        destination: "https://backend.example.com/api/:path*",
+      },
+    ]);
   });
 });
