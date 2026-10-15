@@ -85,14 +85,14 @@ export function SceneContentEditor({
               </span>
               <button
                 type="button"
-                title="Salvar conteúdo (Ctrl+S ou Cmd+S)"
+                title="Salvar agora (Ctrl+S ou Cmd+S)"
                 aria-keyshortcuts="Control+S Meta+S"
                 disabled={saveStatus === "saving"}
                 onMouseDown={(event) => event.preventDefault()}
                 onClick={onSaveContent}
                 className="inline-flex min-h-9 shrink-0 items-center justify-center rounded-md border border-zinc-300 bg-white px-2 text-xs font-medium text-zinc-900 hover:bg-zinc-100 disabled:cursor-wait disabled:opacity-60 sm:px-3 sm:text-sm"
               >
-                {saveStatus === "saving" ? "Salvando..." : "Salvar conteúdo"}
+                {saveStatus === "saving" ? "Salvando..." : "Salvar agora"}
               </button>
             </>
           )}
