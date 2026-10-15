@@ -112,8 +112,8 @@ describe("OutlineSidebar selected scene visibility (#249)", () => {
     const scrollport = await screen.findByTestId("outline-scrollport");
     await screen.findByRole("button", { name: new RegExp(deepSceneTitle) });
 
-    fireEvent.click(screen.getByRole("button", { name: "Recolher capítulo Chapter 12-2" }).first());
-    fireEvent.click(screen.getByRole("button", { name: "Recolher seção Part 12" }).first());
+    fireEvent.click(screen.getAllByRole("button", { name: "Recolher capítulo Chapter 12-2" })[0]);
+    fireEvent.click(screen.getAllByRole("button", { name: "Recolher seção Part 12" })[0]);
     expect(screen.queryByRole("button", { name: new RegExp(deepSceneTitle) })).not.toBeInTheDocument();
 
     view.rerender(mount(deepSceneId));
