@@ -66,30 +66,43 @@ export function useSceneScrollRestoration<T extends HTMLElement>(
     if (!position) return;
 
     let stopped = false;
-    let observer: ResizeObserver | null = null;
+    let resizeObserver: ResizeObserver | null = null;
+    let mutationObserver: MutationObserver | null = null;
+
+    function stop() {
+      stopped = true;
+      resizeObserver?.disconnect();
+      mutationObserver?.disconnect();
+    }
+
     function restore() {
       if (stopped) return;
       element!.scrollTop = position;
-      if (element!.scrollTop >= position - 1) {
-        observer?.disconnect();
-        stopped = true;
+      // A restored scene may be shorter than before; settle at its actual scroll limit.
+      // Before Tiptap has mounted its content the scrollport may have no scroll range at all,
+      // so keep observing briefly instead of treating that early zero as the final position.
+      const max = Math.max(0, element!.scrollHeight - element!.clientHeight);
+      if (element!.scrollTop >= Math.min(position, max) - 1 && (max > 0 || element!.scrollTop > 0)) {
+        stop();
       }
     }
 
-    // This effect runs after hydration and when the SceneEditor has finished loading the scene.
+    // ResizeObserver alone misses Tiptap inserting the actual editable DOM into an already
+    // fixed-height scrollport. MutationObserver catches that delayed mount without touching
+    // editor selection or commands.
     restore();
     if (!stopped && typeof ResizeObserver !== "undefined") {
-      observer = new ResizeObserver(restore);
-      observer.observe(element);
+      resizeObserver = new ResizeObserver(restore);
+      resizeObserver.observe(element);
     }
-    // A bounded observation protects the user's later manual scrolling from being overridden.
-    const timeout = window.setTimeout(() => {
-      stopped = true;
-      observer?.disconnect();
-    }, 1_500);
+    if (!stopped && typeof MutationObserver !== "undefined") {
+      mutationObserver = new MutationObserver(restore);
+      mutationObserver.observe(element, { subtree: true, childList: true });
+    }
+    // A bounded observation protects later manual scrolling from being overridden.
+    const timeout = window.setTimeout(stop, 1_500);
     return () => {
-      stopped = true;
-      observer?.disconnect();
+      stop();
       window.clearTimeout(timeout);
     };
   }, [bookId, sceneId, surface, readyToken]);
