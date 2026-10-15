@@ -84,6 +84,7 @@ const analysisResult = {
 describe("SceneEditor content save contract", () => {
   beforeEach(() => {
     vi.clearAllMocks();
+    mocks.getScene.mockReset();
     mocks.randomUUID.mockReset().mockReturnValue("operation-id");
     vi.stubGlobal("crypto", {
       randomUUID: mocks.randomUUID,
@@ -1040,6 +1041,7 @@ describe("SceneEditor content save contract", () => {
 describe("SceneEditor pending autosave versus the scene's projected authority", () => {
   beforeEach(() => {
     vi.clearAllMocks();
+    mocks.getScene.mockReset();
     mocks.randomUUID.mockReset().mockReturnValue("operation-id");
     vi.stubGlobal("crypto", {
       randomUUID: mocks.randomUUID,
@@ -1203,6 +1205,7 @@ function createDeferred<T>() {
 describe("SceneEditor delayed save response versus the newest projected authority", () => {
   beforeEach(() => {
     vi.clearAllMocks();
+    mocks.getScene.mockReset();
     mocks.randomUUID.mockReset().mockReturnValue("operation-id");
     vi.stubGlobal("crypto", {
       randomUUID: mocks.randomUUID,
@@ -1341,6 +1344,7 @@ async function refetchSceneWithRealTimers(queryClient: QueryClient) {
 describe("SceneEditor pending remote reconciliation versus the currently projected authority", () => {
   beforeEach(() => {
     vi.clearAllMocks();
+    mocks.getScene.mockReset();
     mocks.randomUUID.mockReset().mockReturnValue("operation-id");
     vi.stubGlobal("crypto", {
       randomUUID: mocks.randomUUID,
