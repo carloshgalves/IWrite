@@ -57,9 +57,16 @@ function rect(top: number, bottom: number): DOMRect {
 
 describe("OutlineSidebar selected scene visibility (#249)", () => {
   const getRect = Element.prototype.getBoundingClientRect;
-  const windowScroll = window.scrollTo;
+  const originalClientHeight = Object.getOwnPropertyDescriptor(HTMLElement.prototype, "clientHeight");
+  const baseClientHeight = Object.getOwnPropertyDescriptor(Element.prototype, "clientHeight")?.get;
 
   beforeEach(() => {
+    Object.defineProperty(HTMLElement.prototype, "clientHeight", {
+      configurable: true,
+      get(this: HTMLElement) {
+        return this.getAttribute("data-testid") === "outline-scrollport" ? 200 : baseClientHeight?.call(this) ?? 0;
+      },
+    });
     mocks.getOutline.mockResolvedValue(outline);
     vi.spyOn(Element.prototype, "getBoundingClientRect").mockImplementation(function (this: Element) {
       if (this.getAttribute("data-testid") === "outline-scrollport") return rect(0, 200);
@@ -71,7 +78,11 @@ describe("OutlineSidebar selected scene visibility (#249)", () => {
 
   afterEach(() => {
     vi.restoreAllMocks();
-    window.scrollTo = windowScroll;
+    if (originalClientHeight) {
+      Object.defineProperty(HTMLElement.prototype, "clientHeight", originalClientHeight);
+    } else {
+      Reflect.deleteProperty(HTMLElement.prototype, "clientHeight");
+    }
   });
 
   function mount(selectedSceneId: string | null) {
@@ -87,7 +98,6 @@ describe("OutlineSidebar selected scene visibility (#249)", () => {
     renderWithClient(mount(deepSceneId));
 
     const scrollport = await screen.findByTestId("outline-scrollport");
-    Object.defineProperty(scrollport, "clientHeight", { configurable: true, value: 200 });
 
     // Rerender via query data arriving triggers the layout effect; the deep row must be
     // selected in the real tree without a user click or a remount of the editor.
@@ -100,7 +110,6 @@ describe("OutlineSidebar selected scene visibility (#249)", () => {
   test("expands collapsed ancestors before revealing and does not seize manual scroll again", async () => {
     const view = renderWithClient(mount(null));
     const scrollport = await screen.findByTestId("outline-scrollport");
-    Object.defineProperty(scrollport, "clientHeight", { configurable: true, value: 200 });
     await screen.findByRole("button", { name: new RegExp(deepSceneTitle) });
 
     fireEvent.click(screen.getByRole("button", { name: "Recolher capítulo Chapter 12-2" }).first());
@@ -121,7 +130,6 @@ describe("OutlineSidebar selected scene visibility (#249)", () => {
   test("does not scroll or change focus for an invalid scene selection", async () => {
     renderWithClient(mount("scene-outside-this-book"));
     const scrollport = await screen.findByTestId("outline-scrollport");
-    Object.defineProperty(scrollport, "clientHeight", { configurable: true, value: 200 });
     expect(scrollport.scrollTop).toBe(0);
     expect(screen.queryByRole("button", { current: "location" })).not.toBeInTheDocument();
     expect(window.scrollTo).not.toHaveBeenCalled();
