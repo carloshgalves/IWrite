@@ -61,7 +61,14 @@ test("restores tabs and the selected scene through reload and back/forward", asy
     `Synthetic paragraph ${index + 1} for reading position restoration.`
   ).join("\n");
   await editor.fill(longText);
+  await expect(page.getByText("Digitando...").first()).toBeVisible();
+  const saveResponsePromise = page.waitForResponse(
+    (response) => response.url().endsWith(`/api/scenes/${sceneId}/content`) &&
+      response.request().method() === "PATCH"
+  );
   await page.getByRole("button", { name: "Salvar conteúdo" }).click();
+  const saveResponse = await saveResponsePromise;
+  expect(saveResponse.status()).toBe(200);
   await expect(page.getByText("Salvo").first()).toBeVisible();
 
   const shell = page.getByTestId("scene-shell-scrollport");
