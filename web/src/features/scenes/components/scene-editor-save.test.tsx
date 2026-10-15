@@ -35,15 +35,18 @@ vi.mock("@/features/scenes/components/scene-content-editor", () => ({
     contentKey,
     sourceSceneId,
     contentText,
+    onSaveContent,
     onContentChange,
   }: {
     contentKey: string;
     sourceSceneId: string;
     contentText: string;
+    onSaveContent?: () => void;
     onContentChange: (sceneId: string, contentJson: string, contentText: string) => void;
   }) => (
     <div>
       <p data-testid="editor-content" data-content-key={contentKey}>{contentText}</p>
+      {onSaveContent ? <button type="button" onClick={onSaveContent}>Salvar agora (fixture)</button> : null}
       <button type="button" onClick={() => onContentChange(sourceSceneId, "{\"type\":\"doc\"}", "Novo texto")}>
         Alterar conteudo
       </button>
@@ -140,6 +143,29 @@ describe("SceneEditor content save contract", () => {
         operationId: "operation-manual",
       });
     });
+  });
+
+  test("repeated nearby toolbar saves cannot dispatch overlapping requests with one revision", async () => {
+    const pending = createDeferred<Scene>();
+    mocks.updateSceneContent.mockReturnValueOnce(pending.promise);
+    renderEditor();
+    await screen.findByRole("heading", { name: sceneForPlanning.title });
+
+    const nearbySave = screen.getByRole("button", { name: "Salvar agora (fixture)" });
+    fireEvent.click(nearbySave);
+    fireEvent.click(nearbySave);
+
+    expect(mocks.updateSceneContent).toHaveBeenCalledTimes(1);
+    expect(mocks.updateSceneContent).toHaveBeenCalledWith(sceneForPlanning.id, expect.objectContaining({
+      source: "MANUAL_SAVE",
+      expectedContentRevision: 3,
+    }));
+
+    await act(async () => {
+      pending.resolve({ ...sceneForPlanning, contentRevision: 4 });
+      await pending.promise;
+    });
+    expect(mocks.updateSceneContent).toHaveBeenCalledTimes(1);
   });
 
   test("cancels queued autosave when a conflicting newer revision becomes pending", async () => {
