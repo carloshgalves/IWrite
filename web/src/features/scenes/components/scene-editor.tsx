@@ -755,7 +755,7 @@ export function SceneEditor({
         : contentSyncState;
 
   return (
-    <section ref={shellScroll.ref} onScroll={shellScroll.onScroll} className={`h-full overflow-y-auto bg-zinc-100/70 ${isFocusMode ? "p-2 md:p-4 lg:p-6" : "p-4 md:p-6 lg:p-8"}`}>
+    <section data-testid="scene-shell-scrollport" ref={shellScroll.ref} onScroll={shellScroll.onScroll} className={`h-full overflow-y-auto bg-zinc-100/70 ${isFocusMode ? "p-2 md:p-4 lg:p-6" : "p-4 md:p-6 lg:p-8"}`}>
       <Card
         className={`mx-auto grid min-h-full overflow-hidden border-zinc-200 bg-white ${
           isFocusMode
