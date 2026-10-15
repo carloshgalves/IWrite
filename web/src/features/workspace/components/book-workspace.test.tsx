@@ -255,6 +255,7 @@ describe("BookWorkspace focus mode", () => {
 
   beforeEach(() => {
     vi.clearAllMocks();
+    mocks.getOutline.mockReset();
     mocks.searchParams = new URLSearchParams();
     window.localStorage.clear();
     fullscreenElement = null;
@@ -415,6 +416,7 @@ describe("global fullscreen properties after BookWorkspace focus mode", () => {
 describe("BookWorkspace initial scene selection", () => {
   beforeEach(() => {
     vi.clearAllMocks();
+    mocks.getOutline.mockReset();
     mocks.searchParams = new URLSearchParams();
     window.localStorage.clear();
     mocks.getOutline.mockResolvedValue(outline);
@@ -753,6 +755,7 @@ describe("BookWorkspace initial scene selection", () => {
 describe("BookWorkspace sem capabilities de estrutura e conteudo", () => {
   beforeEach(() => {
     vi.clearAllMocks();
+    mocks.getOutline.mockReset();
     mocks.searchParams = new URLSearchParams();
     window.localStorage.clear();
     mocks.getOutline.mockResolvedValue(outline);
@@ -808,6 +811,7 @@ function selectScene() {
 describe("BookWorkspace com elegibilidade de conteudo sem autoridade sobre a cena", () => {
   beforeEach(() => {
     vi.clearAllMocks();
+    mocks.getOutline.mockReset();
     mocks.searchParams = new URLSearchParams();
     window.localStorage.clear();
     mocks.getOutline.mockResolvedValue(outline);
@@ -850,6 +854,7 @@ describe("BookWorkspace com elegibilidade de conteudo sem autoridade sobre a cen
 describe("BookWorkspace quando as capabilities nao carregam", () => {
   beforeEach(() => {
     vi.clearAllMocks();
+    mocks.getOutline.mockReset();
     mocks.searchParams = new URLSearchParams();
     window.localStorage.clear();
     mocks.getOutline.mockResolvedValue(outline);
