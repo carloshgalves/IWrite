@@ -8,6 +8,7 @@ import {
   refetchActiveDomainQueries,
 } from "@/features/auth/session-cache";
 import { SESSION_QUERY_KEY } from "@/features/auth/session-query-key";
+import { clearSceneScrollPositions } from "@/features/workspace/scene-scroll";
 
 const CHANNEL_NAME = "iwrite-session-sync";
 const STORAGE_KEY = "iwrite-session-sync";
@@ -83,6 +84,7 @@ async function reconcile(queryClient: QueryClient): Promise<void> {
   purgeAuthenticatedCaches(queryClient);
   markReconciliationStart(queryClient);
   await refetchSession(queryClient);
+  if (!queryClient.getQueryData(SESSION_QUERY_KEY)) clearSceneScrollPositions();
   // A session worth keeping, not a logout: whatever domain queries are still actively observed (the
   // interstitial screen may or may not have actually unmounted them - React is free to collapse
   // isReconciling's true-then-false into one commit when this whole function settles within a single
@@ -143,6 +145,7 @@ export function useSessionReconciliation(): boolean {
       // tab still reaches here, while this tab's own writes are still recognized and skipped.
       const emitterTabId = event.newValue.split(":", 1)[0];
       if (emitterTabId === TAB_ID) return;
+      clearSceneScrollPositions();
       void runReconciliation();
     }
 
@@ -150,6 +153,7 @@ export function useSessionReconciliation(): boolean {
       channel = new BroadcastChannel(CHANNEL_NAME);
       channel.onmessage = (event) => {
         if (event.data === TAB_ID) return;
+        clearSceneScrollPositions();
         void runReconciliation();
       };
     } else {
