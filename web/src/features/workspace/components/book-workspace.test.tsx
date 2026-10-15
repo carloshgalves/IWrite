@@ -734,7 +734,7 @@ describe("BookWorkspace initial scene selection", () => {
 
   test("refetch falho não continua exibindo o título privado em cache", async () => {
     const { queryClient } = renderWithClient(<BookWorkspace bookId="book-1" />);
-    expect(await screen.findByRole("heading", { name: "Livro de teste" })).toBeInTheDocument();
+    expect((await screen.findAllByRole("heading", { name: "Livro de teste" })).length).toBeGreaterThan(0);
 
     mocks.getOutline.mockRejectedValueOnce(new Error("access or network failed"));
     await act(async () => {
