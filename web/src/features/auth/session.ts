@@ -35,16 +35,17 @@ export function useSession() {
  * authenticated session that must replace whatever the client had cached before, exactly the same
  * way in both cases — everything cached belongs to the previous tenant (even a login/register as
  * the same account, since the client has no trustworthy tenantId to prove otherwise). Cancel
- * in-flight work first so a stale response can't repopulate the cache after the purge below, purge,
- * then advance the reconciliation generation so any straggler mutation still in flight recognizes
- * itself as stale (session-cache.ts) — all of it before the new session is ever stored, so no
+ * in-flight work first so a stale response can't repopulate the cache after the purge below,
+ * advance the reconciliation generation so any straggler mutation still in flight recognizes
+ * itself as stale (session-cache.ts), then purge — all of it before the new session is ever stored,
+ * so no
  * content from the old tenant can exist between storing the new session and the library's first
  * render under it.
  */
 async function applyNewSession(queryClient: QueryClient, router: ReturnType<typeof useRouter>, session: AuthenticatedSession) {
   await queryClient.cancelQueries();
-  purgeAuthenticatedCaches(queryClient);
   markReconciliationStart(queryClient);
+  purgeAuthenticatedCaches(queryClient);
 
   queryClient.setQueryData(SESSION_QUERY_KEY, session);
   announceSessionChanged();

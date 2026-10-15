@@ -4,6 +4,7 @@ import { useEffect } from "react";
 import { afterEach, beforeEach, describe, expect, test, vi } from "vitest";
 import { QueryProvider } from "@/components/providers/query-provider";
 import { SessionGuard } from "@/features/auth/components/session-guard";
+import { isStaleMutation } from "@/features/auth/session-cache";
 import { announceSessionChanged } from "@/features/auth/session-sync";
 
 const SYNC_KEY = "iwrite-session-sync";
@@ -74,7 +75,13 @@ function Library() {
 
 /** A write in flight when reconciliation lands - e.g. saving a scene - resolved by the test whenever
  *  it chooses, so the race ("does its result repopulate the cache after the swap?") is observable. */
-function DelayedMutation({ resolveRef }: { resolveRef: { current: (() => void) | null } }) {
+function DelayedMutation({
+  resolveRef,
+  onLocalSuccess,
+}: {
+  resolveRef: { current: (() => void) | null };
+  onLocalSuccess?: () => void;
+}) {
   const queryClient = useQueryClient();
   const mutation = useMutation({
     mutationFn: () =>
@@ -83,9 +90,11 @@ function DelayedMutation({ resolveRef }: { resolveRef: { current: (() => void) |
       }),
     onSuccess: () => {
       queryClient.setQueryData(["books"], ["Rascunho não salvo do Autor A"]);
+      onLocalSuccess?.();
     },
   });
   useEffect(() => {
+    if (resolveRef.current) return;
     mutation.mutate();
     // Fired once, right as this tab renders - before any reconciliation has a chance to run.
     // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -274,22 +283,83 @@ describe("sincronização de sessão entre abas", () => {
     expect(getClient().getQueryData(["books"])).toEqual(["Livro do Autor B"]);
   });
 
-  test("foco: mutation antiga em voo é identificada como obsoleta pela geração e purgada", async () => {
+  test("foco: mutation stale concluída depois da reconciliação purga e recarrega as queries ativas de B", async () => {
     const resolveRef: { current: (() => void) | null } = { current: null };
-    const { getClient } = renderTab(<DelayedMutation resolveRef={resolveRef} />);
+    const onLocalSuccess = vi.fn();
+    const { getClient } = renderTab(
+      <DelayedMutation resolveRef={resolveRef} onLocalSuccess={onLocalSuccess} />,
+    );
     expect(await screen.findByText("Livro do Autor A")).toBeInTheDocument();
     await waitFor(() => expect(resolveRef.current).not.toBeNull());
+    const mutationA = getClient().getMutationCache().getAll()[0];
 
     authApi.fetchSession.mockResolvedValueOnce(sessionB);
-    booksApi.fetchBooks.mockResolvedValueOnce(["Livro do Autor B"]);
+    booksApi.fetchBooks.mockResolvedValue(["Livro do Autor B"]);
     act(() => window.dispatchEvent(new Event("focus")));
     await screen.findByText("Livro do Autor B");
+    expect(isStaleMutation(getClient(), mutationA)).toBe(true);
 
     // Only now does A's stale write land — after B's identity has already been accepted.
     act(() => resolveRef.current!());
 
+    await waitFor(() => expect(onLocalSuccess).toHaveBeenCalledTimes(1));
+    await waitFor(() => expect(booksApi.fetchBooks).toHaveBeenCalledTimes(3));
     await waitFor(() => expect(getClient().getQueryData(["books"])).toEqual(["Livro do Autor B"]));
+    expect(getClient().getQueryData(["auth", "session"])).toEqual(sessionB);
+    expect(screen.getByText("Livro do Autor B")).toBeInTheDocument();
     expect(screen.queryByText("Rascunho não salvo do Autor A")).not.toBeInTheDocument();
+  });
+
+  test("foco: mutation stale concluída durante a reconciliação converge com um único refetch para B", async () => {
+    const resolveRef: { current: (() => void) | null } = { current: null };
+    const onLocalSuccess = vi.fn();
+    const { getClient } = renderTab(
+      <DelayedMutation resolveRef={resolveRef} onLocalSuccess={onLocalSuccess} />,
+    );
+    expect(await screen.findByText("Livro do Autor A")).toBeInTheDocument();
+    await waitFor(() => expect(resolveRef.current).not.toBeNull());
+
+    let resolveFetchSession!: (value: typeof sessionB) => void;
+    authApi.fetchSession.mockImplementationOnce(
+      () => new Promise((resolve) => (resolveFetchSession = resolve)),
+    );
+    booksApi.fetchBooks.mockResolvedValueOnce(["Livro do Autor B"]);
+    act(() => window.dispatchEvent(new Event("focus")));
+    await screen.findByText("Verificando sessão…");
+
+    act(() => resolveRef.current!());
+    await waitFor(() => expect(onLocalSuccess).toHaveBeenCalledTimes(1));
+    await waitFor(() => expect(getClient().getQueryData(["books"])).toBeUndefined());
+
+    act(() => resolveFetchSession(sessionB));
+    expect(await screen.findByText("Livro do Autor B")).toBeInTheDocument();
+    expect(booksApi.fetchBooks).toHaveBeenCalledTimes(2);
+    expect(getClient().getQueryData(["auth", "session"])).toEqual(sessionB);
+    expect(getClient().getQueryData(["books"])).toEqual(["Livro do Autor B"]);
+    expect(screen.queryByText("Rascunho não salvo do Autor A")).not.toBeInTheDocument();
+  });
+
+  test("logout: mutation stale concluída após sessão null não refaz queries de domínio", async () => {
+    const resolveRef: { current: (() => void) | null } = { current: null };
+    const onLocalSuccess = vi.fn();
+    const { getClient } = renderTab(
+      <DelayedMutation resolveRef={resolveRef} onLocalSuccess={onLocalSuccess} />,
+    );
+    expect(await screen.findByText("Livro do Autor A")).toBeInTheDocument();
+    await waitFor(() => expect(resolveRef.current).not.toBeNull());
+
+    authApi.fetchSession.mockResolvedValueOnce(null);
+    act(() => window.dispatchEvent(new Event("focus")));
+    await waitFor(() => expect(navigation.replace).toHaveBeenCalledWith("/login?reason=expired"));
+    const booksCallsAfterLogout = booksApi.fetchBooks.mock.calls.length;
+
+    act(() => resolveRef.current!());
+    await waitFor(() => expect(onLocalSuccess).toHaveBeenCalledTimes(1));
+    await new Promise((resolve) => setTimeout(resolve, 20));
+
+    expect(booksApi.fetchBooks).toHaveBeenCalledTimes(booksCallsAfterLogout);
+    expect(getClient().getQueryData(["auth", "session"])).toBeNull();
+    expect(getClient().getQueryData(["books"])).toBeUndefined();
   });
 
   test("foco: focus e visibilitychange disparados juntos produzem uma única reconciliação efetiva", async () => {

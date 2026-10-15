@@ -4,6 +4,7 @@ import com.iwrite.auth.dto.RegisterRequest;
 import com.iwrite.common.exception.BadRequestException;
 import com.iwrite.common.exception.ConflictException;
 import com.iwrite.common.timezone.IanaZoneIdValidator;
+import com.iwrite.profile.UserProfileValidator;
 import com.iwrite.tenant.entity.Tenant;
 import com.iwrite.tenant.entity.TenantMembership;
 import com.iwrite.tenant.entity.TenantMembershipRole;
@@ -22,7 +23,6 @@ import org.springframework.security.crypto.password.PasswordEncoder;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
-import java.time.ZoneId;
 import java.util.Locale;
 import java.util.regex.Pattern;
 
@@ -52,7 +52,7 @@ public class RegistrationService {
     private final TenantMembershipRepository membershipRepository;
     private final UserPersonaRepository personaRepository;
     private final PasswordEncoder passwordEncoder;
-    private final IanaZoneIdValidator timeZoneValidator;
+    private final UserProfileValidator profileValidator;
 
     public RegistrationService(
             UserRepository userRepository,
@@ -69,7 +69,7 @@ public class RegistrationService {
         this.membershipRepository = membershipRepository;
         this.personaRepository = personaRepository;
         this.passwordEncoder = passwordEncoder;
-        this.timeZoneValidator = timeZoneValidator;
+        this.profileValidator = new UserProfileValidator(timeZoneValidator);
     }
 
     @Transactional
@@ -77,10 +77,9 @@ public class RegistrationService {
         String email = EmailNormalizer.normalize(request.email());
         validateEmailFormat(email);
         validatePassword(request.password(), request.passwordConfirmation());
-        String displayName = request.displayName().trim();
-        validateDisplayName(displayName);
+        String displayName = profileValidator.normalizeDisplayName(request.displayName());
         UserPersonaType persona = parsePersona(request.primaryPersona());
-        String timeZoneId = validateTimeZone(request.timeZone());
+        String timeZoneId = profileValidator.validateTimeZone(request.timeZone());
 
         // Fast, cheap precheck for the ordinary sequential-duplicate case: refuses before bcrypt
         // ever runs. The saveAndFlush below is what actually closes the concurrent race.
@@ -155,37 +154,6 @@ public class RegistrationService {
         }
     }
 
-    private void validateDisplayName(String displayName) {
-        // Checked first, right after String.trim() (RegistrationService#register): @NotBlank on
-        // RegisterRequest already rejects a raw displayName that is empty or all whitespace by its
-        // own definition (CharSequence.toString().trim().length() > 0 in the current Hibernate
-        // Validator), but that definition is not identical to Java's String.trim(): a value made up
-        // only of control code points trim() removes (e.g. an embedded NUL alongside plain letters
-        // is not blank to @NotBlank, since @NotBlank never inspects interior characters — trim()
-        // does) can still normalize to an empty string here. Defense in depth, not a reproduction of
-        // any particular bypass: this must never depend solely on the controller/validation layer
-        // (#149 review, fresh finding).
-        if (displayName.isEmpty()) {
-            throw new BadRequestException(RegistrationMessages.INVALID_DISPLAY_NAME);
-        }
-        // Checked first: an unpaired surrogate is not Character.isISOControl and codePointCount
-        // counts it as one ordinary character, so neither check below ever catches it. PostgreSQL
-        // cannot represent a surrogate code point at all, and the JDBC UTF-8 conversion could
-        // otherwise substitute it silently instead of failing loudly (#149 review, round 8).
-        if (!WellFormedUtf8.isWellFormed(displayName)) {
-            throw new BadRequestException(RegistrationMessages.INVALID_DISPLAY_NAME);
-        }
-        // Same reasoning as validateEmailFormat: an embedded NUL (or other control character) is not
-        // stripped by String.trim() unless it sits at the very start/end of the raw input, and
-        // users.display_name is a Postgres varchar that rejects NUL outright.
-        if (containsControlCharacter(displayName)) {
-            throw new BadRequestException(RegistrationMessages.INVALID_DISPLAY_NAME);
-        }
-        if (displayName.codePointCount(0, displayName.length()) > MAX_NAME_LENGTH) {
-            throw new BadRequestException(RegistrationMessages.DISPLAY_NAME_TOO_LONG);
-        }
-    }
-
     // Character.isISOControl(int), not a Unicode category regex: this must catch exactly Cc
     // (control) code points, never Cf (format) ones like ZWJ that legitimate emoji sequences and
     // some scripts depend on.
@@ -243,12 +211,4 @@ public class RegistrationService {
         }
     }
 
-    private String validateTimeZone(String rawTimeZone) {
-        try {
-            ZoneId zoneId = timeZoneValidator.validate(rawTimeZone);
-            return zoneId.getId();
-        } catch (IllegalArgumentException exception) {
-            throw new BadRequestException(RegistrationMessages.INVALID_TIME_ZONE);
-        }
-    }
 }
