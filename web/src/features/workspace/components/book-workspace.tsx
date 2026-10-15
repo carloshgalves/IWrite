@@ -102,7 +102,9 @@ export function BookWorkspace({ bookId, initialSceneId }: BookWorkspaceProps) {
     queryFn: () => getBook(bookId),
   });
 
-  const outline = outlineQuery.data;
+  // A failed refetch can leave old TanStack data in memory. A cached title is not renewed
+  // authority: only a currently successful outline projection may label or drive this workspace.
+  const outline = outlineQuery.isSuccess ? outlineQuery.data : undefined;
   // Effective access as the backend derived it. Until it arrives, the workspace presents the
   // read-only surface: a control that turns out to be unauthorized is worse than one that appears a
   // moment late, and the server authorizes every request again either way.
@@ -329,7 +331,7 @@ export function BookWorkspace({ bookId, initialSceneId }: BookWorkspaceProps) {
           <div className="min-w-0">
             <p className="text-xs font-medium uppercase text-zinc-500">Workspace</p>
             <h1 className="truncate text-base font-semibold text-zinc-950 md:text-lg">
-              {outline?.title ?? "Carregando livro..."}
+              {outline?.title ?? (outlineQuery.isError ? "Livro indisponível" : "Carregando livro...")}
             </h1>
           </div>
         </div>
