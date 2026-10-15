@@ -155,7 +155,7 @@ describe("SceneEditor content save contract", () => {
     fireEvent.click(nearbySave);
     fireEvent.click(nearbySave);
 
-    expect(mocks.updateSceneContent).toHaveBeenCalledTimes(1);
+    await waitFor(() => expect(mocks.updateSceneContent).toHaveBeenCalledTimes(1));
     expect(mocks.updateSceneContent).toHaveBeenCalledWith(sceneForPlanning.id, expect.objectContaining({
       source: "MANUAL_SAVE",
       expectedContentRevision: 3,
