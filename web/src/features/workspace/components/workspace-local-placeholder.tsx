@@ -55,7 +55,7 @@ export function OutlineLocalPlaceholder({ state, onRetry }: LocalPanelProps) {
   return (
     <aside aria-label="Esboço do livro" aria-busy={state === "loading"} className="flex h-full min-h-0 flex-col bg-white">
       <div className="border-b border-zinc-200 bg-white px-4 py-5">
-        <p className="text-xs font-medium uppercase text-zinc-500">Livro</p>
+        <p className="text-xs font-medium uppercase text-zinc-500">Estrutura</p>
         <h1 className="mt-1 text-lg font-semibold text-zinc-950">Esboço</h1>
       </div>
       <div aria-hidden="true" className="h-16 shrink-0 border-b border-zinc-200 bg-white px-4 py-3">
