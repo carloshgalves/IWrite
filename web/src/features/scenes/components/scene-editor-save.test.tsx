@@ -129,6 +129,28 @@ describe("SceneEditor content save contract", () => {
     expect(screen.getByTestId("editor-content")).toBe(editable);
   });
 
+  test("editing metadata and expanding planning do not reset scroll or remount the editor", async () => {
+    window.localStorage.removeItem("iwrite.scenePlanningPanelOpen");
+    renderEditor();
+    await screen.findByRole("heading", { name: sceneForPlanning.title });
+    const scroll = screen.getByRole("region", { name: "Área de leitura da cena" });
+    const editable = screen.getByTestId("editor-content");
+
+    scroll.scrollTop = 220;
+    fireEvent.change(screen.getByLabelText("Título"), { target: { value: "Outro título" } });
+    expect(scroll.scrollTop).toBe(220);
+    expect(screen.getByTestId("editor-content")).toBe(editable);
+
+    fireEvent.click(screen.getByRole("button", { name: "Expandir planejamento da cena" }));
+    expect(screen.getByRole("button", { name: "Recolher planejamento da cena" })).toBeInTheDocument();
+    expect(screen.getByRole("region", { name: "Área de leitura da cena" })).toBe(scroll);
+    expect(screen.getByTestId("editor-content")).toBe(editable);
+
+    fireEvent.click(screen.getByRole("button", { name: "Recolher planejamento da cena" }));
+    expect(screen.getByTestId("editor-content")).toBe(editable);
+    window.localStorage.removeItem("iwrite.scenePlanningPanelOpen");
+  });
+
   test("autosave sends expectedContentRevision operationId and AUTO_SAVE", async () => {
     mocks.randomUUID.mockReturnValueOnce("operation-autosave");
     renderEditor();
