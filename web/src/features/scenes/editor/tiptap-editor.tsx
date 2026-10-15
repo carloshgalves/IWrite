@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useMemo, type ReactNode } from "react";
+import { useEffect, useMemo, useRef, type ReactNode } from "react";
 import type { Editor } from "@tiptap/react";
 import { EditorContent, useEditor, type JSONContent } from "@tiptap/react";
 import TextAlign from "@tiptap/extension-text-align";
@@ -14,6 +14,10 @@ type TiptapEditorProps = {
   readOnly?: boolean;
   onChange: (contentJson: JSONContent, contentText: string) => void;
   className?: string;
+  /** Optional domain actions (save/status), kept next to formatting in the same sticky row. */
+  toolbarActions?: ReactNode;
+  /** Ctrl/Cmd+S inside the editable surface saves without moving editor selection. */
+  onSaveContent?: () => void;
 };
 
 function plainTextToDocument(text: string): JSONContent {
@@ -62,6 +66,9 @@ function ToolbarButton({ label, ariaLabel, title, active, disabled, onClick }: T
       title={title}
       disabled={disabled}
       onClick={onClick}
+      // Mouse click on the formatting toolbar must not collapse the current text selection.
+      // Keyboard focus remains available via Tab/Shift+Tab from outside the editable surface.
+      onMouseDown={(event) => event.preventDefault()}
       className={`inline-flex min-h-8 items-center justify-center rounded-md border px-2.5 text-sm font-medium transition disabled:cursor-not-allowed disabled:opacity-50 ${
         active
           ? "border-zinc-900 bg-zinc-900 text-white"
@@ -114,22 +121,23 @@ function AlignIcon({ align }: AlignIconProps) {
   );
 }
 
-function TiptapToolbar({ editor }: { editor: Editor | null }) {
+function TiptapToolbar({ editor, actions }: { editor: Editor | null; actions?: ReactNode }) {
   return (
-    <div className="flex flex-wrap gap-2 rounded-t-lg border border-b-0 border-zinc-200 bg-zinc-50 px-3 py-2">
-      <ToolbarButton label="B" active={editor?.isActive("bold")} disabled={!editor} onClick={() => editor?.chain().focus().toggleBold().run()} />
-      <ToolbarButton label="I" active={editor?.isActive("italic")} disabled={!editor} onClick={() => editor?.chain().focus().toggleItalic().run()} />
+    <div role="toolbar" aria-label="Ferramentas de escrita" className="sticky top-0 z-20 flex min-w-0 items-center gap-1 rounded-t-lg border border-b-0 border-zinc-200 bg-zinc-50/95 p-2 shadow-sm backdrop-blur-sm">
+      <div role="group" aria-label="Formatação" className="flex min-w-0 flex-1 items-center gap-2 overflow-x-auto overscroll-x-contain pb-1">
+      <ToolbarButton label="B" active={editor?.isActive("bold")} disabled={!editor} onClick={() => editor?.chain().focus(undefined, { scrollIntoView: false }).toggleBold().run()} />
+      <ToolbarButton label="I" active={editor?.isActive("italic")} disabled={!editor} onClick={() => editor?.chain().focus(undefined, { scrollIntoView: false }).toggleItalic().run()} />
       <ToolbarButton
         label="Parágrafo"
         active={editor?.isActive("paragraph")}
         disabled={!editor}
-        onClick={() => editor?.chain().focus().setParagraph().run()}
+        onClick={() => editor?.chain().focus(undefined, { scrollIntoView: false }).setParagraph().run()}
       />
       <ToolbarButton
         label="Título"
         active={editor?.isActive("heading", { level: 2 })}
         disabled={!editor}
-        onClick={() => editor?.chain().focus().toggleHeading({ level: 2 }).run()}
+        onClick={() => editor?.chain().focus(undefined, { scrollIntoView: false }).toggleHeading({ level: 2 }).run()}
       />
       <ToolbarButton
         label={<AlignIcon align="left" />}
@@ -137,7 +145,7 @@ function TiptapToolbar({ editor }: { editor: Editor | null }) {
         title="Alinhar a esquerda"
         active={editor?.isActive({ textAlign: "left" })}
         disabled={!editor}
-        onClick={() => editor?.chain().focus().setTextAlign("left").run()}
+        onClick={() => editor?.chain().focus(undefined, { scrollIntoView: false }).setTextAlign("left").run()}
       />
       <ToolbarButton
         label={<AlignIcon align="center" />}
@@ -145,7 +153,7 @@ function TiptapToolbar({ editor }: { editor: Editor | null }) {
         title="Centralizar"
         active={editor?.isActive({ textAlign: "center" })}
         disabled={!editor}
-        onClick={() => editor?.chain().focus().setTextAlign("center").run()}
+        onClick={() => editor?.chain().focus(undefined, { scrollIntoView: false }).setTextAlign("center").run()}
       />
       <ToolbarButton
         label={<AlignIcon align="right" />}
@@ -153,7 +161,7 @@ function TiptapToolbar({ editor }: { editor: Editor | null }) {
         title="Alinhar a direita"
         active={editor?.isActive({ textAlign: "right" })}
         disabled={!editor}
-        onClick={() => editor?.chain().focus().setTextAlign("right").run()}
+        onClick={() => editor?.chain().focus(undefined, { scrollIntoView: false }).setTextAlign("right").run()}
       />
       <ToolbarButton
         label={<AlignIcon align="justify" />}
@@ -161,10 +169,12 @@ function TiptapToolbar({ editor }: { editor: Editor | null }) {
         title="Justificar"
         active={editor?.isActive({ textAlign: "justify" })}
         disabled={!editor}
-        onClick={() => editor?.chain().focus().setTextAlign("justify").run()}
+        onClick={() => editor?.chain().focus(undefined, { scrollIntoView: false }).setTextAlign("justify").run()}
       />
-      <ToolbarButton label="Desfazer" disabled={!editor || !editor.can().undo()} onClick={() => editor?.chain().focus().undo().run()} />
-      <ToolbarButton label="Refazer" disabled={!editor || !editor.can().redo()} onClick={() => editor?.chain().focus().redo().run()} />
+      <ToolbarButton label="Desfazer" disabled={!editor || !editor.can().undo()} onClick={() => editor?.chain().focus(undefined, { scrollIntoView: false }).undo().run()} />
+      <ToolbarButton label="Refazer" disabled={!editor || !editor.can().redo()} onClick={() => editor?.chain().focus(undefined, { scrollIntoView: false }).redo().run()} />
+      </div>
+      {actions ? <div className="flex shrink-0 items-center gap-2 border-l border-zinc-200 pl-2">{actions}</div> : null}
     </div>
   );
 }
@@ -175,11 +185,18 @@ export function TiptapEditor({
   readOnly = false,
   onChange,
   className = "",
+  toolbarActions,
+  onSaveContent,
 }: TiptapEditorProps) {
   const initialContent = useMemo(
     () => parseContentJson(initialContentJson) ?? plainTextToDocument(initialContentText ?? ""),
     [initialContentJson, initialContentText]
   );
+
+  const onSaveContentRef = useRef(onSaveContent);
+  const readOnlyRef = useRef(readOnly);
+  onSaveContentRef.current = onSaveContent;
+  readOnlyRef.current = readOnly;
 
   const editor = useEditor({
     extensions: [StarterKit, TextAlign.configure({ types: ["paragraph", "heading"] })],
@@ -192,7 +209,16 @@ export function TiptapEditor({
         "aria-label": "Scene content editor",
         "data-testid": "scene-content-editor",
       },
-      handleKeyDown: handleTiptapTabKey,
+      handleKeyDown: (view, event) => {
+        if ((event.ctrlKey || event.metaKey) && !event.altKey && event.key.toLowerCase() === "s" &&
+            !readOnlyRef.current && onSaveContentRef.current) {
+          event.preventDefault();
+          onSaveContentRef.current();
+          return true;
+        }
+        // Preserve the existing Tab/Shift+Tab editor behavior.
+        return handleTiptapTabKey(view, event);
+      },
     },
     onUpdate: ({ editor: updatedEditor }) => {
       onChange(updatedEditor.getJSON(), updatedEditor.getText());
@@ -211,7 +237,7 @@ export function TiptapEditor({
 
   return (
     <div>
-      {readOnly ? null : <TiptapToolbar editor={editor} />}
+      {readOnly ? null : <TiptapToolbar editor={editor} actions={toolbarActions} />}
       <EditorContent editor={editor} />
     </div>
   );
