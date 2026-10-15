@@ -1,8 +1,10 @@
 import { FeedbackMessage } from "@/components/ui/feedback-message";
 import type { ContentSaveStatus } from "@/features/scenes/components/scene-editor-header";
 import { TiptapEditor } from "@/features/scenes/editor/tiptap-editor";
+import { useSceneScrollRestoration } from "@/features/workspace/scene-scroll";
 
 type SceneContentEditorProps = {
+  bookId: string;
   contentKey: string;
   sourceSceneId: string;
   contentJson: string;
@@ -32,6 +34,7 @@ const saveStatusClasses: Record<ContentSaveStatus, string> = {
 };
 
 export function SceneContentEditor({
+  bookId,
   contentKey,
   sourceSceneId,
   contentJson,
@@ -44,8 +47,10 @@ export function SceneContentEditor({
   isFocusMode = false,
   onContentChange,
 }: SceneContentEditorProps) {
+  const contentScroll = useSceneScrollRestoration<HTMLDivElement>(bookId, sourceSceneId, "scene-content", contentKey);
+
   return (
-    <div className={`grid h-full min-h-0 gap-4 overflow-y-auto bg-white ${isFocusMode ? "px-4 py-5 md:px-8 md:py-7" : "px-4 py-6 md:px-7"}`}>
+    <div ref={contentScroll.ref} onScroll={contentScroll.onScroll} className={`grid h-full min-h-0 gap-4 overflow-y-auto bg-white ${isFocusMode ? "px-4 py-5 md:px-8 md:py-7" : "px-4 py-6 md:px-7"}`}>
       <div className={`mx-auto grid w-full gap-4 ${isFocusMode ? "max-w-4xl" : "max-w-5xl"}`}>
         <div className="flex flex-wrap items-center justify-between gap-3">
           <div>
