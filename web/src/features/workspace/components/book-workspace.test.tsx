@@ -732,6 +732,20 @@ describe("BookWorkspace initial scene selection", () => {
     expect(mocks.getOutline).toHaveBeenCalledTimes(2);
   });
 
+  test("refetch falho não continua exibindo o título privado em cache", async () => {
+    const { queryClient } = renderWithClient(<BookWorkspace bookId="book-1" />);
+    expect(await screen.findByRole("heading", { name: "Livro de teste" })).toBeInTheDocument();
+
+    mocks.getOutline.mockRejectedValueOnce(new Error("access or network failed"));
+    await act(async () => {
+      await queryClient.refetchQueries({ queryKey: queryKeys.outline("book-1") }).catch(() => undefined);
+    });
+
+    expect(screen.getByRole("heading", { name: "Livro indisponível" })).toBeInTheDocument();
+    expect(screen.queryByRole("heading", { name: "Livro de teste" })).not.toBeInTheDocument();
+    expect(screen.getByRole("alert")).toHaveTextContent("Não foi possível carregar o outline");
+  });
+
   test("refetch de outline válido mantém a árvore e o botão de cena montados", async () => {
     const { queryClient } = renderWithClient(<BookWorkspace bookId="book-1" />);
     const row = (await screen.findByText(sceneForPlanning.title)).closest("button");
