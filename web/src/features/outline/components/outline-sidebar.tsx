@@ -1,6 +1,6 @@
 "use client";
 
-import { type FormEvent, useEffect, useState } from "react";
+import { type FormEvent, useEffect, useLayoutEffect, useRef, useState } from "react";
 import {
   closestCenter,
   DndContext,
@@ -39,6 +39,7 @@ import { SectionDragPreview } from "@/features/outline/components/outline-drag-o
 import { SectionItem } from "@/features/outline/components/section-item";
 import type { OutlineChapter, OutlineSection, SectionType } from "@/features/outline/types";
 import { getReorderedIds } from "@/features/outline/utils/reorder";
+import { revealSelectedOutlineScene } from "@/features/outline/utils/reveal-selected-scene";
 import { queryKeys } from "@/lib/query/keys";
 
 type OutlineSidebarProps = {
@@ -75,6 +76,8 @@ export function OutlineSidebar({
   const [collapsedSectionIds, setCollapsedSectionIds] = useState<Set<string>>(() => new Set());
   const [collapsedChapterIds, setCollapsedChapterIds] = useState<Set<string>>(() => new Set());
   const [activeSectionId, setActiveSectionId] = useState<string | null>(null);
+  const scrollportRef = useRef<HTMLDivElement>(null);
+  const lastRevealedSceneRef = useRef<string | null>(null);
 
   const outlineQuery = useQuery({
     queryKey: queryKeys.outline(bookId),
@@ -135,6 +138,26 @@ export function OutlineSidebar({
       });
     }
   }, [outlineQuery.data, selectedSceneId]);
+
+  // The selected scene may be far below the fold or absent until collapsed ancestors are
+  // expanded by the effect above. Retry after those state changes commit. Once revealed,
+  // ordinary rerenders, autosave, refetches and user scrolling must not snap the tree back.
+  useLayoutEffect(() => {
+    if (!selectedSceneId) {
+      lastRevealedSceneRef.current = null;
+      return;
+    }
+
+    const sceneKey = JSON.stringify([bookId, selectedSceneId]);
+    if (lastRevealedSceneRef.current === sceneKey) {
+      return;
+    }
+
+    const scrollport = scrollportRef.current;
+    if (scrollport && revealSelectedOutlineScene(scrollport)) {
+      lastRevealedSceneRef.current = sceneKey;
+    }
+  }, [bookId, selectedSceneId, outlineQuery.data, collapsedSectionIds, collapsedChapterIds]);
 
   function invalidateOutline() {
     void queryClient.invalidateQueries({ queryKey: queryKeys.outline(bookId) });
@@ -467,7 +490,7 @@ export function OutlineSidebar({
         {successMessage ? <FeedbackMessage variant="success">{successMessage}</FeedbackMessage> : null}
       </div>
 
-      <div className="min-h-0 flex-1 overflow-y-auto bg-zinc-50/70 px-3 py-4">
+      <div ref={scrollportRef} data-testid="outline-scrollport" className="min-h-0 flex-1 overflow-y-auto bg-zinc-50/70 px-3 py-4">
         {outline.sections.length === 0 ? (
           <EmptyState
             size="sm"
