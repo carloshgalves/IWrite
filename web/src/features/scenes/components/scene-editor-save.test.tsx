@@ -168,17 +168,21 @@ describe("SceneEditor content save contract", () => {
     const { queryClient } = renderEditor();
     await screen.findByRole("heading", { name: sceneForPlanning.title });
 
-    mocks.getScene.mockRejectedValueOnce(new Error("backend temporarily unavailable"))
-      .mockResolvedValueOnce({ ...sceneForPlanning, contentRevision: 3 });
+    // Keep every possible refetch on the failing side until the error is visible; a queued
+    // one-shot rejection can be consumed by an independent query observer or retry path.
+    mocks.getScene.mockRejectedValue(new Error("backend temporarily unavailable"));
     await act(async () => {
       await queryClient.refetchQueries({ queryKey: queryKeys.scene(sceneForPlanning.id) }).catch(() => undefined);
     });
 
-    expect(screen.getByRole("region", { name: "Área da cena" })).toBeInTheDocument();
+    await waitFor(() => {
+      expect(screen.getByRole("region", { name: "Área da cena" })).toBeInTheDocument();
+    });
     expect(screen.getByRole("alert")).toHaveTextContent("Não foi possível carregar a cena");
     expect(screen.queryByTestId("editor-content")).not.toBeInTheDocument();
     expect(screen.queryByRole("button", { name: /Salvar conteúdo/ })).not.toBeInTheDocument();
 
+    mocks.getScene.mockResolvedValue({ ...sceneForPlanning, contentRevision: 3 });
     fireEvent.click(screen.getByRole("button", { name: "Tentar novamente" }));
     expect(await screen.findByRole("heading", { name: sceneForPlanning.title })).toBeInTheDocument();
     expect(screen.getByTestId("editor-content")).toBeInTheDocument();
