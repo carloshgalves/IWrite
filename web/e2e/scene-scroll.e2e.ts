@@ -38,7 +38,6 @@ test("long scene scrolls in one surface across metadata, focus and small viewpor
   await expect(sceneScroll).toBeVisible();
   await assertSingleScroll(sceneScroll);
 
-  const inner = contentEditable.locator("xpath=ancestor::div[contains(@class, 'bg-white')][last()]");
   // No nested independent vertical scroll area is allowed anywhere inside the scene scrollport.
   // The outer workspace and outline may scroll independently; they are NOT descendants of this pane.
   await expect.poll(async () => sceneScroll.evaluate((el) =>
@@ -48,16 +47,16 @@ test("long scene scrolls in one surface across metadata, focus and small viewpor
         child.scrollHeight > child.clientHeight + 2;
     }).length
   )).toBe(0);
-  void inner;
 
   // The pointer is over the text, but the only changing scrollTop belongs to the scene.
-  await sceneScroll.evaluate((element) => { element.scrollTop = 0; });
-  const editorBox = await contentEditable.boundingBox();
-  expect(editorBox).not.toBeNull();
-  await page.mouse.move(editorBox!.x + 15, Math.min(editorBox!.y + 30, 500));
+  await contentEditable.locator("p").first().scrollIntoViewIfNeeded();
+  const firstParagraph = await contentEditable.locator("p").first().boundingBox();
+  expect(firstParagraph).not.toBeNull();
+  const scrollBefore = await sceneScroll.evaluate((element) => element.scrollTop);
+  await page.mouse.move(firstParagraph!.x + 10, firstParagraph!.y + 10);
   const pageBefore = await page.evaluate(() => window.scrollY);
   await page.mouse.wheel(0, 550);
-  await expect.poll(() => sceneScroll.evaluate((element) => element.scrollTop)).toBeGreaterThan(0);
+  await expect.poll(() => sceneScroll.evaluate((element) => element.scrollTop)).toBeGreaterThan(scrollBefore);
   expect(await page.evaluate(() => window.scrollY)).toBe(pageBefore);
 
   // Keyboard navigation works when focus is explicitly on the scene scroll region.
