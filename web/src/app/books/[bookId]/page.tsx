@@ -10,5 +10,6 @@ export default async function BookWorkspacePage({ params, searchParams }: BookWo
   const { sceneId } = await searchParams;
   const initialSceneId = typeof sceneId === "string" && sceneId.trim() ? sceneId : undefined;
 
-  return <BookWorkspace bookId={bookId} initialSceneId={initialSceneId} />;
+  // A different Book is a different navigation/selection boundary. Never reuse its client state.
+  return <BookWorkspace key={bookId} bookId={bookId} initialSceneId={initialSceneId} />;
 }
