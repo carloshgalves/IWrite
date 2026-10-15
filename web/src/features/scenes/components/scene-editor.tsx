@@ -750,7 +750,7 @@ export function SceneEditor({
   return (
     <section className={`h-full overflow-y-auto bg-zinc-100/70 ${isFocusMode ? "p-2 md:p-4 lg:p-6" : "p-4 md:p-6 lg:p-8"}`}>
       <Card
-        className={`mx-auto grid min-h-full overflow-hidden border-zinc-200 bg-white ${
+        className={`mx-auto grid min-h-full border-zinc-200 bg-white ${
           isFocusMode
             ? "max-w-6xl grid-rows-[auto_auto_minmax(0,1fr)] shadow-sm shadow-zinc-200/70"
             : "max-w-7xl grid-rows-[auto_auto_auto_auto_minmax(0,1fr)] shadow-xl shadow-zinc-200/70"
@@ -864,6 +864,7 @@ export function SceneEditor({
             isError={contentMutation.isError}
             saveStatus={contentSaveStatus}
             isFocusMode={isFocusMode}
+            onSaveContent={() => handleSaveContent(scene.id)}
             onContentChange={(sourceSceneId, nextContentJson, nextContentText) => {
               if (sourceSceneId !== activeSceneIdRef.current) {
                 return;
