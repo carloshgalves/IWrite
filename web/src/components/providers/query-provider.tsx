@@ -6,6 +6,7 @@ import { isStaleMutation, purgeAuthenticatedCaches, stampMutationGeneration } fr
 import { announceSessionChanged } from "@/features/auth/session-sync";
 import { SESSION_QUERY_KEY } from "@/features/auth/session-query-key";
 import { ApiError } from "@/lib/api/client";
+import { clearSceneScrollPositions } from "@/features/workspace/scene-scroll";
 
 export function QueryProvider({ children }: { children: React.ReactNode }) {
   const [queryClient] = useState(() => {
@@ -28,6 +29,7 @@ export function QueryProvider({ children }: { children: React.ReactNode }) {
       if (!client) return;
       if (client.getQueryData(SESSION_QUERY_KEY) === null) return;
       purgeAuthenticatedCaches(client);
+      clearSceneScrollPositions();
       client.setQueryData(SESSION_QUERY_KEY, null);
       announceSessionChanged();
     };
