@@ -54,6 +54,34 @@ test("restores tabs and the selected scene through reload and back/forward", asy
   await page.reload();
   await expect(page.getByRole("heading", { name: sceneTitle })).toBeVisible();
 
+  // A substantial synthetic Scene gives the actual reading scrollport space to move.
+  // The test reads only numeric scroll positions; no manuscript content enters diagnostics.
+  const editor = page.getByTestId("scene-content-editor");
+  const longText = Array.from({ length: 120 }, (_, index) =>
+    `Synthetic paragraph ${index + 1} for reading position restoration.`
+  ).join("\n");
+  await editor.fill(longText);
+  await page.getByRole("button", { name: "Salvar conteúdo" }).click();
+  await expect(page.getByText("Salvo").first()).toBeVisible();
+
+  const shell = page.getByTestId("scene-shell-scrollport");
+  const content = page.getByTestId("scene-content-scrollport");
+  const shellCanScroll = await shell.evaluate((element) => element.scrollHeight - element.clientHeight > 100);
+  const scrollport = shellCanScroll ? shell : content;
+  const observedScroll = await scrollport.evaluate((element) => {
+    element.scrollTop = 220;
+    element.dispatchEvent(new Event("scroll"));
+    return element.scrollTop;
+  });
+  expect(observedScroll, "the long Scene must actually have a scrollable reading surface").toBeGreaterThan(80);
+
+  await page.reload();
+  await expect(page.getByRole("heading", { name: sceneTitle })).toBeVisible();
+  const restoredScrollport = shellCanScroll
+    ? page.getByTestId("scene-shell-scrollport")
+    : page.getByTestId("scene-content-scrollport");
+  await expect.poll(() => restoredScrollport.evaluate((element) => element.scrollTop)).toBeGreaterThan(80);
+
   // Unknown tabs fall back to Scenes, and a scene from another book is never trusted locally.
   await page.goto(`${bookPath}?sceneId=${encodeURIComponent(sceneId!)}&tab=unknown-tab`);
   await expect(page.getByRole("heading", { name: sceneTitle })).toBeVisible();
