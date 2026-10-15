@@ -142,6 +142,47 @@ describe("SceneEditor content save contract", () => {
     });
   });
 
+  test("same-scene refetch keeps the editor DOM mounted until a new projection arrives", async () => {
+    const { queryClient } = renderEditor();
+    await screen.findByRole("heading", { name: sceneForPlanning.title });
+    const before = screen.getByTestId("editor-content");
+    const contentKey = before.getAttribute("data-content-key");
+    const pending = createDeferred<Scene>();
+    mocks.getScene.mockImplementationOnce(() => pending.promise);
+
+    await act(async () => {
+      void queryClient.refetchQueries({ queryKey: queryKeys.scene(sceneForPlanning.id) });
+    });
+
+    expect(screen.getByTestId("editor-content")).toBe(before);
+    expect(screen.getByTestId("editor-content")).toHaveAttribute("data-content-key", contentKey);
+    expect(screen.queryByText("Carregando cena...")).not.toBeInTheDocument();
+
+    await act(async () => pending.resolve({ ...sceneForPlanning, contentRevision: 3 }));
+    expect(screen.getByTestId("editor-content")).toBe(before);
+    expect(screen.getByRole("heading", { name: sceneForPlanning.title })).toBeInTheDocument();
+  });
+
+  test("failed scene refetch with cached data shows safe local error until retry succeeds", async () => {
+    const { queryClient } = renderEditor();
+    await screen.findByRole("heading", { name: sceneForPlanning.title });
+
+    mocks.getScene.mockRejectedValueOnce(new Error("backend temporarily unavailable"))
+      .mockResolvedValueOnce({ ...sceneForPlanning, contentRevision: 3 });
+    await act(async () => {
+      await queryClient.refetchQueries({ queryKey: queryKeys.scene(sceneForPlanning.id) }).catch(() => undefined);
+    });
+
+    expect(screen.getByRole("region", { name: "Área da cena" })).toBeInTheDocument();
+    expect(screen.getByRole("alert")).toHaveTextContent("Não foi possível carregar a cena");
+    expect(screen.queryByTestId("editor-content")).not.toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: /Salvar conteúdo/ })).not.toBeInTheDocument();
+
+    fireEvent.click(screen.getByRole("button", { name: "Tentar novamente" }));
+    expect(await screen.findByRole("heading", { name: sceneForPlanning.title })).toBeInTheDocument();
+    expect(screen.getByTestId("editor-content")).toBeInTheDocument();
+  });
+
   test("cancels queued autosave when a conflicting newer revision becomes pending", async () => {
     mocks.getScene.mockResolvedValueOnce({ ...sceneForPlanning, contentRevision: 1 });
     const { queryClient } = renderEditor();
