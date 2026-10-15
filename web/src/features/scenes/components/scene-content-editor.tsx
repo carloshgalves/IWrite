@@ -14,6 +14,8 @@ type SceneContentEditorProps = {
   isError: boolean;
   saveStatus: ContentSaveStatus;
   isFocusMode?: boolean;
+  /** Shares the existing validated content-save mutation with the header button. */
+  onSaveContent?: () => void;
   onContentChange: (sourceSceneId: string, contentJson: string, contentText: string) => void;
 };
 
@@ -42,6 +44,7 @@ export function SceneContentEditor({
   isError,
   saveStatus,
   isFocusMode = false,
+  onSaveContent,
   onContentChange,
 }: SceneContentEditorProps) {
   return (
@@ -68,6 +71,31 @@ export function SceneContentEditor({
 
         <TiptapEditor
           key={contentKey}
+          onSaveContent={readOnly ? undefined : onSaveContent}
+          toolbarActions={readOnly || !onSaveContent ? undefined : (
+            <>
+              <span
+                role="status"
+                aria-live="polite"
+                aria-atomic="true"
+                aria-label="Estado do salvamento"
+                className={`max-w-20 truncate rounded border px-1.5 py-1 text-[11px] font-medium sm:max-w-none sm:px-2 ${saveStatusClasses[saveStatus]}`}
+              >
+                {saveStatusLabels[saveStatus]}
+              </span>
+              <button
+                type="button"
+                title="Salvar conteúdo (Ctrl+S ou Cmd+S)"
+                aria-keyshortcuts="Control+S Meta+S"
+                disabled={saveStatus === "saving"}
+                onMouseDown={(event) => event.preventDefault()}
+                onClick={onSaveContent}
+                className="inline-flex min-h-9 shrink-0 items-center justify-center rounded-md border border-zinc-300 bg-white px-2 text-xs font-medium text-zinc-900 hover:bg-zinc-100 disabled:cursor-wait disabled:opacity-60 sm:px-3 sm:text-sm"
+              >
+                {saveStatus === "saving" ? "Salvando..." : "Salvar conteúdo"}
+              </button>
+            </>
+          )}
           initialContentJson={contentJson}
           initialContentText={contentText}
           readOnly={readOnly}
