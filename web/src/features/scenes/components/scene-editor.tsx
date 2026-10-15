@@ -514,7 +514,16 @@ export function SceneEditor({
   }
 
   function handleSaveContent(targetSceneId: string) {
-    if (!canEditContent || !hasCurrentContentAuthority(targetSceneId)) {
+    // Toolbar, header and Ctrl/Cmd+S converge here. A keyboard shortcut can repeat while
+    // a save is still pending, even before React disables the visible buttons. Never start
+    // concurrent manual saves against the same content revision.
+    if (
+      !canEditContent ||
+      !hasCurrentContentAuthority(targetSceneId) ||
+      contentMutation.isPending ||
+      contentSavePendingRef.current ||
+      contentSavePromiseRef.current !== null
+    ) {
       return;
     }
 
