@@ -35,8 +35,8 @@ describe("revealSelectedOutlineScene (#249)", () => {
     editor.scrollTop = 415;
     document.body.appendChild(editor);
     const windowScroll = vi.spyOn(window, "scrollTo").mockImplementation(() => {});
-    const scrollIntoView = vi.spyOn(selected, "scrollIntoView" as keyof HTMLButtonElement)
-      .mockImplementation(() => undefined);
+    const scrollIntoView = vi.fn();
+    Object.defineProperty(selected, "scrollIntoView", { configurable: true, value: scrollIntoView });
 
     expect(revealSelectedOutlineScene(scrollport)).toBe(true);
     expect(scrollport.scrollTop).toBe(248);
