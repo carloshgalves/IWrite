@@ -13,6 +13,7 @@ import {
 import { markReconciliationStart, purgeAuthenticatedCaches } from "@/features/auth/session-cache";
 import { announceSessionChanged } from "@/features/auth/session-sync";
 import { SESSION_QUERY_KEY } from "@/features/auth/session-query-key";
+import { clearSceneScrollPositions } from "@/features/workspace/scene-scroll";
 
 export { SESSION_QUERY_KEY };
 
@@ -44,6 +45,7 @@ export function useSession() {
 async function applyNewSession(queryClient: QueryClient, router: ReturnType<typeof useRouter>, session: AuthenticatedSession) {
   await queryClient.cancelQueries();
   purgeAuthenticatedCaches(queryClient);
+  clearSceneScrollPositions();
   markReconciliationStart(queryClient);
 
   queryClient.setQueryData(SESSION_QUERY_KEY, session);
@@ -89,6 +91,7 @@ export function useLogout() {
       // Everything cached was fetched as this user in this tenant. Dropping the whole cache is the
       // only version of "clear authenticated data" that cannot miss a key.
       queryClient.clear();
+      clearSceneScrollPositions();
       announceSessionChanged();
       router.replace("/login");
     },
