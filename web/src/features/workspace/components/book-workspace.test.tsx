@@ -736,12 +736,16 @@ describe("BookWorkspace initial scene selection", () => {
     const { queryClient } = renderWithClient(<BookWorkspace bookId="book-1" />);
     expect((await screen.findAllByRole("heading", { name: "Livro de teste" })).length).toBeGreaterThan(0);
 
-    mocks.getOutline.mockRejectedValueOnce(new Error("access or network failed"));
+    // Force every refetch to fail until the error is rendered. A single-use rejection
+    // can be consumed by another mounted observer before the assertion runs.
+    mocks.getOutline.mockRejectedValue(new Error("access or network failed"));
     await act(async () => {
       await queryClient.refetchQueries({ queryKey: queryKeys.outline("book-1") }).catch(() => undefined);
     });
 
-    expect(screen.getByRole("heading", { name: "Livro indisponível" })).toBeInTheDocument();
+    await waitFor(() => {
+      expect(screen.getByRole("heading", { name: "Livro indisponível" })).toBeInTheDocument();
+    });
     expect(screen.queryByRole("heading", { name: "Livro de teste" })).not.toBeInTheDocument();
     expect(screen.getByRole("alert")).toHaveTextContent("Não foi possível carregar o outline");
   });
