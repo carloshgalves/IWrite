@@ -46,6 +46,7 @@ export function SceneRow({
       <button
         type="button"
         ref={setActivatorNodeRef}
+        aria-current={isSelected ? "location" : undefined}
         onClick={() => onSelect(scene.id)}
         className={`min-w-0 rounded-l-md px-2.5 py-1.5 text-left text-sm transition hover:bg-zinc-50 focus:outline-none focus:ring-2 focus:ring-zinc-800 focus:ring-offset-1 ${
           canMutateStructure ? "cursor-grab active:cursor-grabbing" : ""
