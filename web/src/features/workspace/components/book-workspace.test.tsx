@@ -89,12 +89,14 @@ const mocks = vi.hoisted(() => ({
   updateSceneContent: vi.fn(),
   deleteScene: vi.fn(),
   routerReplace: vi.fn(),
+  routerPush: vi.fn(),
   searchParams: new URLSearchParams(),
 }));
 
 vi.mock("next/navigation", () => ({
   useRouter: () => ({
     replace: mocks.routerReplace,
+    push: mocks.routerPush,
   }),
   useSearchParams: () => mocks.searchParams,
 }));
@@ -438,7 +440,7 @@ describe("BookWorkspace initial scene selection", () => {
     await screen.findByText("Livro");
     selectScene();
 
-    expect(mocks.routerReplace).toHaveBeenCalledWith(`/books/book-1?sceneId=${sceneForPlanning.id}`, { scroll: false });
+    expect(mocks.routerPush).toHaveBeenCalledWith(`/books/book-1?sceneId=${sceneForPlanning.id}`, { scroll: false });
   });
 
   test("remove sceneId da URL ao excluir a cena selecionada", async () => {
@@ -565,7 +567,7 @@ describe("BookWorkspace initial scene selection", () => {
 
     expect(await screen.findByRole("heading", { name: sceneForPlanning.title })).toBeInTheDocument();
     expect(screen.getByText("Livro")).toBeInTheDocument();
-    expect(mocks.routerReplace).toHaveBeenCalledWith(`/books/book-1?sceneId=${sceneForPlanning.id}`, { scroll: false });
+    expect(mocks.routerPush).toHaveBeenCalledWith(`/books/book-1?sceneId=${sceneForPlanning.id}`, { scroll: false });
   });
 
   test("abre cena do storyboard no editor e atualiza a URL", async () => {
@@ -579,7 +581,7 @@ describe("BookWorkspace initial scene selection", () => {
 
     expect(await screen.findByRole("heading", { name: sceneForPlanning.title })).toBeInTheDocument();
     expect(screen.getByText("Livro")).toBeInTheDocument();
-    expect(mocks.routerReplace).toHaveBeenCalledWith(`/books/book-1?sceneId=${sceneForPlanning.id}`, { scroll: false });
+    expect(mocks.routerPush).toHaveBeenCalledWith(`/books/book-1?sceneId=${sceneForPlanning.id}`, { scroll: false });
   });
 
   test("abre cena do kanban no editor e atualiza a URL", async () => {
@@ -594,7 +596,7 @@ describe("BookWorkspace initial scene selection", () => {
     expect(await screen.findByRole("heading", { name: sceneForPlanning.title })).toBeInTheDocument();
     expect(screen.getByText("Livro")).toBeInTheDocument();
     expect(screen.getByRole("button", { name: "Expandir planejamento da cena" })).toHaveAttribute("aria-expanded", "false");
-    expect(mocks.routerReplace).toHaveBeenCalledWith(`/books/book-1?sceneId=${sceneForPlanning.id}`, { scroll: false });
+    expect(mocks.routerPush).toHaveBeenCalledWith(`/books/book-1?sceneId=${sceneForPlanning.id}`, { scroll: false });
   });
 
   test("abre planejamento a partir do kanban bloqueado e atualiza a URL", async () => {
@@ -612,7 +614,7 @@ describe("BookWorkspace initial scene selection", () => {
     expect(screen.getByText("Livro")).toBeInTheDocument();
     expect(screen.getByRole("button", { name: "Recolher planejamento da cena" })).toHaveAttribute("aria-expanded", "true");
     expect(screen.getByLabelText("Objetivo")).toBeInTheDocument();
-    expect(mocks.routerReplace).toHaveBeenCalledWith(`/books/book-1?sceneId=${sceneForPlanning.id}`, { scroll: false });
+    expect(mocks.routerPush).toHaveBeenCalledWith(`/books/book-1?sceneId=${sceneForPlanning.id}`, { scroll: false });
   });
 
   test("nao reaplica pedido antigo de planejamento ao selecionar outra cena normalmente", async () => {
@@ -639,7 +641,7 @@ describe("BookWorkspace initial scene selection", () => {
 
     expect(await screen.findByRole("heading", { name: alternateSceneForPlanning.title })).toBeInTheDocument();
     expect(screen.getByRole("button", { name: "Expandir planejamento da cena" })).toHaveAttribute("aria-expanded", "false");
-    expect(mocks.routerReplace).toHaveBeenCalledWith(`/books/book-1?sceneId=${alternateSceneForPlanning.id}`, {
+    expect(mocks.routerPush).toHaveBeenCalledWith(`/books/book-1?sceneId=${alternateSceneForPlanning.id}`, {
       scroll: false,
     });
   });
@@ -668,7 +670,7 @@ describe("BookWorkspace initial scene selection", () => {
 
     expect(await screen.findByRole("heading", { name: alternateSceneForPlanning.title })).toBeInTheDocument();
     expect(screen.getByRole("button", { name: "Recolher planejamento da cena" })).toHaveAttribute("aria-expanded", "true");
-    expect(mocks.routerReplace).toHaveBeenCalledWith(`/books/book-1?sceneId=${alternateSceneForPlanning.id}`, {
+    expect(mocks.routerPush).toHaveBeenCalledWith(`/books/book-1?sceneId=${alternateSceneForPlanning.id}`, {
       scroll: false,
     });
   });
@@ -696,6 +698,56 @@ describe("BookWorkspace initial scene selection", () => {
     fireEvent.click(screen.getByRole("button", { name: "Caderno" }));
 
     expect(await screen.findByRole("heading", { name: "Caderno" })).toBeInTheDocument();
+  });
+
+  test("restaura a aba do link direto apos montagem ou refresh sem depender de localStorage", async () => {
+    mocks.searchParams = new URLSearchParams("tab=locations");
+    renderWithClient(<BookWorkspace bookId="book-1" />);
+    expect(await screen.findByRole("heading", { name: "Localizações" })).toBeInTheDocument();
+    expect(mocks.routerPush).not.toHaveBeenCalled();
+    expect(mocks.routerReplace).not.toHaveBeenCalled();
+  });
+
+  test("trocar a aba cria historico navegavel e conserva sceneId da URL", async () => {
+    mocks.searchParams = new URLSearchParams(`sceneId=${sceneForPlanning.id}`);
+    const { rerender } = renderWithClient(<BookWorkspace bookId="book-1" initialSceneId={sceneForPlanning.id} />);
+
+    await screen.findByText("Livro");
+    fireEvent.click(screen.getByRole("button", { name: "Caderno" }));
+    expect(screen.getByRole("heading", { name: "Caderno" })).toBeInTheDocument();
+    expect(mocks.routerPush).toHaveBeenLastCalledWith(
+      `/books/book-1?sceneId=${sceneForPlanning.id}&tab=notebook`,
+      { scroll: false }
+    );
+
+    // Simulate browser Back to the original URL. The mounted workspace must reconcile
+    // navigation state rather than keep the last clicked tab.
+    mocks.searchParams = new URLSearchParams(`sceneId=${sceneForPlanning.id}`);
+    rerender(<BookWorkspace bookId="book-1" initialSceneId={sceneForPlanning.id} />);
+    expect(await screen.findByRole("heading", { name: sceneForPlanning.title })).toBeInTheDocument();
+
+    // Browser Forward to a different tab must restore that same tab.
+    mocks.searchParams = new URLSearchParams(`sceneId=${sceneForPlanning.id}&tab=notebook`);
+    rerender(<BookWorkspace bookId="book-1" initialSceneId={sceneForPlanning.id} />);
+    expect(await screen.findByRole("heading", { name: "Caderno" })).toBeInTheDocument();
+  });
+
+  test("aba desconhecida usa Cenas sem exibir componente nao autorizado", async () => {
+    mocks.searchParams = new URLSearchParams("tab=modo-nao-existente");
+    renderWithClient(<BookWorkspace bookId="book-1" />);
+    expect(await screen.findByText("Selecione uma cena")).toBeInTheDocument();
+    expect(screen.queryByRole("heading", { name: "Caderno" })).not.toBeInTheDocument();
+  });
+
+  test("abrir cena a partir de aba diferente remove tab e cria entrada de historico", async () => {
+    renderWithClient(<BookWorkspace bookId="book-1" />);
+    await screen.findByText("Livro");
+    fireEvent.click(screen.getByRole("button", { name: "Storyboard" }));
+    fireEvent.click(screen.getAllByRole("button", { name: `Abrir cena ${sceneForPlanning.title}` })[0]);
+    expect(mocks.routerPush).toHaveBeenLastCalledWith(
+      `/books/book-1?sceneId=${sceneForPlanning.id}`,
+      { scroll: false }
+    );
   });
 });
 
