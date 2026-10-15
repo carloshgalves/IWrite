@@ -748,12 +748,18 @@ export function SceneEditor({
         : contentSyncState;
 
   return (
-    <section className={`h-full overflow-y-auto bg-zinc-100/70 ${isFocusMode ? "p-2 md:p-4 lg:p-6" : "p-4 md:p-6 lg:p-8"}`}>
+    <section
+      data-testid="scene-scrollport"
+      role="region"
+      aria-label="Área de leitura da cena"
+      tabIndex={0}
+      className={`h-full min-h-0 overflow-y-auto overscroll-y-contain bg-zinc-100/70 ${isFocusMode ? "p-2 md:p-4 lg:p-6" : "p-4 md:p-6 lg:p-8"}`}
+    >
       <Card
         className={`mx-auto grid min-h-full overflow-hidden border-zinc-200 bg-white ${
           isFocusMode
-            ? "max-w-6xl grid-rows-[auto_auto_minmax(0,1fr)] shadow-sm shadow-zinc-200/70"
-            : "max-w-7xl grid-rows-[auto_auto_auto_auto_minmax(0,1fr)] shadow-xl shadow-zinc-200/70"
+            ? "max-w-6xl grid-rows-[auto_auto_auto] shadow-sm shadow-zinc-200/70"
+            : "max-w-7xl grid-rows-[auto_auto_auto_auto_auto] shadow-xl shadow-zinc-200/70"
         }`}
       >
         <SceneEditorHeader
@@ -852,7 +858,7 @@ export function SceneEditor({
           />
         </div>
 
-        <div className="min-h-0 bg-white lg:h-full">
+        <div className="min-w-0 bg-white">
           <SceneContentEditor
             contentKey={`${scene.id}:${editorContentVersion}`}
             sourceSceneId={scene.id}
