@@ -286,7 +286,7 @@ class BookContributorProgressIntegrationTest extends PostgresIntegrationTest {
     }
 
     @Test
-    void mixedLegacyLedgerAndNewRollupIncludeOnlyEventsOutsideTheRollupCoverageWindow() {
+    void mixedLegacyLedgerAndNewRollupUseExplicitCoverageEvenWithMisleadingTimestamps() {
         Book book = bookService.getBook(createBook("Legacy ledger plus newer daily rollup").id());
         UUID chapterId = UUID.randomUUID();
         UUID legacyScene = UUID.randomUUID();
@@ -297,9 +297,9 @@ class BookContributorProgressIntegrationTest extends PostgresIntegrationTest {
         UUID legacyEvent = saveLedgerEvent(book, DEFAULT_USER_ID, legacyScene, chapterId, date, 7);
         UUID coveredEvent = saveLedgerEvent(book, DEFAULT_USER_ID, coveredScene, chapterId, date, 5);
         UUID lateEvent = saveLedgerEvent(book, DEFAULT_USER_ID, lateScene, chapterId, date, 3);
-        // The rollup was created only for the +5 event; the +7 and +3 events were already
-        // outside its persisted update interval, so neither can be part of this snapshot.
+        // The +5 event alone was included. Mark its inclusion independently from timestamps.
         saveProgress(book, DEFAULT_USER_ID, 5, 0);
+        setLedgerRollupApplied(coveredEvent, true);
         setLedgerCreatedAt(legacyEvent, "2026-06-24T08:00:00Z");
         setLedgerCreatedAt(coveredEvent, "2026-06-24T10:10:00Z");
         setLedgerCreatedAt(lateEvent, "2026-06-24T11:00:00Z");
@@ -352,6 +352,7 @@ class BookContributorProgressIntegrationTest extends PostgresIntegrationTest {
                 book, DEFAULT_USER_ID, UUID.randomUUID(), UUID.randomUUID(), date, 5
         );
         saveProgress(book, DEFAULT_USER_ID, 5, 0);
+        setLedgerRollupApplied(coveredEvent, true);
         setLedgerCreatedAt(coveredEvent, "2026-06-24T10:10:00Z");
         entityManager.createNativeQuery("""
                 update book_daily_writing_progress
@@ -372,6 +373,15 @@ class BookContributorProgressIntegrationTest extends PostgresIntegrationTest {
         assertThat(progress.summary().productiveWords()).isEqualTo(5);
         assertThat(progress.origins()).singleElement()
                 .satisfies(origin -> assertThat(origin.productiveWords()).isEqualTo(5));
+    }
+
+    private void setLedgerRollupApplied(UUID eventId, boolean applied) {
+        entityManager.createNativeQuery(
+                "update book_word_count_events set daily_rollup_applied = :applied where id = :id"
+        )
+                .setParameter("applied", applied)
+                .setParameter("id", eventId)
+                .executeUpdate();
     }
 
     private void setLedgerCreatedAt(UUID eventId, String instant) {
@@ -534,6 +544,8 @@ class BookContributorProgressIntegrationTest extends PostgresIntegrationTest {
         event.setEventType(BookWordCountEventType.CONTENT_SAVE);
         event.setProductiveWordDelta(productiveWordDelta);
         event.setManuscriptWordDelta(productiveWordDelta);
+        // Synthetic ledger-only events are not reflected in any rollup unless explicitly tagged.
+        event.setDailyRollupApplied(false);
         event.setOperationId(UUID.randomUUID());
         event.setIdempotencyKey(UUID.randomUUID());
         eventRepository.saveAndFlush(event);

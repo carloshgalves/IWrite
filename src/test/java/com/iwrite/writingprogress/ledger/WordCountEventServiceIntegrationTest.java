@@ -10,6 +10,8 @@ import com.iwrite.tenant.entity.Tenant;
 import com.iwrite.tenant.entity.TenantMembership;
 import com.iwrite.tenant.entity.TenantMembershipRole;
 import com.iwrite.user.entity.User;
+import com.iwrite.dashboard.service.UserDashboardService;
+import com.iwrite.writingprogress.service.WritingProgressPeriod;
 import com.iwrite.writingprogress.entity.DailyWritingProgress;
 import com.iwrite.writingprogress.ledger.entity.BookWordCountEventType;
 import com.iwrite.writingprogress.ledger.repository.BookWordCountEventRepository;
@@ -58,6 +60,9 @@ class WordCountEventServiceIntegrationTest extends PostgresIntegrationTest {
 
     @Autowired
     private WordCountEventService eventService;
+
+    @Autowired
+    private UserDashboardService dashboardService;
 
     @Autowired
     private BookCollaboratorService collaboratorService;
@@ -151,6 +156,41 @@ class WordCountEventServiceIntegrationTest extends PostgresIntegrationTest {
         assertThat(progress.getEndingManuscriptWordCount()).isEqualTo(18);
         assertThat(progress.getProductiveWordCountChange()).isEqualTo(8);
         assertThat(progress.getManuscriptAdjustmentWordCount()).isZero();
+    }
+
+    @Test
+    void backwardsClockDoesNotDoubleCountCommittedLedgerEventsInContributorDashboard() {
+        var book = createBook("ledger backwards clock provenance");
+        var scene = createEmptyScene(book.id(), "Backwards clock scene");
+        entityManager.flush();
+
+        UUID firstKey = UUID.randomUUID();
+        UUID secondKey = UUID.randomUUID();
+        writingProgressClock.setInstant(DEFAULT_INSTANT); // 12:00 UTC
+        eventService.record(command(book.id(), scene, BookWordCountEventType.CONTENT_SAVE, 5, 5, firstKey, 5));
+        writingProgressClock.setInstant(DEFAULT_INSTANT.minusSeconds(60)); // 11:59 UTC
+        eventService.record(command(book.id(), scene, BookWordCountEventType.CONTENT_SAVE, 3, 3, secondKey, 8));
+        entityManager.flush();
+        entityManager.clear();
+
+        assertThat(eventRepository.findByBookIdAndIdempotencyKey(book.id(), firstKey))
+                .hasValueSatisfying(event -> assertThat(event.getDailyRollupApplied()).isTrue());
+        assertThat(eventRepository.findByBookIdAndIdempotencyKey(book.id(), secondKey))
+                .hasValueSatisfying(event -> assertThat(event.getDailyRollupApplied()).isTrue());
+
+        DailyWritingProgress rollup = progressRepository
+                .findByUser_IdAndBookIdAndProgressDate(DEFAULT_USER_ID, book.id(), TODAY)
+                .orElseThrow();
+        assertThat(rollup.getProductiveWordCountChange()).isEqualTo(8);
+        assertThat(rollup.getUpdatedAt()).isBefore(rollup.getCreatedAt());
+
+        var progress = dashboardService.getBookContributions(
+                book.id(), WritingProgressPeriod.SEVEN_DAYS, DEFAULT_USER_ID
+        );
+        assertThat(progress.summary().productiveWords()).isEqualTo(8);
+        assertThat(progress.summary().writingDays()).isEqualTo(1);
+        assertThat(progress.origins()).singleElement()
+                .satisfies(origin -> assertThat(origin.productiveWords()).isEqualTo(8));
     }
 
     @Test

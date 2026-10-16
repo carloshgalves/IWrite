@@ -104,6 +104,39 @@ class V37BookContributorProgressOriginMigrationIntegrationTest extends PostgresI
         }
     }
 
+    @Test
+    void v38BackfillsOnlyLegacyLedgerEventsWithoutDailyRollups() throws Exception {
+        String schema = "phase_211_v38_" + UUID.randomUUID().toString().replace("-", "");
+        UUID orphanEvent = UUID.randomUUID();
+        createSchema(schema);
+        try {
+            migrate(schema, MigrationVersion.fromVersion("36"));
+            try (Connection connection = TestDatabaseInitializer.openDirectConnection()) {
+                seedV36State(connection, schema);
+            }
+            migrate(schema, MigrationVersion.fromVersion("37"));
+            try (Connection connection = TestDatabaseInitializer.openDirectConnection()) {
+                executeUpdate(connection, schema, "insert into book_word_count_events "
+                        + "(id, book_id, actor_user_id, original_scene_id, progress_date, event_type, "
+                        + "productive_word_delta, manuscript_word_delta, idempotency_key, created_at) "
+                        + "values ('" + orphanEvent + "', '" + BOOK + "', '" + USER + "', '" + SCENE
+                        + "', date '2026-06-24', 'CONTENT_SAVE', 7, 7, '"
+                        + UUID.randomUUID() + "', timestamptz '2026-06-24 08:00:00+00')");
+            }
+            migrate(schema, null);
+            try (Connection connection = TestDatabaseInitializer.openDirectConnection()) {
+                assertEquals("unknown", scalar(connection, schema,
+                        "select coalesce(daily_rollup_applied::text, 'unknown') "
+                                + "from book_word_count_events where id = '" + EVENT + "'"));
+                assertEquals("false", scalar(connection, schema,
+                        "select daily_rollup_applied::text "
+                                + "from book_word_count_events where id = '" + orphanEvent + "'"));
+            }
+        } finally {
+            dropSchema(schema);
+        }
+    }
+
     private void seedV36State(Connection connection, String schema) throws SQLException {
         executeUpdate(connection, schema, "insert into books (id, tenant_id, owner_user_id, title, status, created_at, updated_at) values ('"
                 + BOOK + "', '" + TENANT + "', '" + USER + "', 'Contributor history', 'WRITING', current_timestamp, current_timestamp)");
