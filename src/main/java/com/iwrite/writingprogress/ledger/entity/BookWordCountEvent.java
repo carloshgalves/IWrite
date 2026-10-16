@@ -70,6 +70,13 @@ public class BookWordCountEvent {
     @Column(nullable = false)
     private Integer manuscriptWordDelta;
 
+    /**
+     * TRUE: included in a daily rollup by the same committed write.
+     * FALSE: provably excluded. NULL: historical coverage is unknown.
+     */
+    @Column(name = "daily_rollup_applied")
+    private Boolean dailyRollupApplied;
+
     private UUID operationId;
 
     @Column(nullable = false)
@@ -182,6 +189,14 @@ public class BookWordCountEvent {
 
     public void setManuscriptWordDelta(Integer manuscriptWordDelta) {
         this.manuscriptWordDelta = manuscriptWordDelta;
+    }
+
+    public Boolean getDailyRollupApplied() {
+        return dailyRollupApplied;
+    }
+
+    public void setDailyRollupApplied(Boolean dailyRollupApplied) {
+        this.dailyRollupApplied = dailyRollupApplied;
     }
 
     public UUID getOperationId() {

@@ -58,6 +58,7 @@ public class WordCountEventService {
         return recordForLockedBook(book, command);
     }
 
+    @Transactional
     public WordCountEventRecordResult recordForLockedBook(Book book, WordCountEventCommand command) {
         validate(command);
         if (!book.getId().equals(command.bookId())) {
@@ -86,6 +87,8 @@ public class WordCountEventService {
                 command.contentRevisionBefore(),
                 command.contentRevisionAfter(),
                 command.requestFingerprint(),
+                // The ledger and its rollup are one transaction; failure rolls both back.
+                shouldUpdateDailyRollup(command),
                 eventTime
         );
 

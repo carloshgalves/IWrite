@@ -20,7 +20,7 @@ public interface BookWordCountEventRepository extends JpaRepository<BookWordCoun
 
     long countByBookId(UUID bookId);
 
-    // A daily rollup covers only events within its recorded creation/update window.
+    // Only explicit FALSE proves a ledger event was not included in a daily rollup.
     @Query(value = """
             select event.actor_user_id as "actorUserId",
                    event.progress_date as "progressDate",
@@ -32,21 +32,13 @@ public interface BookWordCountEventRepository extends JpaRepository<BookWordCoun
                        as "chapterTitleSnapshot",
                    sum(event.productive_word_delta) as "productiveWordDelta",
                    sum(event.manuscript_word_delta) as "manuscriptWordDelta",
-                   sum(case when daily.id is null
-                                 or event.created_at < daily.created_at
-                                 or event.created_at > daily.updated_at
+                   sum(case when event.daily_rollup_applied = false
                             then event.productive_word_delta else 0 end)
                        as "unrepresentedProductiveWordDelta",
-                   sum(case when daily.id is null
-                                 or event.created_at < daily.created_at
-                                 or event.created_at > daily.updated_at
+                   sum(case when event.daily_rollup_applied = false
                             then event.manuscript_word_delta else 0 end)
                        as "unrepresentedManuscriptWordDelta"
             from book_word_count_events event
-            left join book_daily_writing_progress daily
-              on daily.book_id = event.book_id
-             and daily.user_id = event.actor_user_id
-             and daily.progress_date = event.progress_date
             where event.book_id = :bookId
               and event.progress_date between :startDate and :endDate
               and (event.productive_word_delta <> 0 or event.manuscript_word_delta <> 0)
@@ -60,7 +52,7 @@ public interface BookWordCountEventRepository extends JpaRepository<BookWordCoun
             @Param("endDate") LocalDate endDate
     );
 
-    // A daily rollup covers only events within its recorded creation/update window.
+    // Only explicit FALSE proves a ledger event was not included in a daily rollup.
     @Query(value = """
             select event.actor_user_id as "actorUserId",
                    event.progress_date as "progressDate",
@@ -72,21 +64,13 @@ public interface BookWordCountEventRepository extends JpaRepository<BookWordCoun
                        as "chapterTitleSnapshot",
                    sum(event.productive_word_delta) as "productiveWordDelta",
                    sum(event.manuscript_word_delta) as "manuscriptWordDelta",
-                   sum(case when daily.id is null
-                                 or event.created_at < daily.created_at
-                                 or event.created_at > daily.updated_at
+                   sum(case when event.daily_rollup_applied = false
                             then event.productive_word_delta else 0 end)
                        as "unrepresentedProductiveWordDelta",
-                   sum(case when daily.id is null
-                                 or event.created_at < daily.created_at
-                                 or event.created_at > daily.updated_at
+                   sum(case when event.daily_rollup_applied = false
                             then event.manuscript_word_delta else 0 end)
                        as "unrepresentedManuscriptWordDelta"
             from book_word_count_events event
-            left join book_daily_writing_progress daily
-              on daily.book_id = event.book_id
-             and daily.user_id = event.actor_user_id
-             and daily.progress_date = event.progress_date
             where event.book_id = :bookId
               and event.actor_user_id = :actorUserId
               and event.progress_date between :startDate and :endDate
@@ -122,6 +106,7 @@ public interface BookWordCountEventRepository extends JpaRepository<BookWordCoun
                 content_revision_before,
                 content_revision_after,
                 request_fingerprint,
+                daily_rollup_applied,
                 created_at
             )
             values (
@@ -142,6 +127,7 @@ public interface BookWordCountEventRepository extends JpaRepository<BookWordCoun
                 :contentRevisionBefore,
                 :contentRevisionAfter,
                 :requestFingerprint,
+                :dailyRollupApplied,
                 :createdAt
             )
             on conflict (book_id, idempotency_key) do nothing
@@ -164,6 +150,7 @@ public interface BookWordCountEventRepository extends JpaRepository<BookWordCoun
             @Param("contentRevisionBefore") Long contentRevisionBefore,
             @Param("contentRevisionAfter") Long contentRevisionAfter,
             @Param("requestFingerprint") String requestFingerprint,
+            @Param("dailyRollupApplied") boolean dailyRollupApplied,
             @Param("createdAt") OffsetDateTime createdAt
     );
 }

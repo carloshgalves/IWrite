@@ -1,6 +1,6 @@
 # Migrations e evolução do banco
 
-O IWrite usa Flyway e PostgreSQL. O migration head atual é **V37**.
+O IWrite usa Flyway e PostgreSQL. O migration head atual é **V38**.
 
 ## Regras
 
@@ -210,9 +210,33 @@ pré-V37 não pode coexistir depois do cutover porque ainda tentaria inserir eve
 deploy antes de iniciar a aplicação; depois que V37 for publicada, qualquer correção de dados ou
 schema deve entrar em nova migration forward-only.
 
+### V38 — testemunho transacional de inclusão no rollup diário
+
+`V38__track_word_count_event_rollup_application.sql`
+
+A conciliação do Book Contributor Progress não pode deduzir inclusão de eventos no
+rollup por `created_at` e `updated_at`: relógios podem retroceder e essas colunas
+não registram quais eventos foram somados. V38 adiciona `daily_rollup_applied` ao ledger:
+
+- `true`: evento novo e delta do daily rollup gravados na **mesma transação**;
+  falha de qualquer parte reverte os dois, inclusive durante retry idempotente;
+- `false`: prova de que o evento não integra o rollup. O backfill atribui
+  `false` somente a eventos existentes **sem** rollup Book/User/data no cutover;
+- `null`: havia rollup legado, mas não há evidência para classificar o evento.
+  Não inventamos cobertura baseada em intervalos de relógio.
+
+Quando um rollup nasce depois para uma data que possuía ledger-only, os eventos
+`false` continuam entrando no resumo além dos eventos novos `true`, sem duplicação.
+Sem rollup, o dashboard soma todos os eventos (o marcador não é necessário).
+Histórico `null` com rollup exige auditoria separada para reconciliação total.
+
+Migração forward-only e transacional, com parada/substituição da V37. O backfill
+percorre o ledger e consulta o índice de daily progress Book/User/data; reserve
+janela de manutenção proporcional à base histórica.
+
 ## Estado atual
 
-- migration head: **V37**;
+- migration head: **V38**;
 - tenant e ownership de livro persistidos;
 - colaboradores persistidos com Book Role explícito e revogável;
 - metas diárias pessoais persistidas por User + Book em `book_personal_writing_goals`;
