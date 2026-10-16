@@ -20,4 +20,9 @@ public interface BookContributionEventAggregate {
     long getProductiveWordDelta();
 
     long getManuscriptWordDelta();
+
+    /** Ledger deltas outside the persisted daily-rollup coverage interval. */
+    long getUnrepresentedProductiveWordDelta();
+
+    long getUnrepresentedManuscriptWordDelta();
 }

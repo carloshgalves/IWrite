@@ -298,7 +298,8 @@ public class UserDashboardService {
                     key, ContributionProgressTotals::new
             );
             if (rollupKeys.contains(key)) {
-                totals.recordContribution();
+                // Keep the rollup's authoritative totals, plus only uncovered events.
+                totals.addUnrepresented(event);
             } else {
                 totals.add(event);
             }
@@ -452,6 +453,13 @@ public class UserDashboardService {
         void add(BookContributionEventAggregate event) {
             productiveWords += event.getProductiveWordDelta();
             manuscriptAdjustments += event.getManuscriptWordDelta() - event.getProductiveWordDelta();
+            recordContribution();
+        }
+
+        void addUnrepresented(BookContributionEventAggregate event) {
+            productiveWords += event.getUnrepresentedProductiveWordDelta();
+            manuscriptAdjustments += event.getUnrepresentedManuscriptWordDelta()
+                    - event.getUnrepresentedProductiveWordDelta();
             recordContribution();
         }
 

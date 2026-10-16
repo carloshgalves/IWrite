@@ -20,24 +20,39 @@ public interface BookWordCountEventRepository extends JpaRepository<BookWordCoun
 
     long countByBookId(UUID bookId);
 
+    // A daily rollup covers only events within its recorded creation/update window.
     @Query(value = """
-            select actor_user_id as "actorUserId",
-                   progress_date as "progressDate",
-                   original_scene_id as "originalSceneId",
-                   (array_agg(scene_title_snapshot order by created_at desc, id desc))[1]
+            select event.actor_user_id as "actorUserId",
+                   event.progress_date as "progressDate",
+                   event.original_scene_id as "originalSceneId",
+                   (array_agg(event.scene_title_snapshot order by event.created_at desc, event.id desc))[1]
                        as "sceneTitleSnapshot",
-                   original_chapter_id as "originalChapterId",
-                   (array_agg(chapter_title_snapshot order by created_at desc, id desc))[1]
+                   event.original_chapter_id as "originalChapterId",
+                   (array_agg(event.chapter_title_snapshot order by event.created_at desc, event.id desc))[1]
                        as "chapterTitleSnapshot",
-                   sum(productive_word_delta) as "productiveWordDelta",
-                   sum(manuscript_word_delta) as "manuscriptWordDelta"
-            from book_word_count_events
-            where book_id = :bookId
-              and progress_date between :startDate and :endDate
-              and (productive_word_delta <> 0 or manuscript_word_delta <> 0)
-            group by actor_user_id, progress_date, original_scene_id, original_chapter_id
-            order by max(created_at) asc,
-                     (array_agg(id order by created_at desc, id desc))[1] asc
+                   sum(event.productive_word_delta) as "productiveWordDelta",
+                   sum(event.manuscript_word_delta) as "manuscriptWordDelta",
+                   sum(case when daily.id is null
+                                 or event.created_at < daily.created_at
+                                 or event.created_at > daily.updated_at
+                            then event.productive_word_delta else 0 end)
+                       as "unrepresentedProductiveWordDelta",
+                   sum(case when daily.id is null
+                                 or event.created_at < daily.created_at
+                                 or event.created_at > daily.updated_at
+                            then event.manuscript_word_delta else 0 end)
+                       as "unrepresentedManuscriptWordDelta"
+            from book_word_count_events event
+            left join book_daily_writing_progress daily
+              on daily.book_id = event.book_id
+             and daily.user_id = event.actor_user_id
+             and daily.progress_date = event.progress_date
+            where event.book_id = :bookId
+              and event.progress_date between :startDate and :endDate
+              and (event.productive_word_delta <> 0 or event.manuscript_word_delta <> 0)
+            group by event.actor_user_id, event.progress_date, event.original_scene_id, event.original_chapter_id
+            order by max(event.created_at) asc,
+                     (array_agg(event.id order by event.created_at desc, event.id desc))[1] asc
             """, nativeQuery = true)
     List<BookContributionEventAggregate> findBookContributionEventAggregatesBetween(
             @Param("bookId") UUID bookId,
@@ -45,25 +60,40 @@ public interface BookWordCountEventRepository extends JpaRepository<BookWordCoun
             @Param("endDate") LocalDate endDate
     );
 
+    // A daily rollup covers only events within its recorded creation/update window.
     @Query(value = """
-            select actor_user_id as "actorUserId",
-                   progress_date as "progressDate",
-                   original_scene_id as "originalSceneId",
-                   (array_agg(scene_title_snapshot order by created_at desc, id desc))[1]
+            select event.actor_user_id as "actorUserId",
+                   event.progress_date as "progressDate",
+                   event.original_scene_id as "originalSceneId",
+                   (array_agg(event.scene_title_snapshot order by event.created_at desc, event.id desc))[1]
                        as "sceneTitleSnapshot",
-                   original_chapter_id as "originalChapterId",
-                   (array_agg(chapter_title_snapshot order by created_at desc, id desc))[1]
+                   event.original_chapter_id as "originalChapterId",
+                   (array_agg(event.chapter_title_snapshot order by event.created_at desc, event.id desc))[1]
                        as "chapterTitleSnapshot",
-                   sum(productive_word_delta) as "productiveWordDelta",
-                   sum(manuscript_word_delta) as "manuscriptWordDelta"
-            from book_word_count_events
-            where book_id = :bookId
-              and actor_user_id = :actorUserId
-              and progress_date between :startDate and :endDate
-              and (productive_word_delta <> 0 or manuscript_word_delta <> 0)
-            group by actor_user_id, progress_date, original_scene_id, original_chapter_id
-            order by max(created_at) asc,
-                     (array_agg(id order by created_at desc, id desc))[1] asc
+                   sum(event.productive_word_delta) as "productiveWordDelta",
+                   sum(event.manuscript_word_delta) as "manuscriptWordDelta",
+                   sum(case when daily.id is null
+                                 or event.created_at < daily.created_at
+                                 or event.created_at > daily.updated_at
+                            then event.productive_word_delta else 0 end)
+                       as "unrepresentedProductiveWordDelta",
+                   sum(case when daily.id is null
+                                 or event.created_at < daily.created_at
+                                 or event.created_at > daily.updated_at
+                            then event.manuscript_word_delta else 0 end)
+                       as "unrepresentedManuscriptWordDelta"
+            from book_word_count_events event
+            left join book_daily_writing_progress daily
+              on daily.book_id = event.book_id
+             and daily.user_id = event.actor_user_id
+             and daily.progress_date = event.progress_date
+            where event.book_id = :bookId
+              and event.actor_user_id = :actorUserId
+              and event.progress_date between :startDate and :endDate
+              and (event.productive_word_delta <> 0 or event.manuscript_word_delta <> 0)
+            group by event.actor_user_id, event.progress_date, event.original_scene_id, event.original_chapter_id
+            order by max(event.created_at) asc,
+                     (array_agg(event.id order by event.created_at desc, event.id desc))[1] asc
             """, nativeQuery = true)
     List<BookContributionEventAggregate> findBookContributorEventAggregatesBetween(
             @Param("bookId") UUID bookId,
