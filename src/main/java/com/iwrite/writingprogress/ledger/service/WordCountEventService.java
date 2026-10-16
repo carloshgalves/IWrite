@@ -58,6 +58,7 @@ public class WordCountEventService {
         return recordForLockedBook(book, command);
     }
 
+    @Transactional
     public WordCountEventRecordResult recordForLockedBook(Book book, WordCountEventCommand command) {
         validate(command);
         if (!book.getId().equals(command.bookId())) {
@@ -75,6 +76,9 @@ public class WordCountEventService {
                 actorUserId,
                 command.originalSceneId(),
                 command.sceneTitleSnapshot(),
+                progressDate,
+                command.originalChapterId(),
+                command.chapterTitleSnapshot(),
                 command.eventType().name(),
                 command.productiveWordDelta(),
                 command.manuscriptWordDelta(),
@@ -83,6 +87,8 @@ public class WordCountEventService {
                 command.contentRevisionBefore(),
                 command.contentRevisionAfter(),
                 command.requestFingerprint(),
+                // The ledger and its rollup are one transaction; failure rolls both back.
+                shouldUpdateDailyRollup(command),
                 eventTime
         );
 
@@ -143,6 +149,8 @@ public class WordCountEventService {
                 && Objects.equals(sceneId(existing), command.sceneId())
                 && Objects.equals(existing.getOriginalSceneId(), command.originalSceneId())
                 && Objects.equals(existing.getSceneTitleSnapshot(), command.sceneTitleSnapshot())
+                && Objects.equals(existing.getOriginalChapterId(), command.originalChapterId())
+                && Objects.equals(existing.getChapterTitleSnapshot(), command.chapterTitleSnapshot())
                 && existing.getEventType() == command.eventType()
                 && Objects.equals(existing.getProductiveWordDelta(), command.productiveWordDelta())
                 && Objects.equals(existing.getManuscriptWordDelta(), command.manuscriptWordDelta())

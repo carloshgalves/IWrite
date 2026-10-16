@@ -42,6 +42,7 @@ import org.springframework.transaction.support.TransactionTemplate;
 
 import javax.sql.DataSource;
 import java.sql.SQLException;
+import java.time.LocalDate;
 import java.time.ZoneId;
 import java.util.Comparator;
 import java.util.List;
@@ -874,6 +875,7 @@ class SceneWordCountConcurrencyIntegrationTest extends PostgresIntegrationTest {
             event.setActorUser(entityManager.getReference(User.class, DEFAULT_USER_ID));
             event.setOriginalSceneId(sceneId);
             event.setSceneTitleSnapshot("Legacy event");
+            event.setProgressDate(LocalDate.of(2026, 6, 24));
             event.setEventType(BookWordCountEventType.CONTENT_SAVE);
             event.setProductiveWordDelta(1);
             event.setManuscriptWordDelta(1);

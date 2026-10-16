@@ -110,6 +110,9 @@ class BookWordCountEventIntegrationTest extends PostgresIntegrationTest {
         event.setActorUser(entityManager.getReference(User.class, DEFAULT_USER_ID));
         event.setOriginalSceneId(scene.getId());
         event.setSceneTitleSnapshot(scene.getTitle());
+        event.setProgressDate(LocalDate.of(2026, 6, 1));
+        event.setOriginalChapterId(world.chapter().id());
+        event.setChapterTitleSnapshot(world.chapter().title());
         event.setEventType(BookWordCountEventType.CONTENT_SAVE);
         event.setProductiveWordDelta(7);
         event.setManuscriptWordDelta(7);
@@ -128,6 +131,9 @@ class BookWordCountEventIntegrationTest extends PostgresIntegrationTest {
         assertThat(loaded.getActorUser().getId()).isEqualTo(DEFAULT_USER_ID);
         assertThat(loaded.getOriginalSceneId()).isEqualTo(scene.getId());
         assertThat(loaded.getSceneTitleSnapshot()).isEqualTo(scene.getTitle());
+        assertThat(loaded.getProgressDate()).isEqualTo(LocalDate.of(2026, 6, 1));
+        assertThat(loaded.getOriginalChapterId()).isEqualTo(world.chapter().id());
+        assertThat(loaded.getChapterTitleSnapshot()).isEqualTo(world.chapter().title());
         assertThat(loaded.getEventType()).isEqualTo(BookWordCountEventType.CONTENT_SAVE);
         assertThat(loaded.getProductiveWordDelta()).isEqualTo(7);
         assertThat(loaded.getManuscriptWordDelta()).isEqualTo(7);
@@ -156,6 +162,7 @@ class BookWordCountEventIntegrationTest extends PostgresIntegrationTest {
         event.setBook(book);
         event.setActorUser(entityManager.getReference(User.class, DEFAULT_USER_ID));
         event.setOriginalSceneId(UUID.randomUUID());
+        event.setProgressDate(LocalDate.of(2026, 6, 1));
         event.setEventType(BookWordCountEventType.CONTENT_SAVE);
         event.setProductiveWordDelta(delta);
         event.setManuscriptWordDelta(delta);
