@@ -130,7 +130,7 @@ class V37BookContributorProgressOriginMigrationIntegrationTest extends PostgresI
                 executeUpdate(connection, schema, "insert into book_word_count_events "
                         + "(id, book_id, actor_user_id, original_scene_id, event_type, "
                         + "productive_word_delta, manuscript_word_delta, idempotency_key, created_at) "
-                        + "values ('" + orphanEvent + "', '" + noRollupBook + "', '" + UUID.randomUUID()
+                        + "values ('" + orphanEvent + "', '" + noRollupBook + "', '" + USER + "', '" + UUID.randomUUID()
                         + "', 'CONTENT_SAVE', 7, 7, '" + UUID.randomUUID()
                         + "', timestamptz '2026-06-24 08:00:00+00')");
             }
