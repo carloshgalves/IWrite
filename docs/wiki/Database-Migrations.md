@@ -220,15 +220,19 @@ não registram quais eventos foram somados. V38 adiciona `daily_rollup_applied` 
 
 - `true`: evento novo e delta do daily rollup gravados na **mesma transação**;
   falha de qualquer parte reverte os dois, inclusive durante retry idempotente;
-- `false`: prova de que o evento não integra o rollup. O backfill atribui
-  `false` somente a eventos existentes **sem** rollup Book/User/data no cutover;
-- `null`: havia rollup legado, mas não há evidência para classificar o evento.
-  Não inventamos cobertura baseada em intervalos de relógio.
+- `false`: prova conservadora de que o evento não integra qualquer rollup. O backfill
+  só atribui `false` quando **não há rollup de nenhuma data** para o mesmo Book/User
+  no cutover — a data UTC inferida pela V37 pode divergir do dia real de escrita;
+- `null`: há ao menos um rollup legado naquele Book/User, mas não há evidência
+  suficiente para classificar o evento individual. Não inventamos cobertura baseada
+  em intervalos de relógio nem na ausência de rollup na data UTC inferida.
 
 Quando um rollup nasce depois para uma data que possuía ledger-only, os eventos
 `false` continuam entrando no resumo além dos eventos novos `true`, sem duplicação.
 Sem rollup, o dashboard soma todos os eventos (o marcador não é necessário).
-Histórico `null` com rollup exige auditoria separada para reconciliação total.
+Histórico `null` com rollup exige auditoria separada para reconciliação total;
+a V38 prefere não contabilizar automaticamente um ledger-only legado ambíguo a
+possivelmente contar duas vezes um evento já incluído em outro dia.
 
 Migração forward-only e transacional, com parada/substituição da V37. O backfill
 percorre o ledger e consulta o índice de daily progress Book/User/data; reserve

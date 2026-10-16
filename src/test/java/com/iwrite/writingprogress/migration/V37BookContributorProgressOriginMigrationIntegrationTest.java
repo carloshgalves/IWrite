@@ -105,24 +105,44 @@ class V37BookContributorProgressOriginMigrationIntegrationTest extends PostgresI
     }
 
     @Test
-    void v38BackfillsOnlyLegacyLedgerEventsWithoutDailyRollups() throws Exception {
-        String schema = "phase_211_v38_" + UUID.randomUUID().toString().replace("-", "");
+    void v38PreservesUnknownCoverageWhenV37UtcFallbackDiffersFromRollupDate() throws Exception {
+        String schema = "phase_211_v38_cross_date_" + UUID.randomUUID().toString().replace("-", "");
+        UUID noRollupBook = UUID.randomUUID();
         UUID orphanEvent = UUID.randomUUID();
         createSchema(schema);
         try {
             migrate(schema, MigrationVersion.fromVersion("36"));
             try (Connection connection = TestDatabaseInitializer.openDirectConnection()) {
                 seedV36State(connection, schema);
+
+                // The day-23 rollup already includes EVENT's +5, but legacy timestamps no longer
+                // prove it. V37 therefore falls back to the UTC day 24 for the very same event.
+                executeUpdate(connection, schema, "update book_word_count_events "
+                        + "set created_at = timestamptz '2026-06-24 01:30:00+00' "
+                        + "where id = '" + EVENT + "'");
+
+                // A different Book under the same User has no rollup on any date: its event
+                // can safely be classified as unapplied rather than merely unknown.
+                executeUpdate(connection, schema, "insert into books "
+                        + "(id, tenant_id, owner_user_id, title, status, created_at, updated_at) "
+                        + "values ('" + noRollupBook + "', '" + TENANT + "', '" + USER
+                        + "', 'Ledger only', 'WRITING', current_timestamp, current_timestamp)");
+                executeUpdate(connection, schema, "insert into book_word_count_events "
+                        + "(id, book_id, actor_user_id, original_scene_id, event_type, "
+                        + "productive_word_delta, manuscript_word_delta, idempotency_key, created_at) "
+                        + "values ('" + orphanEvent + "', '" + noRollupBook + "', '" + UUID.randomUUID()
+                        + "', 'CONTENT_SAVE', 7, 7, '" + UUID.randomUUID()
+                        + "', timestamptz '2026-06-24 08:00:00+00')");
             }
+
             migrate(schema, MigrationVersion.fromVersion("37"));
             try (Connection connection = TestDatabaseInitializer.openDirectConnection()) {
-                executeUpdate(connection, schema, "insert into book_word_count_events "
-                        + "(id, book_id, actor_user_id, original_scene_id, progress_date, event_type, "
-                        + "productive_word_delta, manuscript_word_delta, idempotency_key, created_at) "
-                        + "values ('" + orphanEvent + "', '" + BOOK + "', '" + USER + "', '" + SCENE
-                        + "', date '2026-06-24', 'CONTENT_SAVE', 7, 7, '"
-                        + UUID.randomUUID() + "', timestamptz '2026-06-24 08:00:00+00')");
+                assertEquals("2026-06-24", scalar(connection, schema,
+                        "select progress_date::text from book_word_count_events where id = '" + EVENT + "'"));
+                assertEquals("2026-06-23", scalar(connection, schema,
+                        "select progress_date::text from book_daily_writing_progress where book_id = '" + BOOK + "'"));
             }
+
             migrate(schema, null);
             try (Connection connection = TestDatabaseInitializer.openDirectConnection()) {
                 assertEquals("unknown", scalar(connection, schema,
@@ -131,6 +151,19 @@ class V37BookContributorProgressOriginMigrationIntegrationTest extends PostgresI
                 assertEquals("false", scalar(connection, schema,
                         "select daily_rollup_applied::text "
                                 + "from book_word_count_events where id = '" + orphanEvent + "'"));
+
+                // The dashboard's rollup + explicitly-unrepresented ledger calculation must
+                // not count EVENT's +5 again under the UTC fallback date.
+                assertEquals("5", scalar(connection, schema,
+                        "select ((select coalesce(sum(productive_word_count_change), 0) "
+                                + "from book_daily_writing_progress where book_id = '" + BOOK + "') "
+                                + "+ (select coalesce(sum(productive_word_delta), 0) "
+                                + "from book_word_count_events where book_id = '" + BOOK
+                                + "' and daily_rollup_applied = false))::text"));
+                assertEquals("7", scalar(connection, schema,
+                        "select coalesce(sum(productive_word_delta), 0)::text "
+                                + "from book_word_count_events where book_id = '" + noRollupBook
+                                + "' and daily_rollup_applied = false"));
             }
         } finally {
             dropSchema(schema);

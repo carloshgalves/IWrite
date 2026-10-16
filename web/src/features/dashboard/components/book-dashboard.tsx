@@ -690,6 +690,7 @@ function BookContributionCard({
   progressPeriod: WritingProgressPeriod;
 }) {
   const [contributorId, setContributorId] = useState<string>("");
+  const queryClient = useQueryClient();
   const contributionsQuery = useBookContributions(bookId, progressPeriod, contributorId || undefined);
   // TanStack Query keeps the last successful data after a failed refetch of the same key.
   // Never present private Book data after the current query has reported an error.
@@ -714,6 +715,18 @@ function BookContributionCard({
       : allScopeContributors);
   }, [allScopeContributors]);
 
+  function returnToAllContributors() {
+    // An error on the selected contributor's key does not invalidate a previous successful
+    // all-contributors query. Reset every *inactive* contribution key before switching back:
+    // React Query must fetch fresh authority, not render an earlier private snapshot.
+    void queryClient.resetQueries({
+      queryKey: queryKeys.bookContributions(bookId),
+      type: "inactive",
+    });
+    setAvailableContributors([]);
+    setContributorId("");
+  }
+
   return (
     <Card className="p-4">
       <div className="flex flex-wrap items-start justify-between gap-3">
@@ -722,10 +735,10 @@ function BookContributionCard({
           description="Atividade autenticada e registrada neste livro, sem pontuação ou comparação entre contribuidores."
         />
         {contributionsQuery.isError && contributorId ? (
-          <Button type="button" variant="secondary" onClick={() => setContributorId("")}>
+          <Button type="button" variant="secondary" onClick={returnToAllContributors}>
             Voltar a todos os contribuidores
           </Button>
-        ) : !contributionsQuery.isError && availableContributors.length ? (
+        ) : contributions && availableContributors.length ? (
           <label className="grid gap-1 text-xs font-medium text-zinc-600">
             Contribuidor
             <select
