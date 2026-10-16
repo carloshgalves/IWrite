@@ -101,6 +101,56 @@ describe("SceneEditor content save contract", () => {
     vi.unstubAllGlobals();
   });
 
+  test("provides one keyboard-focusable scroll region for metadata and long text", async () => {
+    const view = renderEditor();
+    await screen.findByRole("heading", { name: sceneForPlanning.title });
+    const scroll = screen.getByRole("region", { name: "Área de leitura da cena" });
+    expect(scroll).toHaveAttribute("tabindex", "0");
+    expect(scroll).toHaveClass("h-full", "overflow-y-auto", "overscroll-y-contain");
+
+    const editable = screen.getByTestId("editor-content");
+    expect(scroll).toContainElement(editable);
+    const contentWrapper = editable.parentElement;
+    expect(contentWrapper).not.toHaveClass("lg:h-full");
+    expect(contentWrapper).not.toHaveClass("overflow-y-auto");
+
+    // A layout change into focus mode must keep the scene's scrollport and editor
+    // mounted, not recreate Tiptap or change the element owning keyboard/wheel scroll.
+    view.rerender(
+      <SceneEditor
+        bookId="book-1"
+        sceneId={sceneForPlanning.id}
+        canMutateStructure
+        isFocusMode
+        onSceneDeleted={vi.fn()}
+      />
+    );
+    expect(screen.getByRole("region", { name: "Área de leitura da cena" })).toBe(scroll);
+    expect(screen.getByTestId("editor-content")).toBe(editable);
+  });
+
+  test("editing metadata and expanding planning do not reset scroll or remount the editor", async () => {
+    window.localStorage.removeItem("iwrite.scenePlanningPanelOpen");
+    renderEditor();
+    await screen.findByRole("heading", { name: sceneForPlanning.title });
+    const scroll = screen.getByRole("region", { name: "Área de leitura da cena" });
+    const editable = screen.getByTestId("editor-content");
+
+    scroll.scrollTop = 220;
+    fireEvent.change(screen.getByLabelText("Título"), { target: { value: "Outro título" } });
+    expect(scroll.scrollTop).toBe(220);
+    expect(screen.getByTestId("editor-content")).toBe(editable);
+
+    fireEvent.click(screen.getByRole("button", { name: "Expandir planejamento da cena" }));
+    expect(screen.getByRole("button", { name: "Recolher planejamento da cena" })).toBeInTheDocument();
+    expect(screen.getByRole("region", { name: "Área de leitura da cena" })).toBe(scroll);
+    expect(screen.getByTestId("editor-content")).toBe(editable);
+
+    fireEvent.click(screen.getByRole("button", { name: "Recolher planejamento da cena" }));
+    expect(screen.getByTestId("editor-content")).toBe(editable);
+    window.localStorage.removeItem("iwrite.scenePlanningPanelOpen");
+  });
+
   test("autosave sends expectedContentRevision operationId and AUTO_SAVE", async () => {
     mocks.randomUUID.mockReturnValueOnce("operation-autosave");
     renderEditor();
