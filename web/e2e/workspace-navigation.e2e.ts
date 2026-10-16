@@ -28,6 +28,9 @@ test("restores tabs and the selected scene through reload and back/forward", asy
   await page.getByRole("button").filter({ hasText: sceneTitle }).click();
   await expect(page.getByRole("heading", { name: sceneTitle })).toBeVisible();
 
+  // Rendering the scene heading can beat the async Next.js URL/history transition.
+  // Wait for the public deep link itself before reading it.
+  await expect(page).toHaveURL(/[?&]sceneId=[^&]+/);
   const sceneId = new URL(page.url()).searchParams.get("sceneId");
   expect(sceneId).toBeTruthy();
 
@@ -39,14 +42,14 @@ test("restores tabs and the selected scene through reload and back/forward", asy
 
   await page.getByRole("button", { name: "Caderno" }).click();
   await expect(page).toHaveURL(/tab=notebook/);
-  await expect(page.getByRole("heading", { name: "Caderno" })).toBeVisible();
+  await expect(page.getByRole("heading", { name: "Caderno", exact: true })).toBeVisible();
 
   await page.goBack();
   await expect(page).toHaveURL(/tab=locations/);
   await expect(page.getByRole("heading", { name: "Localizações" })).toBeVisible();
   await page.goForward();
   await expect(page).toHaveURL(/tab=notebook/);
-  await expect(page.getByRole("heading", { name: "Caderno" })).toBeVisible();
+  await expect(page.getByRole("heading", { name: "Caderno", exact: true })).toBeVisible();
 
   await page.getByRole("button", { name: "Cenas" }).click();
   await expect(page.getByRole("heading", { name: sceneTitle })).toBeVisible();
