@@ -17,6 +17,7 @@ import jakarta.persistence.PrePersist;
 import jakarta.persistence.Table;
 import jakarta.persistence.UniqueConstraint;
 
+import java.time.LocalDate;
 import java.time.OffsetDateTime;
 import java.util.UUID;
 
@@ -51,6 +52,14 @@ public class BookWordCountEvent {
     @Column(length = 255)
     private String sceneTitleSnapshot;
 
+    @Column(nullable = false)
+    private LocalDate progressDate;
+
+    private UUID originalChapterId;
+
+    @Column(length = 255)
+    private String chapterTitleSnapshot;
+
     @Enumerated(EnumType.STRING)
     @Column(nullable = false, length = 40)
     private BookWordCountEventType eventType;
@@ -60,6 +69,13 @@ public class BookWordCountEvent {
 
     @Column(nullable = false)
     private Integer manuscriptWordDelta;
+
+    /**
+     * TRUE: included in a daily rollup by the same committed write.
+     * FALSE: provably excluded. NULL: historical coverage is unknown.
+     */
+    @Column(name = "daily_rollup_applied")
+    private Boolean dailyRollupApplied;
 
     private UUID operationId;
 
@@ -123,6 +139,30 @@ public class BookWordCountEvent {
         return sceneTitleSnapshot;
     }
 
+    public LocalDate getProgressDate() {
+        return progressDate;
+    }
+
+    public void setProgressDate(LocalDate progressDate) {
+        this.progressDate = progressDate;
+    }
+
+    public UUID getOriginalChapterId() {
+        return originalChapterId;
+    }
+
+    public void setOriginalChapterId(UUID originalChapterId) {
+        this.originalChapterId = originalChapterId;
+    }
+
+    public String getChapterTitleSnapshot() {
+        return chapterTitleSnapshot;
+    }
+
+    public void setChapterTitleSnapshot(String chapterTitleSnapshot) {
+        this.chapterTitleSnapshot = chapterTitleSnapshot;
+    }
+
     public void setSceneTitleSnapshot(String sceneTitleSnapshot) {
         this.sceneTitleSnapshot = sceneTitleSnapshot;
     }
@@ -149,6 +189,14 @@ public class BookWordCountEvent {
 
     public void setManuscriptWordDelta(Integer manuscriptWordDelta) {
         this.manuscriptWordDelta = manuscriptWordDelta;
+    }
+
+    public Boolean getDailyRollupApplied() {
+        return dailyRollupApplied;
+    }
+
+    public void setDailyRollupApplied(Boolean dailyRollupApplied) {
+        this.dailyRollupApplied = dailyRollupApplied;
     }
 
     public UUID getOperationId() {

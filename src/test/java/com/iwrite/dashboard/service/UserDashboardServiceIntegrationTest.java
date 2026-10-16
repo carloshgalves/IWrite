@@ -201,7 +201,7 @@ class UserDashboardServiceIntegrationTest extends PostgresIntegrationTest {
 
         assertThat(allContributors.availableContributors())
                 .extracting(contributor -> contributor.displayName())
-                .containsExactly("Adjustment Writer");
+                .containsExactly("Adjustment Writer", "Carlos");
         assertThat(allContributors.summary().writingDays()).isZero();
         assertThat(allContributors.summary().manuscriptAdjustments()).isEqualTo(11);
         assertThat(selectedAdjuster.summary().productiveWords()).isZero();
@@ -226,7 +226,9 @@ class UserDashboardServiceIntegrationTest extends PostgresIntegrationTest {
         assertThat(userDashboard.summary().booksWrittenIn()).isZero();
         assertThat(userDashboard.summary().currentGlobalWritingStreak()).isZero();
         assertThat(userDashboard.bookContributions()).isEmpty();
-        assertThat(allContributors.availableContributors()).isEmpty();
+        assertThat(allContributors.availableContributors())
+                .extracting(contributor -> contributor.userId())
+                .containsExactly(DEFAULT_USER_ID);
         assertThat(allContributors.summary().contributorsCount()).isZero();
         assertThat(allContributors.summary().writingDays()).isZero();
     }

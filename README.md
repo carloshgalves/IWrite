@@ -165,7 +165,7 @@ A camada MCP reutiliza services e autorização existentes, sem duplicar regras 
 
 - PostgreSQL 16;
 - Flyway como única fonte de evolução do schema;
-- migration head atual: **V36**;
+- migration head atual: **V37**;
 - migrations críticas possuem testes com PostgreSQL real;
 - mudanças de alto risco cobrem constraints, concorrência, backfills e isolamento.
 

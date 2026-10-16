@@ -82,6 +82,11 @@ class BookDashboardControllerIntegrationTest extends PostgresIntegrationTest {
                 .andExpect(jsonPath("$.summary.productiveWords").value(15))
                 .andExpect(jsonPath("$.summary.manuscriptAdjustments").value(2))
                 .andExpect(jsonPath("$.summary.contributorsCount").value(2))
+                .andExpect(jsonPath("$.summary.distinctScenes").value(0))
+                .andExpect(jsonPath("$.summary.distinctChapters").value(0))
+                .andExpect(jsonPath("$.origins", hasSize(0)))
+                .andExpect(jsonPath("$.dailyTargetWordCount").doesNotExist())
+                .andExpect(jsonPath("$.plannedWritingDays").doesNotExist())
                 .andExpect(jsonPath("$.dailySeries[?(@.date == '2026-06-24')].productiveWords").value(hasItem(15)));
     }
 
@@ -97,7 +102,10 @@ class BookDashboardControllerIntegrationTest extends PostgresIntegrationTest {
                 .andExpect(jsonPath("$.selectedContributor.displayName").value("Carlos"))
                 .andExpect(jsonPath("$.selectedContributor.email").doesNotExist())
                 .andExpect(jsonPath("$.summary.productiveWords").value(0))
-                .andExpect(jsonPath("$.summary.contributorsCount").value(0));
+                .andExpect(jsonPath("$.summary.contributorsCount").value(0))
+                .andExpect(jsonPath("$.summary.distinctScenes").value(0))
+                .andExpect(jsonPath("$.summary.distinctChapters").value(0))
+                .andExpect(jsonPath("$.origins", hasSize(0)));
     }
 
     @Test

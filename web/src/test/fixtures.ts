@@ -220,6 +220,7 @@ export const dashboardWithScenes: DashboardWithMyWriting = {
     "MANAGE_OWN_PERSONAL_WRITING_GOAL",
     "EDIT_BOOK_SETTINGS",
     "MANAGE_COLLABORATORS",
+    "VIEW_BOOK_CONTRIBUTOR_PROGRESS",
     "DELETE_BOOK",
   ],
   contextualCapabilities: ["EDIT_AUTHORED_CONTRIBUTION"],
