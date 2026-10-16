@@ -1,5 +1,5 @@
 import { useQuery } from "@tanstack/react-query";
-import { fireEvent, render, screen, waitFor } from "@testing-library/react";
+import { act, fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { beforeEach, describe, expect, test, vi } from "vitest";
 import { QueryProvider } from "@/components/providers/query-provider";
 import { SessionGuard } from "@/features/auth/components/session-guard";
@@ -50,6 +50,28 @@ describe("SessionGuard", () => {
     expect(screen.getByText("Autor A")).toBeInTheDocument();
     expect(screen.getByText("Espaço do Autor A")).toBeInTheDocument();
     expect(navigation.replace).not.toHaveBeenCalled();
+  });
+
+  test("não revela o workspace durante a validação inicial de sessão, mesmo com filhos prontos", async () => {
+    let resolveSession!: (value: typeof session) => void;
+    authApi.fetchSession.mockImplementation(() => new Promise<typeof session>((resolve) => {
+      resolveSession = resolve;
+    }));
+
+    renderWithClient(
+      <SessionGuard>
+        <p>Manuscrito privado da sessão anterior</p>
+      </SessionGuard>,
+    );
+
+    // This full-page state is intentional for security and must not be replaced by a
+    // workspace skeleton that could accidentally show previously authenticated content.
+    expect(screen.queryByText("Manuscrito privado da sessão anterior")).not.toBeInTheDocument();
+    expect(screen.queryByText("Autor A")).not.toBeInTheDocument();
+    expect(screen.getByText("Carregando…")).toBeInTheDocument();
+
+    await act(async () => resolveSession(session));
+    expect(await screen.findByText("Manuscrito privado da sessão anterior")).toBeInTheDocument();
   });
 
   test("consulta a sessão uma única vez para toda a aplicação", async () => {

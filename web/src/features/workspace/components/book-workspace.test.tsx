@@ -1,4 +1,4 @@
-import { fireEvent, screen, waitFor } from "@testing-library/react";
+import { act, fireEvent, screen, waitFor } from "@testing-library/react";
 import React from "react";
 import { afterEach, beforeEach, describe, expect, test, vi } from "vitest";
 import { BookWorkspace } from "@/features/workspace/components/book-workspace";
@@ -6,6 +6,7 @@ import type { Book } from "@/features/books/types";
 import type { BookOutline } from "@/features/outline/types";
 import { sceneForPlanning } from "@/test/fixtures";
 import { renderWithClient } from "@/test/test-utils";
+import { queryKeys } from "@/lib/query/keys";
 
 const outline: BookOutline = {
   id: "book-1",
@@ -254,6 +255,7 @@ describe("BookWorkspace focus mode", () => {
 
   beforeEach(() => {
     vi.clearAllMocks();
+    mocks.getOutline.mockReset();
     mocks.searchParams = new URLSearchParams();
     window.localStorage.clear();
     fullscreenElement = null;
@@ -414,6 +416,7 @@ describe("global fullscreen properties after BookWorkspace focus mode", () => {
 describe("BookWorkspace initial scene selection", () => {
   beforeEach(() => {
     vi.clearAllMocks();
+    mocks.getOutline.mockReset();
     mocks.searchParams = new URLSearchParams();
     window.localStorage.clear();
     mocks.getOutline.mockResolvedValue(outline);
@@ -697,11 +700,80 @@ describe("BookWorkspace initial scene selection", () => {
 
     expect(await screen.findByRole("heading", { name: "Caderno" })).toBeInTheDocument();
   });
+
+  test("carregamento local do outline mantém cabeçalho e navegação utilizáveis", async () => {
+    let resolveOutline!: (value: BookOutline) => void;
+    mocks.getOutline.mockImplementation(() => new Promise<BookOutline>((resolve) => {
+      resolveOutline = resolve;
+    }));
+
+    renderWithClient(<BookWorkspace bookId="book-1" />);
+    expect(screen.getByRole("complementary", { name: "Esboço do livro" })).toHaveAttribute("aria-busy", "true");
+    expect(screen.getByRole("button", { name: "Caderno" })).toBeEnabled();
+    expect(screen.getByRole("link", { name: "Voltar" })).toBeInTheDocument();
+
+    fireEvent.click(screen.getByRole("button", { name: "Caderno" }));
+    expect(await screen.findByRole("heading", { name: "Caderno" })).toBeInTheDocument();
+
+    await act(async () => resolveOutline(outline));
+    expect(screen.getByRole("heading", { name: "Caderno" })).toBeInTheDocument();
+  });
+
+  test("erro do outline permanece local e oferece retry sem recarregar o workspace", async () => {
+    mocks.getOutline.mockRejectedValueOnce(new Error("temporarily unavailable")).mockResolvedValueOnce(outline);
+    renderWithClient(<BookWorkspace bookId="book-1" />);
+
+    const retry = await screen.findByRole("button", { name: "Tentar novamente" });
+    expect(screen.getByRole("alert")).toHaveTextContent("Não foi possível carregar o outline");
+    expect(screen.getByRole("button", { name: "Cenas" })).toBeEnabled();
+    fireEvent.click(retry);
+
+    expect(await screen.findByText(sceneForPlanning.title)).toBeInTheDocument();
+    expect(mocks.getOutline).toHaveBeenCalledTimes(2);
+  });
+
+  test("refetch falho não continua exibindo o título privado em cache", async () => {
+    const { queryClient } = renderWithClient(<BookWorkspace bookId="book-1" />);
+    expect((await screen.findAllByRole("heading", { name: "Livro de teste" })).length).toBeGreaterThan(0);
+
+    // Force every refetch to fail until the error is rendered. A single-use rejection
+    // can be consumed by another mounted observer before the assertion runs.
+    mocks.getOutline.mockRejectedValue(new Error("access or network failed"));
+    await act(async () => {
+      await queryClient.refetchQueries({ queryKey: queryKeys.outline("book-1") }).catch(() => undefined);
+    });
+
+    await waitFor(() => {
+      expect(screen.getByRole("heading", { name: "Livro indisponível" })).toBeInTheDocument();
+    });
+    expect(screen.queryByRole("heading", { name: "Livro de teste" })).not.toBeInTheDocument();
+    expect(screen.getByRole("alert")).toHaveTextContent("Não foi possível carregar o outline");
+  });
+
+  test("refetch de outline válido mantém a árvore e o botão de cena montados", async () => {
+    const { queryClient } = renderWithClient(<BookWorkspace bookId="book-1" />);
+    const row = (await screen.findByText(sceneForPlanning.title)).closest("button");
+    expect(row).not.toBeNull();
+
+    let resolveRefresh!: (value: BookOutline) => void;
+    mocks.getOutline.mockImplementation(() => new Promise<BookOutline>((resolve) => {
+      resolveRefresh = resolve;
+    }));
+    await act(async () => {
+      void queryClient.refetchQueries({ queryKey: queryKeys.outline("book-1") });
+    });
+    expect(screen.getByText(sceneForPlanning.title).closest("button")).toBe(row);
+    expect(screen.queryByText("Carregando outline...")).not.toBeInTheDocument();
+
+    await act(async () => resolveRefresh(outline));
+    await waitFor(() => expect(screen.getByText(sceneForPlanning.title).closest("button")).toBe(row));
+  });
 });
 
 describe("BookWorkspace sem capabilities de estrutura e conteudo", () => {
   beforeEach(() => {
     vi.clearAllMocks();
+    mocks.getOutline.mockReset();
     mocks.searchParams = new URLSearchParams();
     window.localStorage.clear();
     mocks.getOutline.mockResolvedValue(outline);
@@ -757,6 +829,7 @@ function selectScene() {
 describe("BookWorkspace com elegibilidade de conteudo sem autoridade sobre a cena", () => {
   beforeEach(() => {
     vi.clearAllMocks();
+    mocks.getOutline.mockReset();
     mocks.searchParams = new URLSearchParams();
     window.localStorage.clear();
     mocks.getOutline.mockResolvedValue(outline);
@@ -799,6 +872,7 @@ describe("BookWorkspace com elegibilidade de conteudo sem autoridade sobre a cen
 describe("BookWorkspace quando as capabilities nao carregam", () => {
   beforeEach(() => {
     vi.clearAllMocks();
+    mocks.getOutline.mockReset();
     mocks.searchParams = new URLSearchParams();
     window.localStorage.clear();
     mocks.getOutline.mockResolvedValue(outline);

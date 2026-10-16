@@ -4,7 +4,7 @@ import { type FormEvent, useCallback, useEffect, useRef, useState } from "react"
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { Button } from "@/components/ui/button";
 import { Card } from "@/components/ui/card";
-import { ErrorState, LoadingState } from "@/components/ui/feedback";
+import { SceneLocalPlaceholder } from "@/features/workspace/components/workspace-local-placeholder";
 import { deleteScene, getScene, restoreSceneVersion, updateScene, updateSceneContent } from "@/features/scenes/api/scenes-api";
 import {
   SceneAiAnalysisPanel,
@@ -688,30 +688,23 @@ export function SceneEditor({
     );
   }
 
+  // First load and permission errors replace only the scene pane, never the entire workspace.
+  // Refetches with a currently valid projection leave the mounted editor intact (caret, drafts,
+  // scroll); an error must withhold cached scene content until the server confirms access again.
   if (sceneQuery.isLoading) {
-    return (
-      <section className="p-6">
-        <LoadingState label="Carregando cena..." />
-      </section>
-    );
+    return <SceneLocalPlaceholder state="loading" />;
   }
 
   if (sceneQuery.isError) {
-    return (
-      <section className="p-6">
-        <ErrorState message="Não foi possível carregar a cena. Verifique se o backend está rodando e tente novamente." />
-      </section>
-    );
+    return <SceneLocalPlaceholder state="error" onRetry={() => void sceneQuery.refetch()} />;
   }
 
   const scene = sceneQuery.data?.id === sceneId ? sceneQuery.data : null;
 
   if (!scene) {
-    return (
-      <section className="p-6">
-        <LoadingState label="Carregando cena..." />
-      </section>
-    );
+    return sceneQuery.isFetching
+      ? <SceneLocalPlaceholder state="loading" />
+      : <SceneLocalPlaceholder state="empty" onRetry={() => void sceneQuery.refetch()} />;
   }
 
   const activeContentMutationSceneId = contentMutation.variables?.targetSceneId;
@@ -733,11 +726,7 @@ export function SceneEditor({
                 : "empty";
 
   if (contentSyncState === "loading" || acceptedContentRevision === null) {
-    return (
-      <section className="p-6">
-        <LoadingState label="Preparando editor..." />
-      </section>
-    );
+    return <SceneLocalPlaceholder state="loading" label="Preparando editor..." />;
   }
 
   const contentSaveStatus: ContentSaveStatus =

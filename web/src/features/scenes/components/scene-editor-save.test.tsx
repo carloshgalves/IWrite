@@ -84,6 +84,7 @@ const analysisResult = {
 describe("SceneEditor content save contract", () => {
   beforeEach(() => {
     vi.clearAllMocks();
+    mocks.getScene.mockReset();
     mocks.randomUUID.mockReset().mockReturnValue("operation-id");
     vi.stubGlobal("crypto", {
       randomUUID: mocks.randomUUID,
@@ -140,6 +141,51 @@ describe("SceneEditor content save contract", () => {
         operationId: "operation-manual",
       });
     });
+  });
+
+  test("same-scene refetch keeps the editor DOM mounted until a new projection arrives", async () => {
+    const { queryClient } = renderEditor();
+    await screen.findByRole("heading", { name: sceneForPlanning.title });
+    const before = screen.getByTestId("editor-content");
+    const contentKey = before.getAttribute("data-content-key");
+    const pending = createDeferred<Scene>();
+    mocks.getScene.mockImplementationOnce(() => pending.promise);
+
+    await act(async () => {
+      void queryClient.refetchQueries({ queryKey: queryKeys.scene(sceneForPlanning.id) });
+    });
+
+    expect(screen.getByTestId("editor-content")).toBe(before);
+    expect(screen.getByTestId("editor-content")).toHaveAttribute("data-content-key", contentKey);
+    expect(screen.queryByText("Carregando cena...")).not.toBeInTheDocument();
+
+    await act(async () => pending.resolve({ ...sceneForPlanning, contentRevision: 3 }));
+    expect(screen.getByTestId("editor-content")).toBe(before);
+    expect(screen.getByRole("heading", { name: sceneForPlanning.title })).toBeInTheDocument();
+  });
+
+  test("failed scene refetch with cached data shows safe local error until retry succeeds", async () => {
+    const { queryClient } = renderEditor();
+    await screen.findByRole("heading", { name: sceneForPlanning.title });
+
+    // Keep every possible refetch on the failing side until the error is visible; a queued
+    // one-shot rejection can be consumed by an independent query observer or retry path.
+    mocks.getScene.mockRejectedValue(new Error("backend temporarily unavailable"));
+    await act(async () => {
+      await queryClient.refetchQueries({ queryKey: queryKeys.scene(sceneForPlanning.id) }).catch(() => undefined);
+    });
+
+    await waitFor(() => {
+      expect(screen.getByRole("region", { name: "Área da cena" })).toBeInTheDocument();
+    });
+    expect(screen.getByRole("alert")).toHaveTextContent("Não foi possível carregar a cena");
+    expect(screen.queryByTestId("editor-content")).not.toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: /Salvar conteúdo/ })).not.toBeInTheDocument();
+
+    mocks.getScene.mockResolvedValue({ ...sceneForPlanning, contentRevision: 3 });
+    fireEvent.click(screen.getByRole("button", { name: "Tentar novamente" }));
+    expect(await screen.findByRole("heading", { name: sceneForPlanning.title })).toBeInTheDocument();
+    expect(screen.getByTestId("editor-content")).toBeInTheDocument();
   });
 
   test("cancels queued autosave when a conflicting newer revision becomes pending", async () => {
@@ -999,6 +1045,7 @@ describe("SceneEditor content save contract", () => {
 describe("SceneEditor pending autosave versus the scene's projected authority", () => {
   beforeEach(() => {
     vi.clearAllMocks();
+    mocks.getScene.mockReset();
     mocks.randomUUID.mockReset().mockReturnValue("operation-id");
     vi.stubGlobal("crypto", {
       randomUUID: mocks.randomUUID,
@@ -1162,6 +1209,7 @@ function createDeferred<T>() {
 describe("SceneEditor delayed save response versus the newest projected authority", () => {
   beforeEach(() => {
     vi.clearAllMocks();
+    mocks.getScene.mockReset();
     mocks.randomUUID.mockReset().mockReturnValue("operation-id");
     vi.stubGlobal("crypto", {
       randomUUID: mocks.randomUUID,
@@ -1300,6 +1348,7 @@ async function refetchSceneWithRealTimers(queryClient: QueryClient) {
 describe("SceneEditor pending remote reconciliation versus the currently projected authority", () => {
   beforeEach(() => {
     vi.clearAllMocks();
+    mocks.getScene.mockReset();
     mocks.randomUUID.mockReset().mockReturnValue("operation-id");
     vi.stubGlobal("crypto", {
       randomUUID: mocks.randomUUID,

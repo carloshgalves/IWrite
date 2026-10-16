@@ -17,7 +17,7 @@ import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { Badge } from "@/components/ui/badge";
 import { EmptyState } from "@/components/ui/empty-state";
 import { FeedbackMessage } from "@/components/ui/feedback-message";
-import { LoadingState } from "@/components/ui/feedback";
+import { OutlineLocalPlaceholder } from "@/features/workspace/components/workspace-local-placeholder";
 import {
   createChapter,
   createScene,
@@ -395,33 +395,20 @@ export function OutlineSidebar({
     }
   }
 
+  // Keep the sidebar's header and scrollport dimensions while its data loads or fails.
+  // Never display cached outline fields on an error: the backend may have revoked book access.
   if (outlineQuery.isLoading) {
-    return <LoadingState label="Carregando outline..." />;
+    return <OutlineLocalPlaceholder state="loading" />;
   }
 
   if (outlineQuery.isError) {
-    return (
-      <aside className="flex h-full min-h-0 flex-col bg-white p-3">
-        <EmptyState
-          size="sm"
-          title="Não foi possível carregar o outline"
-          description="Verifique se o backend está rodando e tente abrir o livro novamente."
-        />
-        <FeedbackMessage variant="error" className="mt-3">
-          Erro ao carregar outline.
-        </FeedbackMessage>
-      </aside>
-    );
+    return <OutlineLocalPlaceholder state="error" onRetry={() => void outlineQuery.refetch()} />;
   }
 
   const outline = outlineQuery.data;
 
   if (!outline) {
-    return (
-      <aside className="flex h-full min-h-0 flex-col bg-white p-3">
-        <EmptyState size="sm" title="Outline indisponível" description="Não recebemos dados deste livro." />
-      </aside>
-    );
+    return <OutlineLocalPlaceholder state="empty" />;
   }
 
   const actionError =
