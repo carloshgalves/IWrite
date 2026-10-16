@@ -1,6 +1,8 @@
-import type { NextConfig } from "next";
+import path from "node:path";
+import { fileURLToPath } from "node:url";
 
 const LOCAL_FALLBACK = "http://127.0.0.1:8085";
+const configDirectory = path.dirname(fileURLToPath(import.meta.url));
 
 /**
  * Server-side only: the browser never learns the backend origin, it only ever calls /api on the
@@ -15,7 +17,7 @@ const LOCAL_FALLBACK = "http://127.0.0.1:8085";
  * through to localhost, so a typo in production configuration cannot turn into every request
  * quietly rewriting to the frontend container itself.
  */
-export function resolveBackendOrigin(): string {
+export function resolveBackendOrigin() {
   for (const name of ["BACKEND_ORIGIN", "NEXT_PUBLIC_API_URL"]) {
     const value = process.env[name];
     if (!value) {
@@ -34,8 +36,8 @@ export function resolveBackendOrigin(): string {
 
 const BACKEND_ORIGIN = resolveBackendOrigin();
 
-const nextConfig: NextConfig = {
-  outputFileTracingRoot: __dirname,
+const nextConfig = {
+  outputFileTracingRoot: configDirectory,
 
   async rewrites() {
     return [

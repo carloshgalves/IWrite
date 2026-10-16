@@ -1,5 +1,5 @@
 // Relative on purpose. Every call goes to /api on the origin that served the page, and Next
-// rewrites it to the backend (see next.config.ts). The browser therefore never makes a cross-site
+// rewrites it to the backend (see next.config.mjs). The browser therefore never makes a cross-site
 // request, which is what lets the SameSite=Lax session cookie ride along and lets the CSRF
 // double-submit read its own cookie.
 const CSRF_COOKIE = "XSRF-TOKEN";

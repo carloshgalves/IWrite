@@ -1,6 +1,6 @@
 // Custom server instead of `next start`: this process terminates the browser's TCP connection
 // directly (nothing sits in front of it in either deployment), so the socket peer is the real
-// client. next.config.ts's rewrites() forward request headers as-is when proxying /api to the
+// client. next.config.mjs's rewrites() forward request headers as-is when proxying /api to the
 // backend but never set a forwarding header themselves, so without this the backend would see
 // every browser request as coming from this container.
 //

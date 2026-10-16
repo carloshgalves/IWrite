@@ -29,3 +29,35 @@ vulnerabilities:
       tag no momento da resolução; aguardando o upstream (nodejs/docker-node)
       publicar uma imagem com um npm que já embuta o tar corrigido.
     expired_at: 2026-11-22
+  # Adicionadas após revisão de aplicabilidade em 12/10/2026, issue #254.
+  # O scan JSON e o SBOM permanecem completos; a dispensa vale apenas ao gate.
+  - id: CVE-2026-47884
+    statement: >-
+      Spring Framework 6.2.15 (spring-webmvc) é afetado, mas esta CVE depende
+      de XsltView com mapping /** de renderização e view name não explícito.
+      O IWrite usa controllers REST/MVC, sem uso identificado de XsltView
+      nem tal mapeamento no código versionado em 12/10/2026.
+      Avaliação estática, não remediação da biblioteca; acompanhar #254,
+      reavaliar se houver views/template rendering ou atualização de rotas.
+      Advisory: https://spring.io/security/cve-2026-47884/
+    expired_at: 2026-11-12
+  - id: CVE-2026-47890
+    statement: >-
+      Spring Framework 6.2.15 (spring-webmvc/webflux) é afetado, mas esta CVE
+      depende de streaming Server-Sent Events com fragmentos de view e dados
+      manipuláveis por atacante. Nenhum uso de SSE com fragmentos de view
+      foi identificado no código versionado em 12/10/2026.
+      Avaliação estática, não remediação da biblioteca; acompanhar #254,
+      reavaliar se SSE/view fragments forem introduzidos.
+      Advisory: https://spring.io/security/cve-2026-47890/
+    expired_at: 2026-11-12
+  - id: CVE-2026-47892
+    statement: >-
+      Spring Framework 6.2.15 (spring-webflux) é afetado, mas esta CVE
+      depende de endpoints funcionais WebFlux com DispatcherServlet.
+      O IWrite usa Spring MVC com controllers REST; nenhuma rota funcional
+      WebFlux/RouterFunction foi identificada no código em 12/10/2026.
+      Avaliação estática, não remediação da biblioteca; acompanhar #254,
+      reavaliar se endpoints funcionais/WebFlux forem introduzidos.
+      Advisory: https://spring.io/security/cve-2026-47892/
+    expired_at: 2026-11-12

@@ -9,7 +9,7 @@ COPY src src
 RUN mvn -s .mvn/local-settings.xml -DskipTests package
 
 
-FROM node:24-alpine@sha256:e67514e5d0f6c46656005e1b693b2ec9d52e80b641307de684d4a015ba7a4eaf AS frontend-deps
+FROM node:24-alpine@sha256:ebfe2f90462722a7a4de65e91990e97fe0d401c70e0e762c5b53302f905ec1c1 AS frontend-deps
 
 WORKDIR /frontend
 
@@ -18,14 +18,14 @@ COPY web/package.json web/package-lock.json ./
 RUN npm ci
 
 
-FROM node:24-alpine@sha256:e67514e5d0f6c46656005e1b693b2ec9d52e80b641307de684d4a015ba7a4eaf AS frontend-build
+FROM node:24-alpine@sha256:ebfe2f90462722a7a4de65e91990e97fe0d401c70e0e762c5b53302f905ec1c1 AS frontend-build
 
 WORKDIR /frontend
 
 
 # next build bakes the rewrite destination into .next/routes-manifest.json, so it has to be known
 # here at build time. This image runs frontend and backend in the same container, backend on
-# 127.0.0.1:8085 — the same value next.config.ts would fall back to anyway; set explicitly so the
+# 127.0.0.1:8085 — the same value next.config.mjs would fall back to anyway; set explicitly so the
 # intent does not depend on that default.
 ENV BACKEND_ORIGIN="http://127.0.0.1:8085"
 
@@ -34,8 +34,12 @@ COPY web/ .
 
 RUN npm run build
 
+# Keep Vitest/Playwright and other build-only tools out of the production image.
+# The runtime receives this pruned node_modules tree, not the build dependencies.
+RUN npm prune --omit=dev --ignore-scripts
 
-FROM node:24-alpine@sha256:e67514e5d0f6c46656005e1b693b2ec9d52e80b641307de684d4a015ba7a4eaf AS runtime
+
+FROM node:24-alpine@sha256:ebfe2f90462722a7a4de65e91990e97fe0d401c70e0e762c5b53302f905ec1c1 AS runtime
 
 RUN apk add --no-cache openjdk21-jre
 
@@ -55,7 +59,7 @@ COPY --from=backend-build \
     /app/backend/app.jar
 
 COPY --from=frontend-build /frontend/package.json /app/frontend/package.json
-COPY --from=frontend-build /frontend/next.config.ts /app/frontend/next.config.ts
+COPY --from=frontend-build /frontend/next.config.mjs /app/frontend/next.config.mjs
 # The same custom server web/Dockerfile runs, not `next start`: it strips the forwarding headers a
 # client sends and derives X-Forwarded-For from the socket peer. Without it every login inside this
 # image would reach the backend as 127.0.0.1 and share a single rate-limit bucket. It resolves the
