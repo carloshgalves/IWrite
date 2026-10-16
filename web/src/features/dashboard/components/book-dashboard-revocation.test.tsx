@@ -98,6 +98,8 @@ describe("BookContributionCard — real React Query cache", () => {
 
     await waitFor(() => expect(screen.getByText("A chave aparece")).toBeInTheDocument());
     expect(screen.getByLabelText("Contribuidor")).toHaveTextContent("Bruna");
+    // A different period's cached all-scope snapshot must also be invalidated after 404.
+    client.setQueryData([...queryKeys.bookContributions("book-1"), "30d", "all"], allContributions);
     expect(client.getQueryData([...queryKeys.bookContributions("book-1"), "7d", "all"]))
       .toEqual(allContributions);
 
@@ -106,6 +108,10 @@ describe("BookContributionCard — real React Query cache", () => {
       expect(screen.getByText("Não foi possível carregar as contribuições registradas.")).toBeInTheDocument(),
     );
     expect(screen.queryByText("A chave aparece")).not.toBeInTheDocument();
+    await waitFor(() =>
+      expect(client.getQueryData([...queryKeys.bookContributions("book-1"), "30d", "all"]))
+        .toBeUndefined(),
+    );
 
     fireEvent.click(screen.getByRole("button", { name: "Voltar a todos os contribuidores" }));
 

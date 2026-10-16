@@ -255,6 +255,7 @@ class BookContributorProgressIntegrationTest extends PostgresIntegrationTest {
         event.setEventType(BookWordCountEventType.CONTENT_SAVE);
         event.setProductiveWordDelta(7);
         event.setManuscriptWordDelta(4);
+        event.setDailyRollupApplied(false);
         event.setOperationId(UUID.randomUUID());
         event.setIdempotencyKey(UUID.randomUUID());
         eventRepository.saveAndFlush(event);
@@ -283,6 +284,53 @@ class BookContributorProgressIntegrationTest extends PostgresIntegrationTest {
             assertThat(origin.manuscriptAdjustments()).isEqualTo(-3);
             assertThat(origin.writingDays()).isEqualTo(1);
         });
+    }
+
+    @Test
+    void ambiguousLegacyEventOnFallbackUtcDateDoesNotDuplicateAnotherDaysRollup() {
+        Book book = bookService.getBook(createBook("Legacy fallback differs from rollup day").id());
+        var originalWritingDay = java.time.LocalDate.of(2026, 6, 23);
+        var fallbackUtcDay = java.time.LocalDate.of(2026, 6, 24);
+
+        // An old rollup contains +5 for the 23rd. The historical ledger event was
+        // attributed to the 24th when V37 could no longer prove the original day.
+        saveProgress(book, DEFAULT_USER_ID, 5, 0);
+        UUID eventId = saveLedgerEvent(
+                book, DEFAULT_USER_ID, UUID.randomUUID(), UUID.randomUUID(), fallbackUtcDay, 5
+        );
+        entityManager.flush();
+        entityManager.createNativeQuery("""
+                update book_daily_writing_progress
+                   set progress_date = :rollupDate
+                 where book_id = :bookId and user_id = :userId and progress_date = :fallbackDate
+                """)
+                .setParameter("rollupDate", originalWritingDay)
+                .setParameter("bookId", book.getId())
+                .setParameter("userId", DEFAULT_USER_ID)
+                .setParameter("fallbackDate", fallbackUtcDay)
+                .executeUpdate();
+        entityManager.createNativeQuery(
+                "update book_word_count_events set daily_rollup_applied = null where id = :id"
+        ).setParameter("id", eventId).executeUpdate();
+        entityManager.clear();
+
+        var dashboard = dashboardService.getBookContributions(
+                book.getId(), WritingProgressPeriod.SEVEN_DAYS, DEFAULT_USER_ID
+        );
+        assertThat(dashboard.summary().productiveWords()).isEqualTo(5);
+        assertThat(dashboard.summary().writingDays()).isEqualTo(1);
+        assertThat(dashboard.dailySeries())
+                .filteredOn(day -> day.date().equals(originalWritingDay))
+                .singleElement()
+                .satisfies(day -> assertThat(day.productiveWords()).isEqualTo(5));
+        assertThat(dashboard.dailySeries())
+                .filteredOn(day -> day.date().equals(fallbackUtcDay))
+                .singleElement()
+                .satisfies(day -> assertThat(day.productiveWords()).isZero());
+        // The ledger's Scene origin is still visible as historical evidence;
+        // the uncertain event must not be added a second time to the summary.
+        assertThat(dashboard.origins()).singleElement()
+                .satisfies(origin -> assertThat(origin.productiveWords()).isEqualTo(5));
     }
 
     @Test

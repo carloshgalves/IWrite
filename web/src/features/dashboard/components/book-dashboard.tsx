@@ -715,6 +715,22 @@ function BookContributionCard({
       : allScopeContributors);
   }, [allScopeContributors]);
 
+  // A 404 may represent either revoked Book access or an invalid contributor filter.
+  // Until a new authorized response arrives, neither case justifies keeping previously
+  // cached responses for *other* contributor/period keys available for immediate display.
+  // Restrict resetting to inactive queries so the failing observed key stays in error,
+  // with a visible recovery action, instead of creating a refetch/error loop.
+  useEffect(() => {
+    if (!contributionsQuery.isError) {
+      return;
+    }
+    void queryClient.resetQueries({
+      queryKey: queryKeys.bookContributions(bookId),
+      type: "inactive",
+    });
+    setAvailableContributors([]);
+  }, [contributionsQuery.isError, bookId, queryClient]);
+
   function returnToAllContributors() {
     // An error on the selected contributor's key does not invalidate a previous successful
     // all-contributors query. Reset every *inactive* contribution key before switching back:

@@ -280,13 +280,10 @@ public class UserDashboardService {
             List<BookContributionEventAggregate> events
     ) {
         Map<ContributionProgressKey, ContributionProgressTotals> totalsByContributorDate = new LinkedHashMap<>();
-        Set<ContributionProgressKey> rollupKeys = new HashSet<>();
-
         for (DailyWritingProgress progress : progressRows) {
             ContributionProgressKey key = new ContributionProgressKey(
                     progress.getUser().getId(), progress.getProgressDate()
             );
-            rollupKeys.add(key);
             totalsByContributorDate.computeIfAbsent(key, ContributionProgressTotals::new).add(progress);
         }
 
@@ -297,12 +294,11 @@ public class UserDashboardService {
             ContributionProgressTotals totals = totalsByContributorDate.computeIfAbsent(
                     key, ContributionProgressTotals::new
             );
-            if (rollupKeys.contains(key)) {
-                // Keep the rollup's authoritative totals, plus only uncovered events.
-                totals.addUnrepresented(event);
-            } else {
-                totals.add(event);
-            }
+            // Only explicit FALSE proves that a ledger delta is missing from a rollup.
+            // A V37 UTC fallback can place an unknown legacy event on another date:
+            // adding its full delta just because this particular date lacks a rollup
+            // would count writing already reflected in an earlier/later daily rollup.
+            totals.addUnrepresented(event);
         }
 
         return List.copyOf(totalsByContributorDate.values());
