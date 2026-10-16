@@ -18,6 +18,7 @@ import com.iwrite.user.entity.User;
 import com.iwrite.writingprogress.entity.DailyWritingProgress;
 import com.iwrite.writingprogress.ledger.entity.BookWordCountEvent;
 import com.iwrite.writingprogress.ledger.entity.BookWordCountEventType;
+import com.iwrite.writingprogress.ledger.repository.BookContributionEventAggregate;
 import com.iwrite.writingprogress.ledger.repository.BookWordCountEventRepository;
 import com.iwrite.writingprogress.repository.DailyWritingProgressRepository;
 import com.iwrite.writingprogress.service.WritingProgressPeriod;
@@ -285,6 +286,104 @@ class BookContributorProgressIntegrationTest extends PostgresIntegrationTest {
     }
 
     @Test
+    void mixedLegacyLedgerAndNewRollupIncludeOnlyEventsOutsideTheRollupCoverageWindow() {
+        Book book = bookService.getBook(createBook("Legacy ledger plus newer daily rollup").id());
+        UUID chapterId = UUID.randomUUID();
+        UUID legacyScene = UUID.randomUUID();
+        UUID coveredScene = UUID.randomUUID();
+        UUID lateScene = UUID.randomUUID();
+        var date = java.time.LocalDate.of(2026, 6, 24);
+
+        UUID legacyEvent = saveLedgerEvent(book, DEFAULT_USER_ID, legacyScene, chapterId, date, 7);
+        UUID coveredEvent = saveLedgerEvent(book, DEFAULT_USER_ID, coveredScene, chapterId, date, 5);
+        UUID lateEvent = saveLedgerEvent(book, DEFAULT_USER_ID, lateScene, chapterId, date, 3);
+        // The rollup was created only for the +5 event; the +7 and +3 events were already
+        // outside its persisted update interval, so neither can be part of this snapshot.
+        saveProgress(book, DEFAULT_USER_ID, 5, 0);
+        setLedgerCreatedAt(legacyEvent, "2026-06-24T08:00:00Z");
+        setLedgerCreatedAt(coveredEvent, "2026-06-24T10:10:00Z");
+        setLedgerCreatedAt(lateEvent, "2026-06-24T11:00:00Z");
+        entityManager.createNativeQuery("""
+                update book_daily_writing_progress
+                   set created_at = :startedAt, updated_at = :endedAt
+                 where book_id = :bookId and user_id = :userId and progress_date = :date
+                """)
+                .setParameter("startedAt", java.time.OffsetDateTime.parse("2026-06-24T10:00:00Z"))
+                .setParameter("endedAt", java.time.OffsetDateTime.parse("2026-06-24T10:20:00Z"))
+                .setParameter("bookId", book.getId())
+                .setParameter("userId", DEFAULT_USER_ID)
+                .setParameter("date", date)
+                .executeUpdate();
+        entityManager.clear();
+
+        var aggregates = eventRepository.findBookContributionEventAggregatesBetween(
+                book.getId(), date, date
+        );
+        assertThat(aggregates)
+                .extracting(BookContributionEventAggregate::getUnrepresentedProductiveWordDelta)
+                .containsExactlyInAnyOrder(7L, 0L, 3L);
+
+        var progress = dashboardService.getBookContributions(
+                book.getId(), WritingProgressPeriod.SEVEN_DAYS, null
+        );
+        assertThat(progress.summary().productiveWords()).isEqualTo(15);
+        assertThat(progress.summary().manuscriptAdjustments()).isZero();
+        assertThat(progress.summary().writingDays()).isEqualTo(1);
+        assertThat(progress.summary().contributorsCount()).isEqualTo(1);
+        assertThat(progress.origins()).hasSize(3);
+        assertThat(progress.origins().stream().mapToLong(origin -> origin.productiveWords()).sum()).isEqualTo(15);
+        assertThat(progress.dailySeries())
+                .filteredOn(day -> day.date().equals(date))
+                .singleElement()
+                .satisfies(day -> assertThat(day.productiveWords()).isEqualTo(15));
+
+        var filtered = dashboardService.getBookContributions(
+                book.getId(), WritingProgressPeriod.SEVEN_DAYS, DEFAULT_USER_ID
+        );
+        assertThat(filtered.summary().productiveWords()).isEqualTo(15);
+        assertThat(filtered.origins()).hasSize(3);
+    }
+
+    @Test
+    void completeDailyRollupDoesNotCountTheSameLedgerEventTwice() {
+        Book book = bookService.getBook(createBook("Complete daily rollup").id());
+        var date = java.time.LocalDate.of(2026, 6, 24);
+        UUID coveredEvent = saveLedgerEvent(
+                book, DEFAULT_USER_ID, UUID.randomUUID(), UUID.randomUUID(), date, 5
+        );
+        saveProgress(book, DEFAULT_USER_ID, 5, 0);
+        setLedgerCreatedAt(coveredEvent, "2026-06-24T10:10:00Z");
+        entityManager.createNativeQuery("""
+                update book_daily_writing_progress
+                   set created_at = :startedAt, updated_at = :endedAt
+                 where book_id = :bookId and user_id = :userId and progress_date = :date
+                """)
+                .setParameter("startedAt", java.time.OffsetDateTime.parse("2026-06-24T10:00:00Z"))
+                .setParameter("endedAt", java.time.OffsetDateTime.parse("2026-06-24T10:20:00Z"))
+                .setParameter("bookId", book.getId())
+                .setParameter("userId", DEFAULT_USER_ID)
+                .setParameter("date", date)
+                .executeUpdate();
+        entityManager.clear();
+
+        var progress = dashboardService.getBookContributions(
+                book.getId(), WritingProgressPeriod.SEVEN_DAYS, null
+        );
+        assertThat(progress.summary().productiveWords()).isEqualTo(5);
+        assertThat(progress.origins()).singleElement()
+                .satisfies(origin -> assertThat(origin.productiveWords()).isEqualTo(5));
+    }
+
+    private void setLedgerCreatedAt(UUID eventId, String instant) {
+        entityManager.createNativeQuery(
+                "update book_word_count_events set created_at = :createdAt where id = :id"
+        )
+                .setParameter("createdAt", java.time.OffsetDateTime.parse(instant))
+                .setParameter("id", eventId)
+                .executeUpdate();
+    }
+
+    @Test
     void contributionEventQueryAggregatesAutosavesByContributorOriginAndDate() {
         Book book = bookService.getBook(createBook("Aggregated contribution events").id());
         UUID sceneId = UUID.randomUUID();
@@ -416,7 +515,7 @@ class BookContributorProgressIntegrationTest extends PostgresIntegrationTest {
                 });
     }
 
-    private void saveLedgerEvent(
+    private UUID saveLedgerEvent(
             Book book,
             UUID contributorId,
             UUID sceneId,
@@ -438,6 +537,7 @@ class BookContributorProgressIntegrationTest extends PostgresIntegrationTest {
         event.setOperationId(UUID.randomUUID());
         event.setIdempotencyKey(UUID.randomUUID());
         eventRepository.saveAndFlush(event);
+        return event.getId();
     }
 
     private UUID grantRole(UUID bookId, String displayName, BookRole role) {
