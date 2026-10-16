@@ -333,11 +333,53 @@ describe("BookDashboard", () => {
     expect(screen.getByText("Não foi possível carregar as contribuições registradas.")).toBeInTheDocument();
     expect(screen.queryByText("Palavras produtivas")).not.toBeInTheDocument();
 
-    fireEvent.change(screen.getByLabelText("Contribuidor"), { target: { value: "" } });
+    expect(screen.queryByRole("combobox", { name: "Contribuidor" })).not.toBeInTheDocument();
+    fireEvent.click(screen.getByRole("button", { name: "Voltar a todos os contribuidores" }));
 
     await waitFor(() => expect(mocks.useBookContributions).toHaveBeenLastCalledWith("book-1", "7d", undefined));
     expect(screen.queryByText("Não foi possível carregar as contribuições registradas.")).not.toBeInTheDocument();
     expect(screen.getByText("Palavras produtivas")).toBeInTheDocument();
+  });
+
+  test("esconde dados e nomes privados apos refetch 404 da mesma consulta de contribuicoes", () => {
+    mocks.useBookDashboard.mockReturnValue({ isLoading: false, isError: false, data: dashboardWithScenes });
+    const { rerender } = renderWithClient(<BookDashboard bookId="book-1" />);
+
+    expect(screen.getByText("Contribuição da equipe")).toBeInTheDocument();
+    expect(screen.getByText("A chave aparece")).toBeInTheDocument();
+    expect(screen.getByLabelText("Contribuidor")).toHaveTextContent("Carlos");
+
+    // React Query v5 can expose both isError=true and the last successful data.
+    const staleSuccess = mocks.useBookContributions.mock.results.at(-1)?.value.data;
+    mocks.useBookContributions.mockReturnValue({
+      isLoading: false,
+      isError: true,
+      data: staleSuccess,
+    });
+    rerender(<BookDashboard bookId="book-1" />);
+
+    expect(screen.getByText("Não foi possível carregar as contribuições registradas.")).toBeInTheDocument();
+    expect(screen.queryByText("Palavras produtivas")).not.toBeInTheDocument();
+    expect(screen.queryByText("A chave aparece")).not.toBeInTheDocument();
+    expect(screen.queryByLabelText("Contribuidor")).not.toBeInTheDocument();
+  });
+
+  test("refetch 404 do dashboard nao renderiza capabilities nem paineis do snapshot anterior", () => {
+    mocks.useBookDashboard.mockReturnValue({ isLoading: false, isError: false, data: dashboardWithScenes });
+    const { rerender } = renderWithClient(<BookDashboard bookId="book-1" />);
+    expect(screen.getByText("Contribuição da equipe")).toBeInTheDocument();
+
+    mocks.useBookDashboard.mockReturnValue({
+      isLoading: false,
+      isError: true,
+      data: dashboardWithScenes,
+    });
+    rerender(<BookDashboard bookId="book-1" />);
+
+    expect(screen.getByText("Não foi possível carregar a visão geral. Verifique o backend e tente novamente.")).toBeInTheDocument();
+    expect(screen.queryByText("Contribuição da equipe")).not.toBeInTheDocument();
+    expect(screen.queryByText("Meu progresso")).not.toBeInTheDocument();
+    expect(screen.queryByText("Total de palavras")).not.toBeInTheDocument();
   });
 
   test("contribuicoes vazias exibem estado vazio", () => {

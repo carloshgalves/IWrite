@@ -46,7 +46,9 @@ export function BookDashboard({ bookId, onOpenSceneInEditor, onOpenWorkspaceTab 
   const dashboardQuery = useBookDashboard(bookId, progressPeriod);
   // keepPreviousData can hand back another Book's snapshot while this Book still loads. Never render
   // or mutate a dashboard whose bookId does not match the Book in the route.
-  const dashboard = dashboardQuery.data?.bookId === bookId ? dashboardQuery.data : undefined;
+  const dashboard = !dashboardQuery.isError && dashboardQuery.data?.bookId === bookId
+    ? dashboardQuery.data
+    : undefined;
   const isLoading = dashboardQuery.isLoading || (!dashboard && !dashboardQuery.isError);
 
   return (
@@ -689,7 +691,9 @@ function BookContributionCard({
 }) {
   const [contributorId, setContributorId] = useState<string>("");
   const contributionsQuery = useBookContributions(bookId, progressPeriod, contributorId || undefined);
-  const contributions = contributionsQuery.data;
+  // TanStack Query keeps the last successful data after a failed refetch of the same key.
+  // Never present private Book data after the current query has reported an error.
+  const contributions = contributionsQuery.isError ? undefined : contributionsQuery.data;
   const allScopeContributors = contributions?.scope === "ALL_CONTRIBUTORS"
     ? contributions.availableContributors
     : null;
@@ -717,7 +721,11 @@ function BookContributionCard({
           title="Contribuição da equipe"
           description="Atividade autenticada e registrada neste livro, sem pontuação ou comparação entre contribuidores."
         />
-        {availableContributors.length ? (
+        {contributionsQuery.isError && contributorId ? (
+          <Button type="button" variant="outline" onClick={() => setContributorId("")}>
+            Voltar a todos os contribuidores
+          </Button>
+        ) : !contributionsQuery.isError && availableContributors.length ? (
           <label className="grid gap-1 text-xs font-medium text-zinc-600">
             Contribuidor
             <select
