@@ -722,7 +722,7 @@ function BookContributionCard({
           description="Atividade autenticada e registrada neste livro, sem pontuação ou comparação entre contribuidores."
         />
         {contributionsQuery.isError && contributorId ? (
-          <Button type="button" variant="outline" onClick={() => setContributorId("")}>
+          <Button type="button" variant="secondary" onClick={() => setContributorId("")}>
             Voltar a todos os contribuidores
           </Button>
         ) : !contributionsQuery.isError && availableContributors.length ? (
