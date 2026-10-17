@@ -131,11 +131,11 @@ test("restores tabs and the selected scene through reload and back/forward", asy
   await expect(page.getByTestId("scene-content-editor")).toContainText("Synthetic paragraph 120");
   // A different viewport/layout after hydration can cap the restored position at
   // its new maximum. Still demand a nonzero restoration on the same reading surface.
-  await expect.poll(async () => readingScrollport.evaluate((element) => {
+  await expect.poll(async () => readingScrollport.evaluate((element, savedPosition) => {
     const actualLimit = Math.max(0, element.scrollHeight - element.clientHeight);
-    const expected = Math.min(observedScroll, actualLimit);
+    const expected = Math.min(savedPosition, actualLimit);
     return actualLimit > 30 && element.scrollTop >= expected - 2 && element.scrollTop > 30;
-  })).toBe(true);
+  }, observedScroll)).toBe(true);
 
   // Unknown tabs fall back to Scenes, and a scene from another book is never trusted locally.
   await page.goto(`${bookPath}?sceneId=${encodeURIComponent(sceneId!)}&tab=unknown-tab`);
