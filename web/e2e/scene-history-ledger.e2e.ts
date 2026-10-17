@@ -82,7 +82,8 @@ test("restores an earlier scene version without inflating productivity", async (
   const dialog = page.getByRole("dialog");
   await expect(dialog.getByRole("heading", { name: "Historico da cena" })).toBeVisible();
   await dialog.getByRole("button").filter({ hasText: contentA }).click();
-  await expect(dialog.getByText(contentA, { exact: true })).toBeVisible();
+  // Both the version-list entry and its preview contain identical text; assert the preview.
+  await expect(dialog.locator("div.whitespace-pre-wrap").filter({ hasText: contentA })).toBeVisible();
 
   page.once("dialog", (confirmDialog) => {
     void confirmDialog.accept();
