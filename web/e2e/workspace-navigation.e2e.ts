@@ -17,6 +17,9 @@ test("restores tabs and the selected scene through reload and back/forward", asy
 
   await page.getByRole("article").filter({ hasText: bookTitle }).getByRole("link", { name: "Abrir workspace" }).click();
   await expect(page.getByRole("heading", { name: bookTitle }).first()).toBeVisible();
+  // React can render the book heading before Next commits the browser URL.
+  // Capture the deep link only after the navigation itself has finished.
+  await expect(page).toHaveURL(/\/books\/[^/?#]+(?:[?#]|$)/);
   const bookPath = new URL(page.url()).pathname;
 
   await page.getByPlaceholder(/Nova se/).fill(`Section ${suffix}`);
@@ -51,6 +54,23 @@ test("restores tabs and the selected scene through reload and back/forward", asy
   await expect(page).toHaveURL(/tab=notebook/);
   await expect(page.getByRole("heading", { name: "Caderno", exact: true })).toBeVisible();
 
+  // Regaining browser focus runs SessionGuard reconciliation, temporarily unmounting
+  // the entire protected workspace. The selected tab must survive that real remount.
+  let releaseSessionRequest: () => void = () => undefined;
+  const sessionGate = new Promise<void>((resolve) => {
+    releaseSessionRequest = resolve;
+  });
+  await page.route("**/api/auth/me", async (route) => {
+    await sessionGate;
+    await route.continue();
+  });
+  await page.evaluate(() => window.dispatchEvent(new Event("focus")));
+  await expect(page.getByText("Verificando sessão…")).toBeVisible();
+  releaseSessionRequest();
+  await expect(page.getByRole("heading", { name: "Caderno", exact: true })).toBeVisible();
+  await expect(page).toHaveURL(/tab=notebook/);
+  await page.unroute("**/api/auth/me");
+
   await page.getByRole("button", { name: "Cenas" }).click();
   await expect(page.getByRole("heading", { name: sceneTitle })).toBeVisible();
   await expect(page).not.toHaveURL(/tab=/);
@@ -74,23 +94,34 @@ test("restores tabs and the selected scene through reload and back/forward", asy
   expect(saveResponse.status()).toBe(200);
   await expect(page.getByText("Salvo").first()).toBeVisible();
 
-  const shell = page.getByTestId("scene-shell-scrollport");
-  const content = page.getByTestId("scene-content-scrollport");
-  const shellCanScroll = await shell.evaluate((element) => element.scrollHeight - element.clientHeight > 100);
-  const scrollport = shellCanScroll ? shell : content;
-  const observedScroll = await scrollport.evaluate((element) => {
+  // The long manuscript lives in the content scrollport, not the outer metadata shell.
+  // The shell's range can legitimately shrink (e.g. 74px) across hydration/layout.
+  const contentScrollport = page.getByTestId("scene-content-scrollport");
+  await expect.poll(
+    () => contentScrollport.evaluate((element) => element.scrollHeight - element.clientHeight)
+  ).toBeGreaterThan(240);
+  const observedScroll = await contentScrollport.evaluate((element) => {
     element.scrollTop = 220;
     element.dispatchEvent(new Event("scroll"));
     return element.scrollTop;
   });
-  expect(observedScroll, "the long Scene must actually have a scrollable reading surface").toBeGreaterThan(80);
+  expect(observedScroll, "the manuscript must scroll beyond the intended reading position").toBeGreaterThan(200);
+
+  // Require the hook to have recorded the reading position before navigating away.
+  const scrollStorageKey = `iwrite.sceneScroll.v1:${encodeURIComponent(bookPath.split("/").pop()!)}:${encodeURIComponent(sceneId!)}:scene-content`;
+  await expect.poll(
+    () => page.evaluate((key) => window.sessionStorage.getItem(key), scrollStorageKey)
+  ).toBe(String(Math.round(observedScroll)));
 
   await page.reload();
   await expect(page.getByRole("heading", { name: sceneTitle })).toBeVisible();
-  const restoredScrollport = shellCanScroll
-    ? page.getByTestId("scene-shell-scrollport")
-    : page.getByTestId("scene-content-scrollport");
-  await expect.poll(() => restoredScrollport.evaluate((element) => element.scrollTop)).toBeGreaterThan(80);
+  await expect(page.getByTestId("scene-content-editor")).toContainText("Synthetic paragraph 120");
+  await expect.poll(
+    () => contentScrollport.evaluate((element) => element.scrollHeight - element.clientHeight)
+  ).toBeGreaterThan(240);
+  await expect.poll(
+    () => contentScrollport.evaluate((element) => element.scrollTop)
+  ).toBeGreaterThan(observedScroll - 20);
 
   // Unknown tabs fall back to Scenes, and a scene from another book is never trusted locally.
   await page.goto(`${bookPath}?sceneId=${encodeURIComponent(sceneId!)}&tab=unknown-tab`);
