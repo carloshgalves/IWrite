@@ -73,6 +73,67 @@ describe("TiptapEditor toolbar", () => {
     expect(editor.setEditable).toHaveBeenCalledWith(false, false);
   });
 
+
+  test("toolbar sticky preserva seleção ao clicar e evita scroll forçado do TipTap", () => {
+    const editor = createEditor();
+    mocks.useEditor.mockReturnValue(editor);
+    renderEditor();
+    const toolbar = screen.getByRole("toolbar", { name: "Ferramentas de escrita" });
+    expect(toolbar).toHaveClass("sticky", "top-0", "z-20");
+
+    const bold = screen.getByRole("button", { name: "B" });
+    expect(fireEvent.mouseDown(bold)).toBe(false);
+    fireEvent.click(bold);
+
+    const chain = editor.chain();
+    expect(chain.focus).toHaveBeenCalledWith(undefined, { scrollIntoView: false });
+    expect(chain.toggleBold).toHaveBeenCalled();
+  });
+
+  test("toolbar custom actions stay beside formatting even on narrow layouts", () => {
+    renderEditor({
+      toolbarActions: <button type="button">Salvar agora</button>,
+    });
+    const toolbar = screen.getByRole("toolbar", { name: "Ferramentas de escrita" });
+    expect(toolbar).toContainElement(screen.getByRole("button", { name: "Salvar agora" }));
+    expect(toolbar.querySelector('[role="group"][aria-label="Formatação"]')).toHaveClass("overflow-x-auto");
+  });
+
+  test("Ctrl+S and Cmd+S save only inside editable surface and preserve Tab shortcut", () => {
+    const onSaveContent = vi.fn();
+    renderEditor({ onSaveContent });
+    const options = mocks.useEditor.mock.calls.at(-1)?.[0];
+    const onKeyDown = options.editorProps.handleKeyDown;
+
+    for (const modifier of ["ctrlKey", "metaKey"] as const) {
+      const event = new KeyboardEvent("keydown", { key: "s", cancelable: true, [modifier]: true });
+      expect(onKeyDown({} as never, event)).toBe(true);
+      expect(event.defaultPrevented).toBe(true);
+    }
+    expect(onSaveContent).toHaveBeenCalledTimes(2);
+
+    const tab = new KeyboardEvent("keydown", { key: "Tab", cancelable: true });
+    const fakeView = {
+      state: { selection: { from: 1, to: 1 }, doc: { textBetween: vi.fn() }, tr: { insertText: vi.fn(() => "transaction") } },
+      dispatch: vi.fn(),
+    };
+    expect(onKeyDown(fakeView as never, tab)).toBe(true);
+    expect(tab.defaultPrevented).toBe(true);
+    expect(fakeView.dispatch).toHaveBeenCalledWith("transaction");
+    expect(onSaveContent).toHaveBeenCalledTimes(2);
+  });
+
+  test("saving shortcuts are not enabled for read-only manuscripts", () => {
+    const onSaveContent = vi.fn();
+    renderEditor({ onSaveContent, readOnly: true });
+    const onKeyDown = mocks.useEditor.mock.calls.at(-1)?.[0].editorProps.handleKeyDown;
+    const event = new KeyboardEvent("keydown", { key: "s", ctrlKey: true, cancelable: true });
+    expect(onKeyDown({} as never, event)).toBe(false);
+    expect(event.defaultPrevented).toBe(false);
+    expect(onSaveContent).not.toHaveBeenCalled();
+    expect(screen.queryByRole("toolbar")).not.toBeInTheDocument();
+  });
+
   test("aciona comando de alinhamento ao clicar em um botao", () => {
     renderEditor();
 
