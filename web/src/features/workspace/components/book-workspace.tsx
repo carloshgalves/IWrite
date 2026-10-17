@@ -22,16 +22,8 @@ import type { BookOutline } from "@/features/outline/types";
 import { SceneEditor, type PlanningPanelOpenIntent } from "@/features/scenes/components/scene-editor";
 import { SceneStoryboardPanel } from "@/features/storyboard/components/scene-storyboard-panel";
 import { queryKeys } from "@/lib/query/keys";
+import { parseWorkspaceMode, workspaceHref, type WorkspaceMode } from "@/features/workspace/workspace-navigation";
 
-type WorkspaceMode =
-  | "overview"
-  | "storyboard"
-  | "kanban"
-  | "scenes"
-  | "characters"
-  | "locations"
-  | "items"
-  | "notebook";
 const FOCUS_MODE_STORAGE_KEY = "iwrite.focusMode.enabled";
 
 type BookWorkspaceProps = {
@@ -88,7 +80,7 @@ export function BookWorkspace({ bookId, initialSceneId }: BookWorkspaceProps) {
   const hasObservedInitialSearchParamsRef = useRef(false);
   const lastClearedInvalidSceneRef = useRef<string | null>(null);
   const [selectedSceneId, setSelectedSceneId] = useState<string | null>(initialSceneId ?? null);
-  const [mode, setMode] = useState<WorkspaceMode>("scenes");
+  const [mode, setMode] = useState<WorkspaceMode>(() => parseWorkspaceMode(searchParams.get("tab")));
   const [isFocusMode, setIsFocusMode] = useState(false);
   const [isFullscreenAvailable, setIsFullscreenAvailable] = useState(false);
   const [isFullscreenActive, setIsFullscreenActive] = useState(false);
@@ -177,20 +169,28 @@ export function BookWorkspace({ bookId, initialSceneId }: BookWorkspaceProps) {
   }, [exitNativeFullscreen]);
 
   function handleModeChange(nextMode: WorkspaceMode) {
+    if (nextMode === mode) return;
     setMode(nextMode);
+    router.push(workspaceHref(bookId, searchParams, nextMode), { scroll: false });
     if (nextMode !== "scenes") {
       handleExitFocusMode();
     }
   }
 
   const handleSelectScene = useCallback(
-    (sceneId: string | null) => {
+    (sceneId: string | null, replaceHistory = false) => {
       setSelectedSceneId(sceneId);
-
-      const href = sceneId ? `/books/${bookId}?sceneId=${encodeURIComponent(sceneId)}` : `/books/${bookId}`;
-      router.replace(href, { scroll: false });
+      setMode("scenes");
+      const href = workspaceHref(bookId, searchParams, "scenes", sceneId);
+      // A user-selected scene is a navigable history entry. Deleting a scene replaces its
+      // entry so browser Back cannot resurrect a deep link to a deleted scene.
+      if (replaceHistory) {
+        router.replace(href, { scroll: false });
+      } else {
+        router.push(href, { scroll: false });
+      }
     },
-    [bookId, router]
+    [bookId, router, searchParams]
   );
 
   const handleOpenSceneInEditor = useCallback(
@@ -216,13 +216,14 @@ export function BookWorkspace({ bookId, initialSceneId }: BookWorkspaceProps) {
   const handleOpenWorkspaceTab = useCallback(
     (tab: DashboardWorkspaceTab) => {
       setMode(tab);
+      router.push(workspaceHref(bookId, searchParams, tab), { scroll: false });
       handleExitFocusMode();
     },
-    [handleExitFocusMode]
+    [bookId, router, searchParams, handleExitFocusMode]
   );
 
   function handleSceneDeleted() {
-    handleSelectScene(null);
+    handleSelectScene(null, true);
     handleExitFocusMode();
   }
 
@@ -234,7 +235,12 @@ export function BookWorkspace({ bookId, initialSceneId }: BookWorkspaceProps) {
 
     const nextSceneId = searchParams.get("sceneId");
     setSelectedSceneId(nextSceneId && nextSceneId.trim() ? nextSceneId : null);
-  }, [searchParams]);
+    const nextMode = parseWorkspaceMode(searchParams.get("tab"));
+    setMode(nextMode);
+    if (nextMode !== "scenes") {
+      handleExitFocusMode();
+    }
+  }, [searchParams, handleExitFocusMode]);
 
   useEffect(() => {
     if (!outline) {
@@ -264,7 +270,7 @@ export function BookWorkspace({ bookId, initialSceneId }: BookWorkspaceProps) {
     }
 
     lastClearedInvalidSceneRef.current = invalidSceneKey;
-    router.replace(`/books/${bookId}`, { scroll: false });
+    router.replace(workspaceHref(bookId, searchParams, parseWorkspaceMode(searchParams.get("tab")), null), { scroll: false });
   }, [bookId, outline, router, searchParams]);
 
   useEffect(() => {

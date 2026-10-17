@@ -20,6 +20,7 @@ import { applySceneMutationResponse, updateSceneProjection } from "@/features/sc
 import type { Scene, SceneStatus, SceneVersionSource } from "@/features/scenes/types";
 import { trackEvent } from "@/lib/analytics/analytics";
 import { queryKeys } from "@/lib/query/keys";
+import { useSceneScrollRestoration } from "@/features/workspace/scene-scroll";
 
 const SCENE_STATUSES: SceneStatus[] = ["IDEA", "PLANNED", "DRAFT", "WRITTEN", "REVISED", "FINAL"];
 const METADATA_FORM_ID = "scene-metadata-form";
@@ -118,6 +119,12 @@ export function SceneEditor({
   const [editorContentVersion, setEditorContentVersion] = useState(0);
   const [restoreError, setRestoreError] = useState<string | null>(null);
   const [restoreWorkflowPending, setRestoreWorkflowPending] = useState(false);
+  const shellScroll = useSceneScrollRestoration<HTMLElement>(
+    bookId,
+    sceneId,
+    "scene-shell",
+    loadedSceneId === sceneId && acceptedContentRevision !== null ? sceneId : null
+  );
 
   const sceneQuery = useQuery({
     queryKey: sceneId ? queryKeys.scene(sceneId) : ["scenes", "empty"],
@@ -748,7 +755,7 @@ export function SceneEditor({
         : contentSyncState;
 
   return (
-    <section className={`h-full overflow-y-auto bg-zinc-100/70 ${isFocusMode ? "p-2 md:p-4 lg:p-6" : "p-4 md:p-6 lg:p-8"}`}>
+    <section data-testid="scene-shell-scrollport" ref={shellScroll.ref} onScroll={shellScroll.onScroll} className={`h-full overflow-y-auto bg-zinc-100/70 ${isFocusMode ? "p-2 md:p-4 lg:p-6" : "p-4 md:p-6 lg:p-8"}`}>
       <Card
         className={`mx-auto grid min-h-full overflow-hidden border-zinc-200 bg-white ${
           isFocusMode
@@ -854,6 +861,7 @@ export function SceneEditor({
 
         <div className="min-h-0 bg-white lg:h-full">
           <SceneContentEditor
+            bookId={bookId}
             contentKey={`${scene.id}:${editorContentVersion}`}
             sourceSceneId={scene.id}
             contentJson={contentJson}

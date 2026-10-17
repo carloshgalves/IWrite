@@ -93,12 +93,14 @@ const mocks = vi.hoisted(() => ({
   createScene: vi.fn(),
   deleteOutlineScene: vi.fn(),
   routerReplace: vi.fn(),
+  routerPush: vi.fn(),
   searchParams: new URLSearchParams(),
 }));
 
 vi.mock("next/navigation", () => ({
   useRouter: () => ({
     replace: mocks.routerReplace,
+    push: mocks.routerPush,
   }),
   useSearchParams: () => mocks.searchParams,
 }));
