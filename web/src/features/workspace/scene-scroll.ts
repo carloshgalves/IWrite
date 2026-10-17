@@ -78,11 +78,12 @@ export function useSceneScrollRestoration<T extends HTMLElement>(
     function restore() {
       if (stopped) return;
       element!.scrollTop = position;
-      // A restored scene may be shorter than before; settle at its actual scroll limit.
-      // Before Tiptap has mounted its content the scrollport may have no scroll range at all,
-      // so keep observing briefly instead of treating that early zero as the final position.
-      const max = Math.max(0, element!.scrollHeight - element!.clientHeight);
-      if (element!.scrollTop >= Math.min(position, max) - 1 && (max > 0 || element!.scrollTop > 0)) {
+      // A partially hydrated editor can temporarily have a small positive scroll range
+      // (e.g. 74px) before Tiptap inserts the manuscript. Reaching that temporary limit
+      // does NOT prove that the saved reading position (e.g. 220px) was restored.
+      // Keep observing until the full position is reached or the bounded retry expires.
+      // For a genuinely shorter scene the browser naturally clamps to its final maximum.
+      if (element!.scrollTop >= position - 1) {
         stop();
       }
     }
