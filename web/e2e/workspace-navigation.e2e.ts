@@ -131,15 +131,6 @@ test("restores tabs and the selected scene through reload and back/forward", asy
   await expect(page.getByTestId("scene-content-editor")).toContainText("Synthetic paragraph 120");
   // A different viewport/layout after hydration can cap the restored position at
   // its new maximum. Still demand a nonzero restoration on the same reading surface.
-  await expect.poll(async () => {
-    return readingScrollport.evaluate((element) => ({
-      scrollTop: element.scrollTop,
-      max: Math.max(0, element.scrollHeight - element.clientHeight),
-    }));
-  }).toMatchObject({
-    scrollTop: expect.any(Number),
-    max: expect.any(Number),
-  });
   await expect.poll(async () => readingScrollport.evaluate((element) => {
     const actualLimit = Math.max(0, element.scrollHeight - element.clientHeight);
     const expected = Math.min(observedScroll, actualLimit);
